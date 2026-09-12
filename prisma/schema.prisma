@@ -86,9 +86,10 @@ model Empresa {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  usuarios  Usuario[]
-  eslabones Eslabon[]
-  ciclos    CicloPulso[]
+  usuarios   Usuario[]
+  eslabones  Eslabon[]
+  ciclos     CicloPulso[]
+  conexiones Conexion[]
 
   @@map("empresas")
 }
