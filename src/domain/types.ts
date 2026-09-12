@@ -1,3 +1,4 @@
+// Tipos de dominio — vocabulario compartido entre el motor (engine/) y la infraestructura (infra/).
 // Tipos de dominio puros — sin Prisma, sin Next (ADR-0002, punto 1: motor
 // como funcion pura en engine/, con domain/ como su vocabulario). Estos
 // tipos son el limite entre el motor y la infraestructura: infra/ mapea

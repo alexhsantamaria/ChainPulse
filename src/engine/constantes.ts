@@ -1,3 +1,4 @@
+// Constantes del motor — valores de calibracion inicial: pesos, umbrales y version de reglas.
 // Valores de calibracion inicial del motor v1 (requirements.md, Seccion 12).
 // Todos son hipotesis de calibracion, no leyes fijas — se ajustan con los
 // datos reales de los dos pilotos (Seccion 9, punto 4). Vive en un solo

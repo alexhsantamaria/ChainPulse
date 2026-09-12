@@ -1,3 +1,4 @@
+// Configuracion — reglas de lint (ESLint) del proyecto.
 import { FlatCompat } from "@eslint/eslintrc";
 
 const compat = new FlatCompat({ baseDirectory: import.meta.dirname });

@@ -1,3 +1,4 @@
+// Pruebas — valida la identificacion de eslabones mas debiles.
 import { describe, expect, it } from "vitest";
 import { calcularEslabonesMasDebiles } from "../eslabonMasDebil";
 import type { ValoresConexion } from "@/domain/types";

@@ -1,3 +1,4 @@
+// Layout raiz de Next.js — metadata global y el HTML base de todas las paginas.
 import type { Metadata } from "next";
 import "./globals.css";
 

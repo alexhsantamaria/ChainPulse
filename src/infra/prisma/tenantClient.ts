@@ -1,3 +1,4 @@
+// Infraestructura — extension de Prisma que inyecta el filtro de tenant en cada consulta (RNF1, capa 1).
 import { Prisma } from "@prisma/client";
 import { prisma } from "./client";
 

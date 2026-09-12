@@ -1,3 +1,4 @@
+// Infraestructura — instancia base de Prisma Client, sin scope de tenant.
 import { PrismaClient } from "@prisma/client";
 
 // Cliente base sin scope de tenant. NO se usa directamente en codigo de

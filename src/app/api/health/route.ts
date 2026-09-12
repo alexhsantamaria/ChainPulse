@@ -1,3 +1,4 @@
+// Ruta API — healthcheck del servicio, confirma que el despliegue esta vivo.
 import { NextResponse } from "next/server";
 
 // Endpoint minimo de salud del servicio (no confundir con la "salud" de

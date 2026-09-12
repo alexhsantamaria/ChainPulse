@@ -1,3 +1,4 @@
+// Pruebas — valida el calculo de salud.
 import { describe, expect, it } from "vitest";
 import { calcularSalud } from "../salud";
 

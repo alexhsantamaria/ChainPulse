@@ -1,3 +1,4 @@
+// Pruebas — valida el calculo del indice de integracion.
 import { describe, expect, it } from "vitest";
 import { calcularIndiceIntegracion } from "../indiceIntegracion";
 

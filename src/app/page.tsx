@@ -1,3 +1,4 @@
+// Pagina de inicio — punto de entrada temporal de la app (placeholder del Incremento 1).
 // Incremento 1: punto de entrada temporal. RF11 (evaluacion expres publica)
 // y el flujo de cuenta completa (RF1 y siguientes) se construyen como
 // rutas propias — ver requirements.md Seccion 4 y 4bis.

@@ -1,3 +1,4 @@
+// Motor — identifica el conjunto de eslabones mas debiles (frontera de Pareto, RF7).
 import type { EslabonesMasDebilesResultado, ValoresConexion } from "@/domain/types";
 import { ORDEN_DEPENDENCIA } from "./constantes";
 

@@ -1,3 +1,4 @@
+// Pruebas — valida el calculo de riesgo.
 import { describe, expect, it } from "vitest";
 import { calcularRiesgo } from "../riesgo";
 

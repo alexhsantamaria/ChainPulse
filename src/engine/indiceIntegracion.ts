@@ -1,3 +1,4 @@
+// Motor — calcula el indice de integracion global de una empresa (RF16).
 import type { ConexionParaIndice, ResultadoIndiceIntegracion } from "@/domain/types";
 import { CRITICIDAD_ALTA_UMBRAL, PENALIZACION_POR_SPOF_PUNTOS, SALUD_ACEPTABLE_UMBRAL } from "./constantes";
 

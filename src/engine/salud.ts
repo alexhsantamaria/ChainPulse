@@ -1,3 +1,4 @@
+// Motor — calcula la salud de una conexion a partir de las respuestas del cuestionario (RF6).
 import type { RespuestaLikert, ResultadoSalud } from "@/domain/types";
 import { LIKERT_MAX, LIKERT_MIN } from "./constantes";
 

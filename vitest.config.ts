@@ -1,3 +1,4 @@
+// Configuracion — ajustes de Vitest para correr las pruebas del motor.
 import { defineConfig } from "vitest/config";
 import path from "node:path";
 

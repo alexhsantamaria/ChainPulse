@@ -1,3 +1,4 @@
+// Motor — calcula el puntaje de riesgo combinando criticidad y variabilidad de salud.
 import { ESCALA_VARIABILIDAD, PESO_RIESGO_CRITICIDAD, PESO_RIESGO_VARIABILIDAD, FACTOR_AMORTIGUACION_CON_ALTERNATIVA } from "./constantes";
 
 // Seccion 3 — el riesgo combina la criticidad con la variabilidad de

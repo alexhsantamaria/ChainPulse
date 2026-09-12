@@ -1,3 +1,4 @@
+// Motor — calcula el puntaje de criticidad de una conexion (RF3).
 import type { DatosCriticidad } from "@/domain/types";
 import {
   FACTOR_AMORTIGUACION_CON_ALTERNATIVA,

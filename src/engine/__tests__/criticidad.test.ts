@@ -1,3 +1,4 @@
+// Pruebas — valida el calculo de criticidad del motor.
 import { describe, expect, it } from "vitest";
 import { calcularCriticidad } from "../criticidad";
 
