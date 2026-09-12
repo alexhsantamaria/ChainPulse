@@ -12,7 +12,13 @@
 // es el caso explicito de tenant nulo en las politicas RLS.
 
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
+  // ADR-0003 (adenda ARM64): motor sin binario Rust. La build nativa de
+  // Windows ARM64 del query engine no existe (issue cerrado como "not
+  // planned" por Prisma) — con engineType="client" el cliente corre en
+  // TypeScript puro sobre un driver adapter (src/infra/prisma/client.ts),
+  // sin binario nativo que pueda ser incompatible con la arquitectura.
+  engineType = "client"
 }
 
 datasource db {

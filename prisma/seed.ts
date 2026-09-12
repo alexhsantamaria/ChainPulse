@@ -3,9 +3,14 @@
 // UI de registro de RF1. Correr con DATABASE_URL = neondb_owner (bypasea
 // RLS a proposito, igual que una migracion): npm run prisma:seed
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { hashPassword } from "../src/infra/auth/password";
 
-const prisma = new PrismaClient();
+// ADR-0003 (adenda ARM64): mismo motivo que src/infra/prisma/client.ts —
+// sin adapter, este script tambien intenta cargar el motor nativo que no
+// existe para Windows ARM64.
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   const email = process.env.SEED_ADMIN_EMAIL ?? "admin@chainpulse.test";
