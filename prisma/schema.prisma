@@ -1,0 +1,350 @@
+// ChainPulse — modelo de datos del Incremento 1.
+// Trazabilidad: cada campo no obvio cita el RF/RNF o la ronda de decisiones
+// de requirements.md que lo origina. Ver tambien docs/ADR/0001 y 0002.
+//
+// Aislamiento multi-tenant (RNF1): todo modelo con "empresaId" se protege
+// con DOS capas independientes, ninguna opcional:
+//   1. La extension de Prisma en src/infra/prisma/tenantClient.ts, que
+//      inyecta el filtro de tenant en cada consulta.
+//   2. Row-Level Security de PostgreSQL (prisma/migrations/*_rls.sql),
+//      que rechaza filas fuera del tenant activo aunque el codigo falle.
+// EvaluacionExpres y sus hijas NO llevan empresaId (adenda de ADR-0001):
+// es el caso explicito de tenant nulo en las politicas RLS.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RolUsuario {
+  ADMINISTRADOR
+  RESPONSABLE
+}
+
+// RF3 / Seccion 12: grado de dependencia, uno de los 4 valores de una Conexion.
+enum GradoDependencia {
+  BAJA
+  MEDIA
+  ALTA
+  CRITICA
+}
+
+// RF3 / Seccion 12: cortes de calibracion inicial para "tiempo tolerable" y
+// "tiempo de recuperacion" — Corto = menos de 24h, Medio = 24h-1 semana,
+// Largo = mas de 1 semana. Valor de calibracion, ajustable con datos reales.
+enum DuracionCategorica {
+  CORTO
+  MEDIO
+  LARGO
+}
+
+// Principio de copy de ADR-0002 (punto 4) y campo de esquema pedido por
+// CTO en la quinta ronda (Seccion 12): default DECLARADO en el Incremento 1,
+// sin UI todavia — evita migrar datos historicos cuando el nivel 3 de
+// visualizacion (Seccion 10) necesite distinguir declarado/inferido/verificado.
+enum EstadoDato {
+  DECLARADO
+  INFERIDO
+  VERIFICADO
+}
+
+// RF3, engine v1 (src/engine/criticidad.ts): nivel categorico del impacto
+// de una interrupcion sobre la promesa al cliente. RF3 no fijaba una
+// escala cerrada para este campo (hallazgo de Full-Stack en la quinta
+// ronda) — se adopta esta de 4 niveles, simetrica a GradoDependencia, como
+// hipotesis inicial de calibracion (mismo criterio que los demas valores
+// numericos de la Seccion 12), ajustable con datos reales de los pilotos.
+enum NivelImpacto {
+  BAJO
+  MEDIO
+  ALTO
+  CRITICO
+}
+
+enum EstadoCiclo {
+  ABIERTO
+  CERRADO
+}
+
+// RF12: la dimension que el resultado macro senala como "la peor" en la
+// frase breve en lenguaje llano.
+enum DimensionDiagnostico {
+  SALUD
+  CRITICIDAD
+  DEPENDENCIA
+  RIESGO
+}
+
+// RF1 — tenant.
+model Empresa {
+  id        String   @id @default(cuid())
+  nombre    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  usuarios  Usuario[]
+  eslabones Eslabon[]
+  ciclos    CicloPulso[]
+
+  @@map("empresas")
+}
+
+// RF1/RF4. El mecanismo de autenticacion (password, magic link, MFA) queda
+// pendiente de un ADR propio (Seguridad, Seccion 12) — este modelo es
+// deliberadamente minimo, sin inventar esa decision aqui.
+model Usuario {
+  id        String     @id @default(cuid())
+  empresaId String
+  empresa   Empresa    @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  email     String
+  nombre    String
+  rol       RolUsuario
+
+  // RF4: un Responsable queda limitado a las conexiones de su propio eslabon.
+  eslabonId String?
+  eslabon   Eslabon?   @relation(fields: [eslabonId], references: [id])
+
+  respuestas RespuestaCruda[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([empresaId, email])
+  @@index([empresaId])
+  @@map("usuarios")
+}
+
+// RF2 / Seccion 3 — nodo de la cadena de suministro (sustituye "Area/Proceso").
+model Eslabon {
+  id                 String     @id @default(cuid())
+  empresaId          String
+  empresa            Empresa    @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  nombre             String
+  // Seccion 7 / Seccion 8: modelo flexible desde ya para representar un
+  // proveedor externo mas adelante sin rediseno (no se construye UI propia
+  // de "Proveedor" en el MVP).
+  esProveedorExterno Boolean    @default(false)
+  // CTO, Seccion 12: campo de nivel 3 de visualizacion, sin UI en Incremento 1.
+  tipoFlujo          String?
+  estado             EstadoDato @default(DECLARADO)
+
+  conexionesOrigen  Conexion[] @relation("conexion_origen")
+  conexionesDestino Conexion[] @relation("conexion_destino")
+  responsables      Usuario[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([empresaId])
+  @@map("eslabones")
+}
+
+// RF3 — dependencia declarada entre dos eslabones, con sus 4 valores base.
+// "completa" (RF3/Seccion 6) es false hasta que los 5 datos de este
+// requisito quedan confirmados; una conexion incompleta se excluye de RF7
+// y RF16.
+model Conexion {
+  id        String  @id @default(cuid())
+  empresaId String
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  origenId  String
+  origen    Eslabon @relation("conexion_origen", fields: [origenId], references: [id])
+  destinoId String
+  destino   Eslabon @relation("conexion_destino", fields: [destinoId], references: [id])
+
+  gradoDependencia GradoDependencia?
+  impactoPromesaCliente NivelImpacto?
+  tieneAlternativa      Boolean?
+  tiempoTolerable       DuracionCategorica?
+  tiempoRecuperacion    DuracionCategorica?
+  // Metadatos de procedencia (CTO, Seccion 12): cuando se confirmaron los
+  // datos de criticidad, para poder auditar sin fragmentar ruleVersion.
+  criticidadConfirmadaEn DateTime?
+
+  tipoFlujo String?
+  estado    EstadoDato @default(DECLARADO)
+  completa  Boolean    @default(false)
+
+  respuestas RespuestaCruda[]
+  resultados ResultadoConexion[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([origenId, destinoId])
+  @@index([empresaId])
+  @@map("conexiones")
+}
+
+// RF5 — periodo durante el cual se envia y recoge el cuestionario.
+model CicloPulso {
+  id        String      @id @default(cuid())
+  empresaId String
+  empresa   Empresa     @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  estado    EstadoCiclo @default(ABIERTO)
+  abiertoEn DateTime    @default(now())
+  cerradoEn DateTime?
+  // RF10: % de responsables que completaron, fijado al cerrar el ciclo.
+  coberturaRespuesta Float?
+
+  respuestas         RespuestaCruda[]
+  resultadosConexion ResultadoConexion[]
+  resultadoCiclo     ResultadoCiclo?
+
+  @@index([empresaId])
+  @@map("ciclos_pulso")
+}
+
+// RF6 / Seccion 12 — respuesta individual, nunca solo el agregado (RNF6).
+// Escala Likert 1-5; "noSabe"/"noAplica" nunca cuentan como el minimo de
+// la escala (ver src/engine/salud.ts).
+model RespuestaCruda {
+  id            String     @id @default(cuid())
+  cicloPulsoId  String
+  cicloPulso    CicloPulso @relation(fields: [cicloPulsoId], references: [id], onDelete: Cascade)
+  conexionId    String
+  conexion      Conexion   @relation(fields: [conexionId], references: [id], onDelete: Cascade)
+  responsableId String
+  responsable   Usuario    @relation(fields: [responsableId], references: [id])
+
+  valor    Int? // 1-5; null si noSabe o noAplica
+  noSabe   Boolean @default(false)
+  noAplica Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([cicloPulsoId, conexionId, responsableId])
+  @@index([cicloPulsoId])
+  @@map("respuestas_crudas")
+}
+
+// RF7 — resultado inmutable por conexion y ciclo (RNF6: nunca se recalcula
+// por referencia viva a Conexion; si RF3 se edita despues del cierre, el
+// resultado ya persistido no cambia). Un unico "ruleVersion" por resultado
+// (CTO, Seccion 12) — no fragmentado por dimension.
+model ResultadoConexion {
+  id           String     @id @default(cuid())
+  cicloPulsoId String
+  cicloPulso   CicloPulso @relation(fields: [cicloPulsoId], references: [id], onDelete: Cascade)
+  conexionId   String
+  conexion     Conexion   @relation(fields: [conexionId], references: [id], onDelete: Cascade)
+
+  salud   Float // 0-100 (RF6)
+  // Snapshot de los datos de criticidad al momento del cierre del ciclo,
+  // no una referencia viva a Conexion (CTO, Seccion 12).
+  criticidadSnapshot      Json
+  gradoDependenciaSnapshot GradoDependencia
+  riesgo                  Float
+
+  ruleVersion String
+  createdAt   DateTime @default(now())
+
+  @@unique([cicloPulsoId, conexionId])
+  @@index([cicloPulsoId])
+  @@map("resultados_conexion")
+}
+
+// RF7 (conjunto no dominado) + RF16 (indice de integracion) — el agregado
+// de un ciclo completo, tambien inmutable.
+model ResultadoCiclo {
+  id           String     @id @default(cuid())
+  cicloPulsoId String     @unique
+  cicloPulso   CicloPulso @relation(fields: [cicloPulsoId], references: [id], onDelete: Cascade)
+
+  indiceIntegracion    Float // RF16
+  // conexionId[] del conjunto no dominado, YA ordenados por el criterio de
+  // lectura de RF7 (criticidad desc, salud asc, riesgo desc, dependencia
+  // desc, id) — ver src/engine/eslabonMasDebil.ts.
+  eslabonesMasDebilesIds String[]
+
+  ruleVersion String
+  createdAt   DateTime @default(now())
+
+  @@map("resultados_ciclo")
+}
+
+// RF11-RF18 — evaluacion exprés publica. Sin tenantId a proposito (RNF7):
+// fuente de datos separada de las cuentas registradas, nunca mezclada al
+// recalcular o mejorar el motor sin un criterio explicito de ponderacion.
+model EvaluacionExpres {
+  id          String @id @default(cuid())
+  ruleVersion String
+
+  // Resultado macro (RF12): se calcula UNA sola vez aqui y se persiste de
+  // inmediato — el gate de RF13 solo revela campos de este mismo registro,
+  // nunca recalcula (CTO, Seccion 12: gate de presentacion, no de computo).
+  saludPromedio       Float
+  criticidadPromedio  Float
+  dependenciaPromedio Float
+  riesgoPromedio      Float
+  indiceIntegracion   Float // RF16
+  dimensionMasDebil   DimensionDiagnostico
+
+  // Gate de detalle (RF13/RF17).
+  detalleDesbloqueado   Boolean   @default(false)
+  detalleDesbloqueadoEn DateTime?
+  correo                String?
+  nombreCompleto        String?
+  empresaNombre         String?
+  telefono              String? // RF13: opcional, no bloquea el desbloqueo
+  consentimientoEnvio           Boolean @default(false)
+  consentimientoMejoraAlgoritmo Boolean @default(false)
+
+  // RF15/RF17 + retencion de la Seccion 12: huella de origen SOLO para
+  // limitar abuso, purgada a las 48-72h (antes que cualquier otro dato de
+  // esta fila) via el job descrito en src/infra/retencion.ts.
+  huellaOrigen          String
+  huellaOrigenPurgadaEn DateTime?
+
+  createdAt DateTime @default(now())
+
+  eslabones  EvaluacionExpresEslabon[]
+  conexiones EvaluacionExpresConexion[]
+
+  @@index([huellaOrigen])
+  @@index([createdAt])
+  @@map("evaluaciones_expres")
+}
+
+// RF11 — version condensada de Eslabon, propia de la evaluacion exprés.
+model EvaluacionExpresEslabon {
+  id                 String           @id @default(cuid())
+  evaluacionExpresId String
+  evaluacionExpres   EvaluacionExpres @relation(fields: [evaluacionExpresId], references: [id], onDelete: Cascade)
+  nombre             String
+  tipoFlujo          String?
+  estado             EstadoDato       @default(DECLARADO)
+
+  @@index([evaluacionExpresId])
+  @@map("evaluaciones_expres_eslabones")
+}
+
+// RF11/RF18 — version condensada de Conexion. "descripcionLibre" es el
+// campo de texto libre que RF18 protege con un alias sugerido por defecto
+// en la UI (no se valida/bloquea aqui, es una guia de minimizacion).
+model EvaluacionExpresConexion {
+  id                 String           @id @default(cuid())
+  evaluacionExpresId String
+  evaluacionExpres   EvaluacionExpres @relation(fields: [evaluacionExpresId], references: [id], onDelete: Cascade)
+
+  origenNombre  String
+  destinoNombre String
+
+  gradoDependencia       GradoDependencia
+  impactoPromesaCliente  NivelImpacto?
+  tieneAlternativa       Boolean?
+  tiempoTolerable        DuracionCategorica?
+  tiempoRecuperacion     DuracionCategorica?
+  descripcionLibre       String?
+
+  // Salud declarada por el visitante para esta conexion (percepcion de una
+  // sola persona — RNF7, confiabilidad distinta a un ciclo real).
+  salud Float?
+
+  @@index([evaluacionExpresId])
+  @@map("evaluaciones_expres_conexiones")
+}

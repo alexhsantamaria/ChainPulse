@@ -1,0 +1,274 @@
+# ChainPulse — Requisitos del MVP
+
+Fecha: 2026-09-12
+Estado: Aprobado. Ver Sección 9 para la segunda ronda de decisiones (2026-09-12, tras ADR-0002) que actualiza el modelo de puntaje y la evaluación exprés, Sección 10 para los niveles de visualización, Sección 11 para la cuarta ronda (análisis multi-rol del estado acumulado) y Sección 12 para la quinta ronda — revisión final de viabilidad que cierra todos los pendientes de la Sección 11, define los valores numéricos de calibración inicial y confirma el veredicto GO para Fase 4 con los dos pilotos. Listo para pasar a construcción (Fase 4 del prompt maestro).
+
+## 1. Resumen
+
+ChainPulse es un producto SaaS multi-empresa para cualquier sector que opere una cadena de suministro (manufactura, retail, logística, agroindustria, y en general cualquier industria con proveedores, producción, almacenamiento y distribución) que detecta dónde existe descoordinación entre los eslabones de esa cadena, identifica el eslabón más débil —combinando su salud, criticidad, dependencia y riesgo, no un único puntaje ponderado (ver Sección 9)— y recomienda qué mejorar primero, con seguimiento de avance en el tiempo. El MVP recoge la información mediante cuestionarios estructurados periódicos ("pulsos"), no mediante integraciones con herramientas de terceros.
+
+**Tesis central del producto (confirmada por Alex, 2026-09-12):** la única manera de que una cadena de suministro tenga éxito es lograr integrarla de verdad — que esté preparada para sostener su rendimiento ("sus pulsaciones") dentro de su capacidad, minimizar riesgos y alcanzar sus objetivos. Una empresa con cadena de suministro no debe pensarse solo como un modelo comercial: debe pensarse y operar como un modelo logístico integral (el ejemplo que da Alex es Amazon). Esta es la razón de fondo por la que ChainPulse mide la coordinación *entre* eslabones y no el desempeño aislado de cada uno por separado — el diagnóstico completo (salud, criticidad, dependencia, riesgo de cada conexión, Sección 9) existe para mostrarle a la empresa qué tan integrada está su cadena, no solo cómo le va a cada área por su cuenta.
+
+Confirmado por Alex: el alcance es deliberadamente genérico por sector ("cualquier sector que tenga cadena de suministro, que en sí son varios sectores"), no un vertical único — el cuestionario y el vocabulario deben funcionar igual de bien para manufactura, retail o logística sin rediseño por cliente.
+
+**Actualización (2026-09-12) — dos puertas de entrada desde el lanzamiento.** Alex pidió explícitamente que, desde el día uno, cualquier empresa pueda entrar al dominio público y medir su salud de cadena de suministro **sin necesidad de registrarse** — solo para ver su estado actual. Esto no sustituye el flujo de cuenta completa (Secciones 4-5 originales, con múltiples responsables y ciclos de pulso recurrentes): son dos puertas de entrada complementarias, detalladas en la Sección 4bis.
+
+## 2. Actores
+
+- **Administrador de empresa** — persona que registra la empresa (tenant) en ChainPulse, define las áreas/procesos y sus conexiones, invita a los responsables de área y consulta el dashboard.
+- **Responsable de área** — persona invitada que representa un área o proceso concreto; responde los cuestionarios periódicos sobre su coordinación con las áreas conectadas a la suya.
+- **Visitante anónimo (nuevo)** — cualquier persona que llega al dominio público sin cuenta y quiere una medición rápida de la salud de su propia cadena de suministro, respondiendo ella misma por la empresa en una sola sesión, sin invitar a nadie más y sin registrarse. Ver Sección 4bis.
+- **ChainPulse (el sistema)** — calcula puntajes, identifica el eslabón más débil y genera recomendaciones, tanto para cuentas registradas como para evaluaciones exprés anónimas.
+
+Fuera de alcance del MVP: roles intermedios (p. ej. un responsable que vea el dashboard completo sin ser administrador).
+
+## 3. Glosario
+
+- **Tenant / Empresa** — organización cliente de ChainPulse, con sus datos aislados de cualquier otro tenant.
+- **Eslabón** — nodo de la cadena de suministro declarado por el administrador: puede ser un área o proceso interno (ej. "Compras", "Producción", "Almacén", "Distribución") o, según cómo la empresa configure su cadena, un actor externo como un proveedor. Sustituye al término genérico "área/proceso" de la primera versión de este documento, para reflejar que ChainPulse modela específicamente una cadena de suministro, no cualquier organigrama.
+- **Conexión** — dependencia declarada entre dos eslabones (ej. "Proveedor de materia prima → Producción"), con un grado de dependencia asociado (ver más abajo).
+- **Grado de dependencia** — nivel declarado por el administrador (o el responsable del eslabón) al crear una conexión — Baja / Media / Alta / Crítica —, uno de los cuatro valores que describen esa conexión (junto con salud, criticidad y riesgo, ver más abajo), no el único factor de ponderación (actualizado 2026-09-12, ver Sección 9).
+- **Ciclo de pulso** — periodo durante el cual se envía y recoge un cuestionario a los responsables de cada eslabón.
+- **Salud** — qué tan estable y coordinada funciona una conexión hoy; se calcula a partir de las respuestas del cuestionario de cada ciclo de pulso (antes llamado "puntaje de coordinación" en la primera versión de este documento; ver Sección 9).
+- **Criticidad** — qué tanto daño causaría la interrupción de una conexión; se calcula a partir de datos declarados una sola vez al crear la conexión (no en cada ciclo): impacto sobre la promesa al cliente, alcance aguas abajo, si existe alternativa o sustituto, tiempo tolerable sin esa conexión y tiempo estimado de recuperación.
+- **Riesgo** — exposición combinada de la criticidad de una conexión con la variabilidad de su salud observada a través de ciclos y la disponibilidad de una alternativa; no se confunde con criticidad (una conexión puede ser muy crítica pero de bajo riesgo si tiene una alternativa probada).
+- **Eslabón más débil** — la conexión que combina la peor salud con la mayor criticidad de un ciclo, mostrada con sus cuatro valores (salud, criticidad, dependencia, riesgo) explícitos, no colapsada en un único número oculto — el candidato prioritario a mejorar (concepto de Teoría de Restricciones: el eslabón más débil de la cadena determina su resistencia total). Actualizado 2026-09-12 — ver Sección 9: antes era un único puntaje ponderado.
+- **Recomendación** — sugerencia priorizada de mejora generada a partir del tipo de fricción reportada en el eslabón más débil.
+
+## 4. Requisitos funcionales (formato EARS)
+
+**RF1.** Cuando un visitante se registra como administrador y crea una empresa nueva, el sistema deberá crear un tenant aislado con su propio espacio de datos, sin acceso cruzado a datos de otros tenants.
+
+**RF2.** Cuando un administrador define los eslabones de la cadena de suministro de su empresa, el sistema deberá permitirle declarar las conexiones (dependencias) entre esos eslabones como un grafo dirigido.
+
+**RF3 (actualizado 2026-09-12, ver Sección 9, 11 y 12).** Cuando se declara una conexión entre dos eslabones, el sistema deberá exigir que se confirmen, además del grado de dependencia (Baja / Media / Alta / Crítica): el impacto de una interrupción sobre la promesa al cliente, si existe una alternativa o sustituto, el tiempo tolerable sin esa conexión (Corto / Medio / Largo) y el tiempo estimado de recuperación (Corto / Medio / Largo) — ambos categóricos, igual de rápidos de responder que el grado de dependencia, coherente con RNF2. Los cortes de Corto/Medio/Largo (Sección 12): Corto = menos de 24 horas, Medio = entre 24 horas y 1 semana, Largo = más de 1 semana — valor inicial de calibración, ajustable con los datos reales de los dos pilotos, mostrado siempre junto a la opción para que quien responde sepa qué está eligiendo. Estos cinco datos se declaran una sola vez al crear la conexión (no en cada ciclo de pulso) y se actualizan solo cuando cambien. Una conexión sin estos datos confirmados queda marcada como incompleta y no se incluye en el cálculo de eslabón más débil (RF7) ni en el índice de integración (RF16).
+
+**RF4.** Cuando un administrador invita a un responsable de eslabón por correo, el sistema deberá enviarle una invitación con acceso limitado únicamente a las conexiones de ese eslabón.
+
+**RF5.** Cuando el administrador activa un nuevo ciclo de pulso, el sistema deberá enviar a cada responsable de eslabón un cuestionario estructurado sobre cada una de sus conexiones declaradas.
+
+**RF6 (actualizado 2026-09-12, ver Sección 11 y 12).** Cuando un responsable de eslabón completa el cuestionario, el sistema deberá registrar sus respuestas y calcular la salud (ver glosario, Sección 3) por conexión reportada. Cada pregunta se responde en una escala Likert de 1 a 5 (adoptada de `chainpulse_end_to_end.md`, Sección 6/7.2), más las opciones "No sé" y "No aplica" — ninguna de las dos cuenta como el valor mínimo de la escala ni se promedia como cero: "No aplica" excluye la pregunta del cálculo de esa conexión, y "No sé" se registra aparte y reduce la cobertura de confianza de esa conexión sin arrastrar la salud hacia abajo. La salud de una conexión se normaliza a una escala de 0 a 100 a partir del promedio de sus respuestas válidas (Sección 12 fija el umbral "aceptable" que usa RF16 sobre esta misma escala).
+
+**RF7 (actualizado 2026-09-12, ver Sección 9, 11 y 12).** Cuando se cierra un ciclo de pulso, el sistema deberá calcular, para cada conexión completa, sus cuatro valores por separado: salud (de las respuestas del ciclo, RF6), criticidad (de los datos estáticos declarados en RF3), dependencia (el grado ya confirmado en RF3) y riesgo (combinación de criticidad, variabilidad de salud entre ciclos y disponibilidad de alternativa). El sistema deberá calcular el conjunto de **eslabones más débiles** como el conjunto no dominado (frontera de Pareto) de conexiones respecto de salud (peor es mejor candidato) y criticidad (mayor es mejor candidato): una conexión A domina a una conexión B si la salud de A es igual o peor que la de B y la criticidad de A es igual o mayor que la de B, con al menos una de las dos estrictamente peor/mayor — dos conexiones empatadas exactamente en salud y en criticidad no se dominan entre sí y por lo tanto ambas quedan en el conjunto no dominado, sin ninguna regla adicional de selección. Si ese conjunto no dominado tiene un solo miembro, el sistema lo muestra como "el eslabón más débil"; si tiene más de uno (porque ninguna conexión domina a las demás en ambos ejes a la vez, incluido el empate total), el sistema muestra todas las de ese conjunto — nunca colapsa el empate ambiguo en un ganador arbitrario ni en un número oculto. El **orden de lectura** dentro de ese conjunto (no la pertenencia a él) se define por criticidad descendente, luego salud ascendente y, si ambas coinciden, riesgo descendente y dependencia descendente como criterios de desempate puramente de presentación; si aun así persiste el empate, se usa el identificador de la conexión como último criterio, para que el orden mostrado sea siempre el mismo dado el mismo `ruleVersion` (Sección 12) y no dependa del orden de lectura de la base de datos.
+
+**RF8.** Cuando se identifica el eslabón más débil de un ciclo, el sistema deberá generar una recomendación priorizada a partir de reglas predefinidas según el tipo de fricción reportada y el grado de dependencia de esa conexión.
+
+**RF9 (actualizado 2026-09-12, ver Sección 9 y 11).** Cuando un administrador abre el dashboard, el sistema deberá mostrar los cuatro valores (salud, criticidad, dependencia, riesgo) del ciclo más reciente para cada conexión visible, el conjunto de eslabones más débiles (RF7), el índice de integración de la cadena (RF16), el histórico de ciclos anteriores y la tendencia de salud en el tiempo.
+
+**RF10.** Cuando un ciclo se cierra sin que todos los responsables hayan respondido, el sistema deberá calcular el puntaje con los datos disponibles y mostrar explícitamente el porcentaje de cobertura de respuesta del ciclo.
+
+**RF16 (nuevo 2026-09-12, ver Sección 11 y 12) — Índice de integración de la cadena.** Cuando se cierra un ciclo de pulso o se calcula una evaluación exprés, el sistema deberá calcular un índice de integración de toda la cadena (no solo por conexión), como una versión v1 simple y calibrable: combina el porcentaje de conexiones completas (RF3) con salud igual o superior a un umbral básico ("aceptable"), penalizado por la cantidad de conexiones de criticidad Alta o Crítica sin alternativa disponible declarada (puntos únicos de falla). El umbral "aceptable" (Sección 12) se fija en salud ≥ 70 sobre la escala de 0 a 100 de RF6, y la penalización v1 resta 10 puntos porcentuales al índice por cada punto único de falla, con un piso de 0 — ambos valores son la hipótesis inicial de calibración, no una fórmula definitiva, y se ajustan con los datos reales de los dos pilotos (Sección 9, punto 4). El índice se muestra junto al resultado macro (RF12) y en el dashboard (RF9), con el mismo lenguaje de hipótesis y limitaciones que el resto del diagnóstico (no se presenta como una magnitud científica exacta) — expresa directamente la tesis central del producto (Sección 1: éxito = cadena integrada, no eslabones aislados).
+
+## 4bis. Evaluación exprés pública (sin registro) — nuevo, a pedido de Alex
+
+Puerta de entrada pública, disponible desde el lanzamiento, complementaria al flujo de cuenta completa (Sección 4). Un visitante anónimo mide la salud de su propia cadena de suministro en una sola sesión, sin invitar a nadie más y sin crear cuenta.
+
+**Supuesto de diseño que dejo explícito para que lo confirmes:** dado que nadie más participa, la evaluación exprés es la percepción de una sola persona sobre sus eslabones y conexiones — no el mismo nivel de confiabilidad que un ciclo de pulso con varios responsables reales de área (Sección 4). Por eso se trata como una fuente de datos distinta, nunca mezclada con los datos de cuentas registradas al recalcular el algoritmo (ver RNF7 más abajo). Si esto no es lo que tenías en mente, dímelo antes de que empecemos a construir.
+
+**RF11.** Cuando un visitante anónimo abre la evaluación exprés desde el dominio público, el sistema deberá permitirle declarar los eslabones y conexiones clave de su cadena (versión condensada de RF2/RF3, incluyendo grado de dependencia) en una sola sesión, sin pedir registro ni ningún dato personal.
+
+**RF12 (actualizado 2026-09-12, ver Sección 9, 10 y 11).** Cuando el visitante completa el cuestionario condensado, el sistema deberá calcular al instante y mostrar, sin pedir ningún dato, un **resultado macro**: un gráfico simple con los puntos clave del nivel general de salud/criticidad/dependencia/riesgo de la cadena declarada más el índice de integración (RF16) (nivel 1 de visualización, ver Sección 10), una frase breve en lenguaje llano indicando cuál de las cuatro dimensiones está peor a nivel agregado, sin desglose por conexión ni recomendación detallada, sin exigir pago, cuenta ni datos de contacto.
+
+**RF13 (actualizado 2026-09-12, ver Sección 9 y 11).** Cuando el visitante, desde el resultado macro, pide ver el **resultado detallado** (desglose por conexión, eslabones más débiles identificados con sus cuatro valores, y recomendación priorizada), el sistema deberá solicitarle tres datos obligatorios antes de mostrarlo —correo, nombre completo y nombre de empresa— y un cuarto dato opcional, teléfono, que no es necesario para la finalidad de enviar el resultado y por tanto no bloquea el desbloqueo si se deja vacío. El sistema deberá pedir dos consentimientos separados, ninguno premarcado: uno para usar los datos y enviar el resultado detallado, y otro, independiente, para autorizar que esos datos se usen además para mejorar los algoritmos con datos reales — aceptar el primero no implica aceptar el segundo. El sistema deberá mostrar un enlace visible a la política de privacidad junto a este formulario.
+
+**RF14 (actualizado 2026-09-12, ver Sección 9 y 11).** Los datos de contacto capturados en RF13 se conservan indefinidamente junto con las respuestas de esa evaluación (mismo criterio que RNF6, por tratarse de un dato entregado de forma explícita y consciente a cambio de un resultado detallado, con aviso previo de para qué se usa) — no aplica una anonimización automática por plazo a este caso, a diferencia de un dato recogido sin que el visitante lo supiera. El sistema deberá validar el formato del correo y, si se completó, del teléfono antes de persistirlos (RNF8), y deberá permitir que la persona pida la eliminación de sus datos de contacto en cualquier momento, sin necesidad de haber creado cuenta.
+
+**RF15 (antes RF14).** Cuando se recibe un volumen inusual de evaluaciones exprés desde el mismo origen en poco tiempo, el sistema deberá aplicar una limitación de tasa razonable sobre el inicio de evaluaciones (RF11), sin afectar el uso normal de un visitante legítimo. Valor inicial de calibración (Sección 12): no más de 5 evaluaciones iniciadas por la misma huella de origen (IP/dispositivo) por hora, ajustable con datos reales de uso.
+
+**RF17 (nuevo 2026-09-12, ver Sección 11 y 12) — Control de abuso del desbloqueo de detalle.** El sistema deberá limitar a un desbloqueo del resultado detallado (RF13) por evaluación exprés — pedir el detalle de la misma evaluación una segunda vez con datos de contacto distintos no genera un nuevo desbloqueo válido — y deberá aplicar a este endpoint una limitación de tasa propia, independiente de la de RF15 (que protege el inicio de evaluaciones, no el desbloqueo del detalle), dado que son patrones de abuso distintos. Valor inicial de calibración (Sección 12): no más de 10 intentos de desbloqueo (exitosos o no) por la misma huella de origen por hora.
+
+**RF18 (nuevo 2026-09-12, ver Sección 12) — Minimización de datos de terceros en la evaluación exprés.** Cuando el visitante anónimo declara eslabones o describe fricciones en texto libre dentro de RF11, el sistema deberá sugerir por defecto un alias genérico (p. ej. "Proveedor A", "Cliente B") en vez de pedir el nombre real de un proveedor o cliente externo, y deberá mostrar una advertencia breve junto a cualquier campo de texto libre indicando que no es necesario escribir nombres reales de terceros que no han dado su consentimiento. No bloquea que el visitante escriba un nombre real si lo prefiere — es una guía de minimización de datos, no una validación que rechace el envío.
+
+## 5. Requisitos no funcionales
+
+**RNF1 — Aislamiento multi-tenant.** Ningún dato de una empresa debe ser accesible, ni por error de consulta ni por fallo de permisos, desde la sesión de otra empresa. Se valida con pruebas de integración específicas de aislamiento (Agente de Pruebas, prioridad crítica).
+
+**RNF2 — Minimalismo del cuestionario.** Un responsable de área debe poder completar el cuestionario de un ciclo en menos de 5 minutos. Es una restricción dura de diseño, no una meta aspiracional (UX minimalista, preferencia de Alex).
+
+**RNF3 — Rendimiento del dashboard.** El dashboard debe cargar el puntaje y el histórico en menos de 2 segundos bajo carga normal (un tenant, hasta ~50 áreas).
+
+**RNF4 — Disponibilidad.** El sistema debe estar disponible para responder cuestionarios y consultar el dashboard al menos el 99% del tiempo en horario laboral, dado que el envío de un ciclo tiene ventana de tiempo limitada.
+
+**RNF5 — Protección de datos personales.** Los datos de contacto y respuestas de los responsables de área se cifran en tránsito y en reposo; se recoge el mínimo dato personal necesario (nombre, correo, rol/área).
+
+**RNF6 (nuevo) — Persistencia de datos crudos.** El sistema debe conservar las respuestas individuales de cada cuestionario, no solo los puntajes agregados, de forma indefinida salvo que se defina una política de retención distinta. Es un requisito explícito de Alex: el objetivo de negocio inmediato no es solo mostrar un dashboard, sino acumular datos reales para mejorar los algoritmos de puntaje y recomendación en el tiempo — perder el detalle crudo impediría reprocesar el histórico cuando el algoritmo cambie.
+
+**RNF7 (nuevo) — Separación de datos anónimos y registrados.** Los datos de evaluaciones exprés (RF11-RF15, una sola persona respondiendo por intuición) se almacenan separados y claramente distinguibles de los datos de ciclos de pulso de cuentas registradas (varias personas, recurrente). No se mezclan al recalcular puntajes ni al entrenar o ajustar algoritmos futuros sin un criterio explícito que los pondere según su confiabilidad distinta. Actualización 2026-09-12: dentro de la evaluación exprés hay dos casos — el resultado macro (RF12) no recoge ningún dato personal, nada que separar más allá del puntaje agregado; el resultado detallado (RF13) exige datos de contacto (correo y nombre completo/empresa obligatorios, teléfono opcional) y se guarda indefinidamente (RF14), igual de separado de los datos de cuentas registradas.
+
+**RNF8 (nuevo 2026-09-12, ver Sección 11) — Calidad y derechos sobre datos de contacto.** El sistema deberá validar el formato de correo y teléfono antes de persistirlos (no se valida que la persona sea real, solo que el formato sea válido — verificación por link queda fuera de alcance del MVP), para no contaminar el dataset que RNF6 busca acumular. El sistema deberá ofrecer, sin exigir cuenta, un mecanismo para que cualquier persona pida la eliminación de sus datos de contacto capturados en RF13, y publicar una política de privacidad accesible desde el formulario de RF13 que explique con claridad qué datos se piden, para qué se usa cada uno (RF13) y cómo pedir su borrado.
+
+**RNF9 (nuevo 2026-09-12, ver Sección 12) — Instrumentación mínima del Incremento 1.** El sistema deberá registrar, sin datos personales adicionales a los ya capturados, las señales mínimas necesarias para medir si el Incremento 1 cumplió su objetivo antes de invertir en el Incremento 2: tiempo real que toma completar el cuestionario de un ciclo (frente al límite de 5 minutos de RNF2) y el cuestionario condensado de la evaluación exprés, tasa de finalización del cuestionario condensado hasta ver el resultado macro (RF12), tasa de conversión de resultado macro a resultado detallado (RF12 → RF13), y si el administrador o responsable marca una recomendación (RF8) como ejecutada. No es un sistema de analítica de producto completo (sin eventos granulares, sin cohortes, sin segmentación) — son consultas agregadas simples sobre la base de datos ya existente, suficientes para las dos empresas piloto (Sección 8, pregunta 2).
+
+## 6. Criterios de aceptación (ejemplos)
+
+**RF5/RF6 — Completar un cuestionario:**
+- Dado que un responsable de área tiene un ciclo de pulso activo con 3 conexiones declaradas,
+- Cuando responde las preguntas de las 3 conexiones y envía el cuestionario,
+- Entonces el sistema registra las 3 respuestas, calcula la salud de cada conexión y marca al responsable como "completado" en ese ciclo. Los valores de criticidad, dependencia y riesgo de esas conexiones no cambian por este envío — solo se recalculan si el administrador edita los datos estáticos de RF3.
+
+**RF7 — Un solo eslabón más débil (caso no ambiguo):**
+- Dado que un ciclo se cierra con dos conexiones completas, y la Conexión A tiene peor salud Y mayor o igual criticidad que la Conexión B (A domina a B),
+- Cuando el sistema calcula el conjunto no dominado,
+- Entonces el sistema identifica a la Conexión A como el único eslabón más débil, mostrando sus cuatro valores por separado.
+
+**RF7 — Varios eslabones más débiles (caso ambiguo):**
+- Dado que un ciclo se cierra con la Conexión A con peor salud pero menor criticidad que la Conexión B, y la Conexión B con mejor salud pero mayor criticidad que A (ninguna domina a la otra),
+- Cuando el sistema calcula el conjunto no dominado,
+- Entonces el sistema muestra ambas conexiones (A y B) como eslabones más débiles, cada una con sus cuatro valores, ordenadas por criticidad descendente y luego salud ascendente — no elige arbitrariamente una sola.
+
+**RF3 — Conexión sin datos de criticidad/dependencia confirmados:**
+- Dado que un administrador declara una conexión nueva entre dos eslabones,
+- Cuando no confirma su grado de dependencia o los datos de criticidad (impacto, alternativa, tiempo tolerable, tiempo de recuperación),
+- Entonces el sistema marca la conexión como incompleta, no la incluye en el cálculo del eslabón más débil (RF7) ni del índice de integración (RF16) de ningún ciclo, y se lo señala explícitamente al administrador en el dashboard.
+
+**RF9 — Dashboard con los cuatro valores:**
+- Dado que un administrador tiene al menos un ciclo cerrado con conexiones completas,
+- Cuando abre el dashboard,
+- Entonces ve, para cada conexión, sus cuatro valores por separado, el conjunto de eslabones más débiles, el índice de integración de la cadena y la tendencia de salud de ciclos anteriores — nunca un único puntaje colapsado.
+
+**RF10 — Ciclo cerrado con cobertura incompleta:**
+- Dado que un ciclo de pulso tiene 5 responsables invitados y solo 3 completan el cuestionario antes del cierre,
+- Cuando el administrador cierra el ciclo,
+- Entonces el sistema calcula los valores con los datos disponibles y muestra explícitamente "60% de cobertura de respuesta" (o el porcentaje que corresponda) junto al resultado del ciclo.
+
+**RF12 — Resultado macro de la evaluación exprés:**
+- Dado que un visitante anónimo completa el cuestionario condensado sin dejar ningún dato,
+- Cuando el sistema calcula el resultado,
+- Entonces el visitante ve, sin haber dado ningún dato de contacto, un gráfico simple con los 4 valores agregados y el índice de integración, más una frase indicando cuál dimensión está peor — sin ver el desglose por conexión ni la recomendación priorizada.
+
+**RF13/RF17 — Desbloquear el resultado detallado:**
+- Dado que un visitante ve su resultado macro y pide el detalle,
+- Cuando completa correo, nombre completo y empresa (teléfono opcional) y marca al menos el consentimiento para enviar el resultado (sin marcar el de mejorar el algoritmo),
+- Entonces el sistema le muestra el detalle completo una vez, guarda que ese consentimiento específico fue aceptado y el de mejora del algoritmo no, y si ese mismo visitante intenta "desbloquear" la misma evaluación de nuevo con otro correo, el sistema no genera un segundo desbloqueo válido.
+
+**RF14/RNF8 — Solicitud de borrado de datos de contacto:**
+- Dado que una persona dejó sus datos de contacto en una evaluación exprés hace tiempo y nunca creó cuenta,
+- Cuando pide que se eliminen sus datos de contacto (sin necesidad de iniciar sesión),
+- Entonces el sistema elimina el correo, nombre, empresa y teléfono asociados a esa evaluación, conservando únicamente los valores agregados no identificables para RNF6.
+
+**RNF1 — Aislamiento de tenant:**
+- Dado que existen dos empresas registradas en ChainPulse,
+- Cuando un administrador de la Empresa A realiza cualquier consulta al sistema,
+- Entonces ninguna respuesta incluye datos de áreas, conexiones, ciclos o usuarios de la Empresa B, verificado con una prueba de integración dedicada.
+
+**RNF7 — Separación de datos anónimos y registrados:**
+- Dado que existen evaluaciones exprés y ciclos de pulso de cuentas registradas en la base de datos,
+- Cuando se recalculan o ajustan las reglas del motor,
+- Entonces los datos de evaluaciones exprés nunca se mezclan con los de cuentas registradas sin un criterio explícito de ponderación por confiabilidad, verificado con una prueba dedicada.
+
+**RF16 — Índice de integración (nuevo, ver Sección 12):**
+- Dado un ciclo cerrado con 10 conexiones completas, 8 con salud ≥ 70 y 2 conexiones de criticidad Alta o Crítica sin alternativa declarada,
+- Cuando el sistema calcula el índice de integración,
+- Entonces el índice parte de 80% (8/10 conexiones "aceptables") y resta 10 puntos porcentuales por cada uno de los 2 puntos únicos de falla, quedando en 60%, mostrado junto al lenguaje de hipótesis/limitaciones del resto del diagnóstico — nunca como una cifra científica exacta.
+
+**RF17 — Rechazo de un desbloqueo con datos de contacto inválidos:**
+- Dado que un visitante pide el resultado detallado y escribe un correo con formato inválido (p. ej. "asdf@asdf"),
+- Cuando envía el formulario de RF13,
+- Entonces el sistema rechaza el envío sin persistir el dato y sin desbloquear el detalle, señalando el campo inválido, coherente con RNF8.
+
+**RNF6 — Reprocesamiento histórico sin alterar evaluaciones pasadas:**
+- Dado que existen ciclos cerrados con resultados calculados bajo una versión de reglas (`ruleVersion`) anterior,
+- Cuando el motor cambia de reglas y se recalcula el histórico para fines de mejora del algoritmo,
+- Entonces los resultados ya mostrados a los usuarios en su momento no cambian retroactivamente — el recálculo genera una nueva versión etiquetada con el `ruleVersion` nuevo, sin sobrescribir el resultado inmutable original.
+
+## 7. Explícitamente fuera de alcance del MVP
+
+- Integraciones con ERP, Jira, Slack u otras herramientas de terceros como fuente de datos (se evalúan en una fase posterior, solo si el MVP valida que el diagnóstico por cuestionario genera valor).
+- Carga manual de métricas/indicadores como fuente de datos adicional (queda documentada como opción futura, no se construye en el MVP).
+- Roles y permisos granulares más allá de Administrador / Responsable de eslabón.
+- Recomendaciones basadas en modelos de IA/ML — el MVP usa reglas predefinidas explícitas y auditables, pero ver Sección 8 sobre el agente de IA planeado como fase futura.
+- Aplicación móvil nativa.
+- Facturación y planes de precios de suscripción (ver modelo de monetización en Sección 8 — el MVP no cobra, ni en la cuenta completa ni en la evaluación exprés).
+- Conversión automática de una evaluación exprés en cuenta completa sin acción explícita del visitante (RF13) — la migración de datos es siempre una decisión consciente, nunca silenciosa.
+- Entidad "Proveedor" como actor con perfil propio y publicidad/recomendaciones patrocinadas (fase 2 de monetización, ver Sección 8) — no se construye ahora, pero el modelo de datos de "Eslabón" (Sección 3) se define desde ya lo bastante flexible para representar un proveedor externo más adelante sin rediseño.
+
+## 8. Preguntas abiertas — respondidas por Alex (2026-09-12)
+
+**1. Vertical inicial — respondida.** Genérico por diseño: "es para cualquier sector que tenga cadena de suministro, que en sí son varios sectores". No se afina el vocabulario a un solo sector; el cuestionario y los eslabones deben ser configurables por cada empresa (manufactura, retail, logística, agroindustria, etc.) sin necesitar una versión distinta de producto por vertical. Ya incorporado en la Sección 1 y en el glosario de "Eslabón".
+
+**2. Empresa piloto — respondida.** Alex cuenta con **dos empresas** donde puede hacer pruebas con datos reales. Recomendación (Producto/MVP): usar la primera como piloto de validación del cuestionario y el cálculo del eslabón más débil antes de dar por cerrado el MVP, y la segunda como segundo tenant real para confirmar que el aislamiento multi-tenant (RNF1) funciona correctamente con datos reales de dos organizaciones distintas — no solo con pruebas automatizadas.
+
+**3. Modelo de monetización — respondida, con roadmap de tres fases:**
+- **Fase 1 (MVP, ahora):** sin cobro. El objetivo es acumular datos reales de coordinación para mejorar los algoritmos de puntaje — razón directa del nuevo RNF6 (persistencia de datos crudos) añadido en la Sección 5.
+- **Fase 2 (futura, fuera de MVP):** monetización por publicidad de proveedores — cuando ChainPulse identifique un eslabón débil relacionado con un proveedor, podría recomendar proveedores alternativos de forma patrocinada. Esto no se construye en el MVP, pero es la razón por la que el modelo de datos define "Eslabón" de forma lo bastante genérica para representar también un proveedor externo (Sección 3), evitando una migración de datos incómoda más adelante.
+- **Fase 2bis (futura, fuera de MVP, nuevo 2026-09-12) — suscripción por diagnóstico detallado.** Hipótesis de ingreso distinta de la Fase 2 (publicidad): un nivel pago que da acceso al electrocardiograma completo a detalle con el flujo correcto de nodos y a un reporte exportable en PDF/Word (nivel 3 de visualización, ver Sección 10). No se construye en el MVP, pero el modelo de datos del motor (Sección 9) y el mapa (Incremento 2, ver ADR-0002) ya quedan diseñados para soportarlo sin rediseño.
+- **Fase 3 (futura, fuera de MVP):** un agente de IA que dé soluciones y análisis — una evolución directa de RF8 (recomendaciones), pasando de reglas predefinidas a un agente que razone sobre el histórico acumulado (posible candidato a RAG sobre los datos de ChainPulse, usando el mismo criterio del Módulo 09/SK-09 del prompt maestro). Depende de tener suficiente volumen de datos reales de la Fase 1, coherente con el orden de prioridades que Alex describió.
+
+Ninguna de las fases 2 y 3 se construye ahora; se documentan aquí para que las decisiones del MVP (especialmente el modelo de datos) no las bloqueen innecesariamente después.
+
+## 9. Decisiones del 2026-09-12 — segunda ronda, tras ADR-0002
+
+Después de la aparición de `chainpulse_end_to_end.md` y del análisis de viabilidad multi-rol documentado en `docs/ADR/0002-alcance-escalonado-end-to-end.md`, Alex confirmó cuatro decisiones que actualizan este documento (ya incorporadas arriba, en RF3/RF7/RF11-RF15, RNF7 y el glosario):
+
+1. **Modelo de puntaje — se separan cuatro conceptos desde el Incremento 1** (salud, criticidad, dependencia, riesgo), en vez del eje único "grado de dependencia" que tenía la primera versión de este documento. Los datos de criticidad (impacto, alternativa, tiempos) se declaran una sola vez por conexión, no en cada ciclo, para no romper RNF2 (cuestionario de menos de 5 minutos).
+2. **Evaluación exprés — gate de dos niveles.** Un resultado macro (nivel general de salud) se ve sin pedir ningún dato (RF12). Un resultado detallado (desglose, eslabón más débil, recomendación) exige 4 datos de contacto — correo, nombre completo, empresa, teléfono — pedidos con aviso claro de para qué se usan (RF13). Esto resuelve la tensión entre RNF6 (persistencia indefinida) y una posible política de retención corta para datos anónimos: la vista macro no recoge datos personales (nada que retener más allá de un puntaje agregado) y la vista detallada se guarda indefinidamente porque el dato se entrega de forma deliberada y con aviso previo (RF14), no de forma silenciosa.
+3. **Texto de explicación del resultado — plantillas fijas para el Incremento 1**, no generado por IA. Se evaluará usar IA para este texto más adelante, cuando haya datos reales de uso y presupuesto definido.
+4. **Segmento inicial de calibración — pyme comercial (retail/distribución).** El cuestionario v1 y los pesos provisionales del motor se calibran pensando primero en una pyme que compra, almacena y distribuye/vende, sin producción propia. El modelo sigue siendo genérico por diseño (Sección 1); esto solo define el primer caso de calibración.
+
+Con estas cuatro decisiones confirmadas, el Incremento 1 (ver ADR-0002) queda listo para construirse.
+
+## 10. Niveles de visualización del electrocardiograma — decisión del 2026-09-12 (tercera ronda)
+
+Alex definió tres niveles de detalle para la visualización tipo "electrocardiograma" de la cadena, escalonados por nivel de acceso (no los tres se construyen en el Incremento 1 — ver ADR-0002 para el mapeo a incrementos):
+
+1. **Evaluación exprés gratuita (RF12, resultado macro).** Un gráfico simple con los puntos clave del resultado agregado: un gauge/semáforo principal para la salud general (lectura en un vistazo) acompañado de tres barras horizontales cortas para criticidad, dependencia y riesgo, más el índice de integración (RF16) como número aparte — no un radar de 4 ejes, que exige comparar varias dimensiones a la vez y es más difícil de leer para alguien sin experiencia en gráficos. Sin desglose por conexión ni mapa interactivo. Incluso el nivel gratis tiene algo visual, pero liviano — no es un mapa de nodos y conexiones. Aplica desde este nivel, sin esperar al nivel 2: contraste WCAG AA, cada valor acompañado de texto/ícono (nunca solo color), alt text descriptivo de los valores reales, y foco de teclado en cualquier elemento interactivo. Se construye en el Incremento 1.
+2. **Cuenta registrada con todos sus datos declarados (RF1-RF10) y evaluación exprés detallada (RF13).** Una versión algo más detallada que el nivel gratis: mapa de eslabones y conexiones con sus cuatro valores visibles, sin necesariamente todas las capas interactivas del nivel pago. Corresponde al mapa visual planeado para el Incremento 2 en ADR-0002.
+3. **Servicios de pago (fuera del MVP, Fase 2bis de monetización, Sección 8).** El electrocardiograma completo a detalle, con el flujo correcto de nodos (todas las capas de flujo, navegación completa), más un reporte exportable en PDF/Word con el diagnóstico completo. Se documenta aquí para que el modelo de datos no lo bloquee después, pero no se construye hasta que exista un modelo de pago (sigue fuera de alcance del MVP, Sección 7).
+
+## 11. Decisiones del 2026-09-12 — cuarta ronda, tras análisis multi-rol del estado acumulado
+
+A pedido de Alex ("vuelve a analizar toda la información que se tiene del proyecto, despliega a todos los agentes para que analicen según su expertise que les parece o generen mejoras o consultas"), se desplegaron los siete roles ya usados en ADR-0002 (Producto, CTO/Arquitectura, Ingeniería Full-Stack, UX/UI, QA, Seguridad, Negocio/Finanzas) en dos oleadas: primero sobre `chainpulse_end_to_end.md` en solitario, después sobre el estado acumulado completo de los cinco documentos del proyecto, incluidas las Secciones 9 y 10 ya aprobadas. Esta sección documenta las decisiones que Alex confirmó explícitamente, los ajustes que se incorporaron directamente por cerrar brechas señaladas dentro del alcance ya aprobado (sin abrir alcance nuevo), y los puntos que ningún rol podía resolver por sí solo y que quedan pendientes de una decisión de Alex antes de tocar el esquema de datos o de abrir la evaluación exprés a tráfico público general.
+
+**Decisiones confirmadas por Alex:**
+
+1. **Formato de "tiempo tolerable" y "tiempo de recuperación" (RF3) — categórico.** Full-Stack señaló que RF3 no definía el formato de estos dos campos nuevos. Alex confirmó: categórico simple (Corto/Medio/Largo), igual de rápido de responder que el grado de dependencia — coherente con RNF2. Ya reflejado en RF3.
+2. **Desempate del eslabón más débil cuando ninguna conexión domina a la otra (RF7) — mostrar varias.** QA y CTO señalaron el caso cruzado: una conexión con peor salud pero menor criticidad frente a otra con mejor salud pero mayor criticidad, sin un ganador obvio — y cualquier fórmula de combinación ahí reintroduciría por la puerta trasera el puntaje único que la Sección 1 explícitamente rechaza. Alex confirmó: mostrar varios "eslabones débiles" si hay ambigüedad. RF7 pasa de "la conexión que combina..." a un conjunto no dominado (frontera de Pareto) explícito, ya reflejado en RF7 y en el glosario ("Eslabón más débil").
+3. **Índice de integración de la cadena — sí, versión simple ahora.** Producto notó que la tesis central (Sección 1: éxito = cadena integrada, no eslabones aislados) todavía no tenía un campo propio en el motor — todo se calculaba por conexión, nunca agregado para la cadena completa. Alex confirmó construir ya una versión v1 simple y calibrable. Nuevo RF16, referenciado desde RF9 (dashboard) y RF12 (resultado macro).
+4. **Gate de RF13 con cuatro datos de contacto — se mantiene, pero teléfono opcional.** Seguridad marcó que pedir cuatro datos identificatorios y guardarlos indefinidamente sin consentimiento separado por finalidad ni proceso de borrado es un riesgo real antes de abrir al público general. Alex confirmó mantener el gate pero con teléfono opcional. Ya reflejado en RF13 (tres datos obligatorios —correo, nombre, empresa— más teléfono opcional, dos consentimientos separados sin premarcar, enlace visible a la política de privacidad).
+
+**Ajustes incorporados sin pregunta nueva, por cerrar brechas señaladas dentro del alcance ya aprobado:**
+
+5. **Consistencia de terminología "salud" (RF6).** QA detectó que RF6 seguía usando textualmente "puntaje de coordinación" pese a que el glosario (Sección 3) ya había sido actualizado a "Salud" en la Sección 9 — una inconsistencia real entre el glosario y el requisito, no solo un detalle de redacción. Corregido en RF6 para que use el mismo término que el glosario y el resto del documento.
+6. **Calidad y derechos sobre los datos de contacto (RNF8, nuevo).** QA y Seguridad coincidieron en que RF13/RF14 pedían y retenían datos de contacto sin exigir validación de formato (dejando entrar basura tipo "asdf@asdf.com" que contamina el dataset que RNF6 busca acumular) ni un mecanismo explícito de borrado a pedido, pese a que `chainpulse_end_to_end.md` ya lo contemplaba. Nuevo RNF8: valida formato de correo/teléfono antes de persistir (no verifica que la persona sea real — verificación por link queda fuera del MVP) y exige un mecanismo de borrado sin necesidad de cuenta, más una política de privacidad publicada y accesible desde el propio formulario.
+7. **Control de abuso del desbloqueo de detalle (RF17, nuevo).** Full-Stack y QA señalaron que nada en el documento impedía "desbloquear" el mismo resultado macro varias veces con datos de contacto distintos — un patrón de abuso distinto al de RF15 (que protege el inicio de evaluaciones, no el desbloqueo del detalle). Nuevo RF17: un desbloqueo válido por evaluación exprés, con su propia limitación de tasa independiente de la de RF15.
+8. **El resultado macro deja de ser solo cuatro números (RF12).** UX/UI advirtió que un resultado macro sin ninguna lectura cualitativa se parece más a un teaser publicitario que a valor real, en tensión con el principio de `chainpulse_end_to_end.md` de que "el valor esencial no debe esconderse tras registro o pago". Sin romper el gate de RF13 (que sigue protegiendo el desglose por conexión y la recomendación priorizada), RF12 ahora exige también una frase breve en lenguaje llano indicando cuál de las cuatro dimensiones está peor a nivel agregado.
+9. **Nivel 1 de visualización — gauge/semáforo, no radar (Sección 10, punto 1).** UX/UI y Full-Stack coincidieron en que un radar de 4 ejes exige comparar varias dimensiones a la vez y es difícil de leer para alguien sin experiencia en gráficos — el público del segmento de calibración (Sección 9, punto 4: pyme comercial). Se reemplaza por un gauge/semáforo principal para la salud general más tres barras horizontales cortas para criticidad, dependencia y riesgo, con el índice de integración (RF16) como número aparte. Los requisitos de accesibilidad que ya aplicaban al nivel 2 (contraste WCAG AA, texto/ícono además de color, alt text descriptivo, foco de teclado) se adelantan al nivel 1 desde el Incremento 1, en vez de esperar al nivel 2.
+
+**Pendiente — no bloquea el Incremento 1, pero requiere una decisión de Alex antes de tocar el esquema de datos o de abrir la evaluación exprés a tráfico público general (no solo los dos pilotos):**
+
+- **Estructura de `ruleVersion` (CTO).** Si el resultado del motor lleva un único `ruleVersion` por ciclo o cuatro versiones independientes (una por salud/criticidad/dependencia/riesgo), dado que esas cuatro dimensiones cambian con cadencias distintas — salud cada ciclo (RF6), criticidad/dependencia solo si el administrador edita RF3. De esto depende si RF7 se implementa como una función pura o como cuatro funciones puras orquestadas.
+- **El gate macro/detalle como gate de presentación, no de cómputo (CTO).** Para que RF12 y RF13 nunca muestren resultados calculados con `ruleVersion` distintas entre el momento del resultado macro y el momento en que se desbloquea el detalle, CTO recomienda calcular una sola vez en RF12 el resultado completo (los cuatro valores de todas las conexiones), persistirlo de inmediato ligado a la sesión anónima, y que RF13 solo cambie qué campos de ese mismo registro se muestran. Coherente con RNF6/RF14 (persistencia indefinida) sin duplicar filas ni arriesgar divergencia.
+- **Campos "tipo de flujo" y estado declarado/inferido/verificado (CTO).** Necesarios recién para el nivel 3 de visualización (Sección 10, fuera del MVP), pero si no se agregan al esquema desde el Incremento 1, el nivel 3 exigirá migrar datos históricos en vez de solo construir UI nueva. No bloquean nada del Incremento 1.
+- **Plazo explícito de retención para evaluaciones exprés que nunca piden el detalle (Seguridad).** RNF6 exige persistencia indefinida de las respuestas crudas de cuentas registradas; Seguridad recomienda fijar un plazo (p. ej. 90 días) tras el cual una evaluación exprés que nunca pidió el detalle (RF13) se anonimiza a solo puntajes agregados, en vez de conservarse indefinidamente con datos que nadie pidió retener. Es una decisión de producto, no solo técnica.
+- **Revisión legal como gate explícito antes de tráfico público anónimo masivo (Seguridad).** Con dos empresas piloto controladas directamente por Alex, el riesgo regulatorio es bajo y los controles ya definidos (RNF5, RNF7, RNF8) cubren la debida diligencia razonable. Seguridad recomienda que la revisión legal (ya mencionada como pendiente en ADR-0002) sea condición de entrada obligatoria antes de remover cualquier límite que hoy mantenga la evaluación exprés dentro del círculo de los pilotos — no antes de construir el Incremento 1, sí antes de anunciarlo públicamente.
+- **Desempate cuando dos conexiones empatan exactamente en salud y en criticidad (QA).** RF7 ya resuelve el caso de dominancia y el caso cruzado (ambigüedad → se muestran varias), pero no define un criterio secundario para un empate total entre dos conexiones. Queda abierto si se usa riesgo, dependencia, o simplemente se muestran ambas igual que en el caso ambiguo.
+
+Con las cuatro decisiones confirmadas de esta sección y los ajustes ya incorporados, el Incremento 1 sigue listo para construirse (Fase 4); los puntos pendientes de esta lista se resuelven antes de tocar el esquema de Prisma o antes de anunciar la evaluación exprés fuera del círculo de los dos pilotos, lo que ocurra primero.
+
+## 12. Decisiones del 2026-09-12 — quinta ronda: revisión final de viabilidad antes de Fase 4
+
+A pedido de Alex ("quiero que actualices todo, todos los documentos, que valides si es viable y se arme todo correctamente, los agentes deben revisar todo, me confirmes si podemos pasar a la siguiente fase"), se volvió a desplegar a los siete roles (Producto, CTO/Arquitectura, Ingeniería Full-Stack, UX/UI, QA, Seguridad, Negocio/Finanzas) sobre el estado completo del proyecto, incluida la Sección 11 y su lista de pendientes. Esta sección cierra esos pendientes con una decisión concreta cada uno, define los valores numéricos que faltaban para poder escribir código y pruebas sin adivinar, documenta dos requisitos nuevos que surgieron de brechas reales, y da el veredicto final de viabilidad.
+
+**Veredicto de viabilidad — GO para Fase 4, con alcance acotado a los dos pilotos.** Los siete roles coinciden en que el contenido funcional (RF1-RF18, RNF1-RNF9) es suficiente para empezar el scaffolding y el Incremento 1 completo, y que nada de lo pendiente obliga a rediseñar el modelo de dominio ya aprobado (ADR-0001/0002). La única condición real es de alcance, no de contenido: se construye y se prueba ya con los dos pilotos controlados por Alex; abrir la evaluación exprés (RF11-RF18) a tráfico público general de internet queda condicionado a la revisión legal que Seguridad viene marcando desde ADR-0002 y que esta ronda reafirma como gate explícito, no como sugerencia.
+
+**Pendientes de la Sección 11, resueltos:**
+
+1. **Estructura de `ruleVersion` — un único valor por resultado, no cuatro.** CTO y Full-Stack coincidieron en que fragmentar la versión por dimensión complica los snapshot tests de ADR-0002 sin beneficio real, porque RF7 necesita salud y criticidad simultáneas para calcular la frontera de Pareto. La cadencia distinta entre salud (cada ciclo) y criticidad/dependencia (solo si se edita RF3) se resuelve con metadatos de procedencia del dato en `Conexión` (cuándo se confirmó/actualizó cada campo de RF3), no fragmentando la versión de reglas. RF7 se implementa como una única función pura orquestadora.
+2. **Gate macro/detalle — confirmado como gate de presentación, no de cómputo.** El resultado completo (los cuatro valores de todas las conexiones) se calcula una sola vez en RF12, se persiste de inmediato ligado a la sesión anónima con su `ruleVersion`, y RF13 únicamente revela campos adicionales de ese mismo registro — nunca recalcula. La entidad `EvaluacionExpres` incorpora `detalleDesbloqueado` (booleano) y `detalleDesbloqueadoEn` (fecha), que además es donde se ancla el control de RF17 (un solo desbloqueo válido).
+3. **Campos "tipo de flujo" y estado declarado/inferido/verificado — se agregan ya al esquema, sin UI.** Con valor nulo o por defecto (`estado` = "declarado") desde el Incremento 1, para no migrar datos históricos cuando el nivel 3 de visualización (Sección 10) los necesite. No cambian ningún RF del Incremento 1.
+4. **Plazo de retención de evaluaciones exprés sin desbloqueo — 90 días para los datos que identifican al visitante, indefinido para los puntajes agregados.** Si una evaluación exprés nunca pide el detalle (RF13), a los 90 días se elimina cualquier dato que pudiera identificar la sesión (dirección IP, huella de dispositivo usada solo para RF15/RF17), mientras que los valores agregados de salud/criticidad/dependencia/riesgo y el índice de integración (RF16) de esa evaluación se conservan indefinidamente igual que cualquier otro dato de calibración de RNF6 — porque esos agregados nunca fueron un dato personal, no hay nada de identidad que anonimizar en ellos. Los identificadores técnicos usados solo para limitar abuso (RF15/RF17) se purgan antes, a las 48-72 horas, por ser un dato de seguridad de finalidad distinta a la del diagnóstico.
+5. **Revisión legal antes de tráfico público general — reafirmada como gate obligatorio, no opcional.** Condición de entrada antes de remover cualquier límite que hoy mantenga la evaluación exprés dentro del círculo de los dos pilotos; no bloquea construir ni probar el Incremento 1 con ellos.
+6. **Desempate exacto salud=criticidad en RF7 — no hace falta una regla de selección nueva.** Dos conexiones empatadas en ambos ejes no se dominan entre sí, así que ya quedan juntas en el conjunto no dominado sin ningún cambio de lógica; lo único que faltaba era el orden de lectura determinista dentro de ese conjunto, ya resuelto en RF7 con riesgo descendente, dependencia descendente y el identificador de conexión como criterios de desempate puramente de presentación (nunca de selección).
+
+**Valores numéricos definidos para poder construir y probar sin adivinar** (todos marcados como hipótesis inicial de calibración, ajustable con los datos reales de los dos pilotos, coherente con el lenguaje de "no es una magnitud científica exacta" ya usado en RF16): escala de respuesta del cuestionario de RF6 (Likert 1-5 más "No sé"/"No aplica", normalizada a salud 0-100); cortes de Corto/Medio/Largo de RF3 (menos de 24 horas / 24 horas a 1 semana / más de 1 semana); umbral "aceptable" de RF16 (salud ≥ 70/100) y penalización por punto único de falla (-10 puntos porcentuales por punto, piso 0); límite de RF15 (5 evaluaciones iniciadas por huella de origen por hora) y de RF17 (10 intentos de desbloqueo por huella de origen por hora).
+
+**Requisitos nuevos, por brechas reales encontradas en esta ronda:**
+
+- **RF18 — Minimización de datos de terceros en texto libre de la evaluación exprés** (Seguridad): el principio de `chainpulse_end_to_end.md` de evitar nombres reales de proveedores/clientes hasta que sean necesarios nunca había aterrizado como requisito — ahora es un requisito de guía por defecto (alias sugerido, advertencia visible), no un bloqueo del envío.
+- **RNF9 — Instrumentación mínima del Incremento 1** (Producto, Negocio): el criterio de "listo" de ADR-0002 era enteramente técnico/UX; sin registrar tiempo real de completar el cuestionario, tasa de finalización, conversión macro→detalle y ejecución de la recomendación, no hay forma de comprobar si el Incremento 1 generó valor real antes de invertir en el Incremento 2 — el mismo riesgo que Negocio señaló sobre confundir "leads capturados en RF13" con validación de valor.
+
+**Corrección de un requisito ya existente por ambigüedad real:** RF7 no especificaba el criterio de orden cuando dos conexiones empatan exactamente en salud y criticidad — corregido en el propio RF7 (ver punto 6 arriba), sin cambiar el criterio de aceptación ya escrito en la Sección 6, que sigue siendo válido.
+
+**Fuera del alcance de esta sección, señalado pero no resuelto aquí porque es una decisión de arquitectura/implementación, no de requisitos:** el mecanismo de autenticación de administrador/responsable de área (contraseña, magic link, MFA) y el registro de auditoría de accesos a datos de tenant, que Seguridad marcó como pendientes de definir antes de escribir el esquema de autenticación — quedan para ADR-0001 o un ADR nuevo antes de construir esa parte específica, no bloquean el resto del scaffolding. Tampoco se resuelve aquí, por ser trabajo de contenido y no de requisitos, la redacción final de las preguntas del cuestionario de RF5/RF6 ni la guía de interacción de una página para el formulario de RF3 (agrupación visual, guardado parcial) y el gate de RF13 (orden de campos, estado del botón) que UX/UI recomendó fijar antes de maquetar pantallas finales — no bloquean empezar el scaffolding del backend ni el modelo de datos.
+
+Con esta ronda, el Incremento 1 queda funcionalmente cerrado (RF1-RF18, RNF1-RNF9) y sin pendientes que bloqueen tocar código. `README.md` y los ADR-0001/0002 se actualizan junto con esta sección para reflejar el mismo estado.
