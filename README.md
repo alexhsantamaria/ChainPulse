@@ -14,9 +14,11 @@ Repositorio en GitHub: https://github.com/alexhsantamaria/ChainPulse (rama `main
 
 Con el fix aplicado, la cadena completa corre limpia en Windows: `npm run prisma:generate`, `npm run typecheck`, `npm run lint`, `npm run test` (19/19) y `npm run build` — todo verde.
 
-**Base de datos:** se decidió Neon (Postgres gestionado) para el Incremento 1 — en curso levantar el proyecto y migrar.
+**Base de datos: Neon, ya en producción de desarrollo.** Se creó el proyecto en Neon (Postgres gestionado, región São Paulo), se corrió `npm run prisma:migrate` contra esa base (migración inicial aplicada) y se aplicó `prisma/rls.sql` completo desde el SQL Editor de Neon — las 8 políticas RLS de aislamiento multi-tenant están activas y verificadas. Se creó además el rol restringido `chainpulse_app` (sin privilegios de dueño de tabla, por lo tanto sujeto de verdad a RLS — ver nota de seguridad abajo) para las consultas de la app en desarrollo; el rol `neondb_owner` queda reservado solo para migraciones futuras. Con esto se cierra el criterio de "listo" del Incremento 1 que pedía correr RLS con una base real (ADR-0002).
 
 **Autenticación (RF1/RF4):** decidida en ADR-0003 — Auth.js (NextAuth) con Credentials + hash Argon2id, MFA obligatorio para `ADMINISTRADOR`, rate limiting y reset sin enumeración de usuarios, según los apuntes del módulo de Seguridad. Pendiente de implementar.
+
+**Seguridad de credenciales:** ver [`SEGURIDAD-credenciales.md`](./SEGURIDAD-credenciales.md) — checklist de contraseñas/tokens que se compartieron durante la configuración del entorno y quedan pendientes de rotar.
 
 ## Documentos
 
@@ -25,6 +27,7 @@ Con el fix aplicado, la cadena completa corre limpia en Windows: `npm run prisma
 - [`chainpulse_end_to_end.md`](./chainpulse_end_to_end.md) — especificación de producto más profunda y de más largo plazo (visión, no literal): recorrido de usuario, motor de diagnóstico, contratos de datos, arquitectura propuesta. Se usa como referencia, reconciliada por ADR-0002.
 - [`docs/ADR/0002-alcance-escalonado-end-to-end.md`](./docs/ADR/0002-alcance-escalonado-end-to-end.md) — análisis de viabilidad multi-rol (Producto, CTO, Full-Stack, UX/UI, QA, Seguridad, Negocio), reconciliación de conflictos entre `requirements.md`/ADR-0001 y `chainpulse_end_to_end.md`, y hoja de ruta por incrementos. Aceptado, sincronizado con RF16-RF18 y el teléfono opcional de RF13.
 - [`docs/ADR/0003-autenticacion.md`](./docs/ADR/0003-autenticacion.md) — decisión de mecanismo de autenticación para RF1/RF4: Auth.js (NextAuth), hash Argon2id, MFA para administradores, sourced en los apuntes del módulo de Seguridad. Aceptado.
+- [`SEGURIDAD-credenciales.md`](./SEGURIDAD-credenciales.md) — checklist de credenciales expuestas durante la configuración del entorno y pendientes de rotar (no contiene secretos reales).
 
 ## Cómo levantar el proyecto
 
@@ -39,8 +42,8 @@ npm run test               # vitest run — 19 pruebas del motor v1
 npm run dev                 # Next.js en http://localhost:3000
 ```
 
-`prisma/schema.prisma` necesita una base PostgreSQL real para `npm run prisma:migrate` (Neon, decidido para el Incremento 1); después de esa migración, aplicar `prisma/rls.sql`.
+`prisma/schema.prisma` usa una base PostgreSQL real en Neon (`DATABASE_URL` en `.env`, no versionado). Para migraciones nuevas, cambiar temporalmente `DATABASE_URL` al rol `neondb_owner` (dueño de las tablas); para desarrollo normal, usar el rol restringido `chainpulse_app` (sujeto a las políticas RLS de `prisma/rls.sql`, ya aplicadas en la base).
 
 ## Próximo paso
 
-Con el scaffolding validado de punta a punta (generate, typecheck, lint, test, build) y las decisiones de base de datos (Neon) y autenticación (ADR-0003) cerradas: crear el proyecto en Neon, correr `prisma:migrate` + `prisma/rls.sql` contra esa base, conectar el motor a Prisma real, implementar Auth.js según ADR-0003, las rutas de Next.js para RF1-RF10 (cuenta completa) y RF11-RF18 (evaluación exprés con el gate macro/detalle), el formulario de RF3 con la agrupación visual que recomendó UX/UI, y las pruebas de integración de aislamiento multi-tenant (RNF1) con datos reales de las dos empresas piloto — antes de tocar el mapa visual (Incremento 2).
+Con el scaffolding validado de punta a punta (generate, typecheck, lint, test, build), la base de datos real en Neon con RLS activo y verificado, y la autenticación decidida (ADR-0003): implementar Auth.js según ADR-0003 (extender el modelo `Usuario` con hash de contraseña, MFA y control de intentos fallidos), conectar el motor a Prisma real, las rutas de Next.js para RF1-RF10 (cuenta completa) y RF11-RF18 (evaluación exprés con el gate macro/detalle), el formulario de RF3 con la agrupación visual que recomendó UX/UI, y las pruebas de integración de aislamiento multi-tenant (RNF1) con datos reales de las dos empresas piloto — antes de tocar el mapa visual (Incremento 2).
