@@ -27,8 +27,11 @@ const adapter = new PrismaPg({ connectionString: seedDatabaseUrl });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  const email = process.env.SEED_ADMIN_EMAIL ?? "admin@chainpulse.test";
-  const passwordPlano = process.env.SEED_ADMIN_PASSWORD ?? "CambiarEstaClave123!";
+  // "||" (no "??"): SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD pueden estar
+  // definidas pero vacias en .env.example (""), y en ese caso tambien
+  // deben caer al valor por defecto, no quedar en cadena vacia.
+  const email = process.env.SEED_ADMIN_EMAIL?.trim() || "admin@chainpulse.test";
+  const passwordPlano = process.env.SEED_ADMIN_PASSWORD?.trim() || "CambiarEstaClave123!";
 
   const empresa = await prisma.empresa.upsert({
     where: { id: "empresa-piloto-1" },
