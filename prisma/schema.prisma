@@ -101,9 +101,24 @@ model Usuario {
   id        String     @id @default(cuid())
   empresaId String
   empresa   Empresa    @relation(fields: [empresaId], references: [id], onDelete: Cascade)
-  email     String
+  // ADR-0003: email UNICO GLOBAL (no compuesto con empresaId) — el login
+  // busca por email sin conocer el tenant de antemano, via la funcion
+  // Postgres SECURITY DEFINER login_lookup() (prisma/auth_functions.sql).
+  // Unica excepcion deliberada y acotada al aislamiento por RLS.
+  email     String     @unique
   nombre    String
   rol       RolUsuario
+
+  // ADR-0003: hash Argon2id, nunca texto plano (src/infra/auth/password.ts).
+  passwordHash String
+
+  // ADR-0003: MFA (TOTP) obligatorio para ADMINISTRADOR desde el Incremento 1.
+  mfaSecret     String?
+  mfaHabilitado Boolean @default(false)
+
+  // ADR-0003: rate limiting / bloqueo temporal contra fuerza bruta en el login.
+  intentosFallidos Int       @default(0)
+  bloqueadoHasta   DateTime?
 
   // RF4: un Responsable queda limitado a las conexiones de su propio eslabon.
   eslabonId String?
@@ -113,7 +128,6 @@ model Usuario {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  @@unique([empresaId, email])
   @@index([empresaId])
   @@map("usuarios")
 }

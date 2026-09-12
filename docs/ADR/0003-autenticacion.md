@@ -58,3 +58,15 @@ Se adopta la **Opción A — Auth.js (NextAuth)**, con:
 - `Apuntes/12_Seguridad/Prácticas de codificación segura/Autenticacion-autorizacion-y-gestion-de-credenciales Apuntes.pdf`
 - `Apuntes/12_Seguridad/OWASP Top 10 2021/Identification-and-Authentication-Failures Apuntes.pdf`
 - ADR-0001 (pendiente que este documento cierra) y `requirements.md` (RF1, RF4).
+
+## Addendum — implementacion (2026-09-12)
+
+Al implementar la Opcion A surgio un detalle no resuelto en la version original de este ADR: el login recibe un email sin saber a que tenant (empresa) pertenece, pero las politicas RLS de `usuarios` (`prisma/rls.sql`) exigen que `app.tenant_id` ya este fijado para leer cualquier fila — un candado que el propio login, por definicion, todavia no puede abrir.
+
+Dos decisiones para resolverlo, documentadas aca para trazabilidad:
+
+1. **`email` pasa a ser unico global** (`@unique` simple), no compuesto con `empresaId` como en la primera version del schema. Se asume que una persona pertenece a una sola empresa en ChainPulse — coherente con el alcance de RF1/RF4 (no hay caso de uso de una misma persona en dos tenants distintos en el MVP). Si eso cambia mas adelante, hay que revisar esta decision.
+2. **Funcion Postgres `login_lookup(email)` con `SECURITY DEFINER`** (`prisma/auth_functions.sql`) — la unica excepcion deliberada y acotada al aislamiento por RLS: expone solo los campos que la autenticacion necesita, para un usuario a la vez, y solo `chainpulse_app` puede ejecutarla (no `PUBLIC`). No es un bypass general — una vez que el login resuelve el tenant, el resto de cada request vuelve a pasar por `tenantClient()` (RLS normal, ADR-0001). Es el mismo criterio de "defensa en profundidad" ya aplicado en el resto del proyecto, acotado al unico punto donde el modelo de RLS choca con la realidad de un login por email.
+
+Implementado: `src/auth.ts` (config de Auth.js v5), `src/infra/auth/` (`password.ts`, `mfa.ts`, `loginLookup.ts`, `rateLimit.ts`), `src/app/login/page.tsx`, `prisma/seed.ts` (usuario de prueba, no hay UI de registro de RF1 todavia). Pendiente: UI de alta de MFA (activar/escanear QR) — el motor de verificacion ya existe (`src/infra/auth/mfa.ts`), falta la pantalla; UI de registro/onboarding de RF1; middleware de proteccion de rutas para el dashboard (no existe dashboard todavia).
+
