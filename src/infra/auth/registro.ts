@@ -18,6 +18,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "../prisma/client";
 import { hashPassword } from "./password";
 import { generarSecretoMfa } from "./mfa";
+import { EmailYaRegistradoError } from "./errores";
 
 export interface RegistroInput {
   nombreEmpresa: string;
@@ -29,11 +30,7 @@ export interface RegistroResultado {
   empresaId: string;
 }
 
-export class EmailYaRegistradoError extends Error {
-  constructor() {
-    super("EMAIL_YA_REGISTRADO");
-  }
-}
+export { EmailYaRegistradoError };
 
 export async function registrarEmpresaYAdmin(input: RegistroInput): Promise<RegistroResultado> {
   const email = input.email.trim().toLowerCase();

@@ -1,0 +1,42 @@
+// Infraestructura — envio de correo transaccional via Resend (RF4).
+//
+// Sin un dominio propio verificado en Resend, el remitente por defecto
+// ("onboarding@resend.dev") solo puede enviar a la direccion con la que
+// se creo la cuenta de Resend (modo sandbox) -- suficiente para probar el
+// flujo de invitacion ahora; verificar un dominio propio queda pendiente
+// para cuando se invite a gente real de las empresas piloto (no bloquea
+// el Incremento 1).
+import { Resend } from "resend";
+
+function obtenerCliente(): Resend {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error("Falta RESEND_API_KEY en .env");
+  }
+  return new Resend(apiKey);
+}
+
+const REMITENTE = process.env.RESEND_FROM_EMAIL || "ChainPulse <onboarding@resend.dev>";
+
+function escaparHtml(texto: string): string {
+  return texto.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+export async function enviarInvitacionResponsable(datos: {
+  email: string;
+  empresaNombre: string;
+  eslabonNombre: string;
+  linkInvitacion: string;
+}): Promise<void> {
+  const cliente = obtenerCliente();
+  await cliente.emails.send({
+    from: REMITENTE,
+    to: datos.email,
+    subject: `${datos.empresaNombre} te invitó a ChainPulse`,
+    html: `
+      <p>Te invitaron a ser responsable del eslabón <strong>${escaparHtml(datos.eslabonNombre)}</strong> en <strong>${escaparHtml(datos.empresaNombre)}</strong> dentro de ChainPulse.</p>
+      <p><a href="${datos.linkInvitacion}">Aceptar invitación y crear tu cuenta</a></p>
+      <p>Este enlace vence en 7 días.</p>
+    `,
+  });
+}
