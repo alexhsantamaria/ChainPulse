@@ -20,7 +20,16 @@
 -- prisma/rls.sql (requiere que las tablas ya existan, incluyendo las
 -- columnas nuevas de Usuario — correr prisma:migrate primero).
 
-CREATE OR REPLACE FUNCTION login_lookup(p_email text)
+-- RF6 (2026-09): el login necesita el eslabonId de un RESPONSABLE en la
+-- sesion (ver src/auth.config.ts) para saber que conexiones le
+-- corresponde responder, sin una consulta aparte. Postgres NO permite que
+-- CREATE OR REPLACE cambie el tipo de retorno de una funcion existente
+-- (agregar una columna a RETURNS TABLE cuenta como cambio de tipo,
+-- error 42P13) -- hay que borrarla primero. DROP...IF EXISTS es seguro de
+-- re-correr aunque la funcion ya se haya borrado antes.
+DROP FUNCTION IF EXISTS login_lookup(text);
+
+CREATE FUNCTION login_lookup(p_email text)
 RETURNS TABLE (
   id text,
   "empresaId" text,
@@ -32,10 +41,6 @@ RETURNS TABLE (
   "mfaHabilitado" boolean,
   "intentosFallidos" integer,
   "bloqueadoHasta" timestamp,
-  -- RF6 (2026-09): el login necesita el eslabonId de un RESPONSABLE en la
-  -- sesion (ver src/auth.config.ts) para saber que conexiones le
-  -- corresponde responder, sin una consulta aparte -- CREATE OR REPLACE
-  -- es seguro de re-correr, agrega la columna sin romper lo existente.
   "eslabonId" text
 )
 LANGUAGE sql
