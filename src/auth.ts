@@ -7,16 +7,20 @@
 // incorrecta, cuenta bloqueada, MFA faltante o invalido) devuelven el
 // mismo resultado (null / "credenciales invalidas"), sin distinguir el
 // motivo real al cliente.
+//
+// La configuracion base (session, pages, callbacks jwt/session) vive en
+// auth.config.ts, compartida con el middleware edge-safe — ver el
+// comentario de ese archivo para el porque de la separacion.
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import { authConfig } from "@/auth.config";
 import { buscarUsuarioPorEmail } from "@/infra/auth/loginLookup";
 import { verifyPassword } from "@/infra/auth/password";
 import { verificarCodigoMfa } from "@/infra/auth/mfa";
 import { estaBloqueado, registrarIntentoFallido, resetearIntentos } from "@/infra/auth/rateLimit";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  session: { strategy: "jwt" },
-  pages: { signIn: "/login" },
+  ...authConfig,
   providers: [
     Credentials({
       credentials: {
@@ -58,19 +62,5 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
-  callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
-        token.empresaId = user.empresaId;
-        token.rol = user.rol;
-      }
-      return token;
-    },
-    async session({ session, token }) {
-      session.user.empresaId = token.empresaId;
-      session.user.rol = token.rol;
-      return session;
-    },
-  },
   secret: process.env.NEXTAUTH_SECRET,
 });
