@@ -31,14 +31,19 @@ RETURNS TABLE (
   "mfaSecret" text,
   "mfaHabilitado" boolean,
   "intentosFallidos" integer,
-  "bloqueadoHasta" timestamp
+  "bloqueadoHasta" timestamp,
+  -- RF6 (2026-09): el login necesita el eslabonId de un RESPONSABLE en la
+  -- sesion (ver src/auth.config.ts) para saber que conexiones le
+  -- corresponde responder, sin una consulta aparte -- CREATE OR REPLACE
+  -- es seguro de re-correr, agrega la columna sin romper lo existente.
+  "eslabonId" text
 )
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public
 AS $$
   SELECT id, "empresaId", email, nombre, rol, "passwordHash", "mfaSecret",
-         "mfaHabilitado", "intentosFallidos", "bloqueadoHasta"
+         "mfaHabilitado", "intentosFallidos", "bloqueadoHasta", "eslabonId"
   FROM usuarios
   WHERE email = p_email
   LIMIT 1;

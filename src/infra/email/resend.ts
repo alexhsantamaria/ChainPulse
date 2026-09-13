@@ -40,3 +40,17 @@ export async function enviarInvitacionResponsable(datos: {
     `,
   });
 }
+
+// RF5 — aviso de apertura de ciclo a un responsable elegible.
+export async function enviarAvisoCicloAbierto(datos: { email: string; nombre: string }): Promise<void> {
+  const cliente = obtenerCliente();
+  await cliente.emails.send({
+    from: REMITENTE,
+    to: datos.email,
+    subject: "Nuevo ciclo de pulso abierto en ChainPulse",
+    html: `
+      <p>Hola ${escaparHtml(datos.nombre)},</p>
+      <p>Se abrió un nuevo ciclo de pulso para las conexiones de tu eslabón. Ingresá a ChainPulse para responder el cuestionario.</p>
+    `,
+  });
+}
