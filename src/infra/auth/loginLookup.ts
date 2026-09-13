@@ -16,6 +16,10 @@ export interface UsuarioParaLogin {
   mfaHabilitado: boolean;
   intentosFallidos: number;
   bloqueadoHasta: Date | null;
+  // RF6: eslabonId del RESPONSABLE (null para ADMINISTRADOR). Requiere
+  // haber vuelto a correr prisma/auth_functions.sql en Neon -- ver el
+  // comentario agregado ahi.
+  eslabonId: string | null;
 }
 
 export async function buscarUsuarioPorEmail(email: string): Promise<UsuarioParaLogin | null> {

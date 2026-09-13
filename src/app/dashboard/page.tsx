@@ -54,6 +54,15 @@ export default async function DashboardPage() {
           </p>
           <p className="mt-2 text-sm text-slate-600">Ver / declarar conexiones →</p>
         </Link>
+        <Link
+          href="/dashboard/ciclos"
+          className="rounded border border-slate-200 p-4 hover:border-slate-400 sm:col-span-2"
+        >
+          <p className="text-sm text-slate-500">Ciclos de pulso</p>
+          <p className="mt-2 text-sm text-slate-600">
+            Abrir un ciclo, responder el cuestionario o ver los resultados calculados (RF5-RF7) →
+          </p>
+        </Link>
       </div>
 
       {eslabones.length === 0 && (

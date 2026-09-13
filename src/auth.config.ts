@@ -29,12 +29,15 @@ export const authConfig = {
       if (user) {
         token.empresaId = user.empresaId;
         token.rol = user.rol;
+        token.eslabonId = user.eslabonId ?? null;
       }
       return token;
     },
     async session({ session, token }) {
+      session.user.id = token.sub as string;
       session.user.empresaId = token.empresaId;
       session.user.rol = token.rol;
+      session.user.eslabonId = token.eslabonId;
       return session;
     },
   },
