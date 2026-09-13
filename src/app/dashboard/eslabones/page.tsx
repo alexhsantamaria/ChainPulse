@@ -33,11 +33,19 @@ export default async function EslabonesPage() {
           {eslabones.map((eslabon: any) => (
             <li key={eslabon.id} className="flex items-center justify-between px-4 py-3">
               <span>{eslabon.nombre}</span>
-              {eslabon.esProveedorExterno && (
-                <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                  proveedor externo
-                </span>
-              )}
+              <span className="flex items-center gap-3">
+                {eslabon.esProveedorExterno && (
+                  <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                    proveedor externo
+                  </span>
+                )}
+                <Link
+                  href={`/dashboard/eslabones/${eslabon.id}/invitar`}
+                  className="text-xs text-slate-500 underline hover:text-slate-700"
+                >
+                  Invitar responsable
+                </Link>
+              </span>
             </li>
           ))}
         </ul>
