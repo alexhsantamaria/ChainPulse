@@ -1,11 +1,14 @@
 // Pagina — resultados de un ciclo cerrado: salud, criticidad, riesgo y
 // dependencia (los 4 valores de RF9) por conexion, eslabones mas debiles,
 // indice de integracion, recomendacion (RF8) y tendencia de salud de
-// ciclos anteriores por conexion (RF9).
+// ciclos anteriores por conexion (RF9). El administrador puede marcar una
+// recomendacion como ejecutada (RNF9); el boton solo se muestra a
+// ADMINISTRADOR.
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/auth";
 import { obtenerResultadosCiclo } from "@/infra/ciclos/resultados";
+import MarcarEjecutadaBoton from "./MarcarEjecutadaBoton";
 
 export default async function ResultadosCicloPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -20,6 +23,7 @@ export default async function ResultadosCicloPage({ params }: { params: Promise<
   }
 
   const idsDebiles = new Set(datos.resultadoCiclo?.eslabonesMasDebilesIds ?? []);
+  const esAdmin = session.user.rol === "ADMINISTRADOR";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-12">
@@ -68,11 +72,22 @@ export default async function ResultadosCicloPage({ params }: { params: Promise<
                 </p>
               )}
               {r.recomendacion && (
-                <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2">
+                <div className="flex flex-col gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2">
                   <p className="text-xs font-medium text-amber-800">
                     Recomendación · prioridad {r.recomendacion.prioridad.toLowerCase()}
                   </p>
-                  <p className="mt-1 text-xs text-amber-900">{r.recomendacion.texto}</p>
+                  <p className="text-xs text-amber-900">{r.recomendacion.texto}</p>
+                  {esAdmin && (
+                    <MarcarEjecutadaBoton
+                      cicloId={id}
+                      conexionId={r.conexionId}
+                      yaEjecutada={
+                        r.recomendacionEjecutadaEn
+                          ? new Date(r.recomendacionEjecutadaEn).toLocaleDateString("es-AR")
+                          : null
+                      }
+                    />
+                  )}
                 </div>
               )}
             </li>

@@ -21,6 +21,16 @@
 // criticidad recalculada con las reglas nuevas, no la que se uso para
 // elegir el eslabon mas debil en su momento -- mismo trade-off aceptado,
 // documentado una sola vez aca.
+//
+// RF9 (tendencia) + ruleVersion: la tendencia de salud SOLO encadena
+// resultados con el mismo ruleVersion que el resultado actual de esa
+// conexion -- si el motor se recalibra (Seccion 12 de requirements.md ya
+// lo anticipa como algo esperado, no hipotetico), una version vieja del
+// calculo no es directamente comparable con la nueva. Sin este filtro, un
+// cambio de reglas se veria como un salto real de salud en el grafico,
+// sin ningun aviso. El efecto practico de un cambio de version es que la
+// tendencia "se corta" y vuelve a crecer desde cero con la version nueva,
+// nunca que mezcla ambas.
 import { prisma } from "../prisma/client";
 import { generarRecomendacion, type Recomendacion } from "@/engine/recomendacion";
 import { calcularCriticidad } from "@/engine/criticidad";
@@ -44,6 +54,8 @@ export interface ResultadoConexionLeido {
   recomendacion: Recomendacion | null;
   /** Salud de esta conexion en los ultimos ciclos, orden cronologico ascendente, el actual incluido al final (RF9). */
   tendenciaSalud: number[];
+  /** Momento en que se marco como ejecutada la recomendacion de esta conexion, o null si no se marco (RNF9). Solo tiene sentido cuando recomendacion no es null. */
+  recomendacionEjecutadaEn: Date | null;
 }
 
 export interface ResultadosCiclo {
@@ -93,16 +105,35 @@ export async function obtenerResultadosCiclo(
         ? await tx.resultadoConexion.findMany({
             where: { conexionId: { in: conexionIds } },
             orderBy: { createdAt: "asc" },
-            select: { conexionId: true, salud: true },
+            select: { conexionId: true, salud: true, ruleVersion: true },
           })
         : [];
-    const historicoPorConexion = new Map<string, number[]>();
+    interface PuntoHistorico {
+      salud: number;
+      ruleVersion: string;
+    }
+    const historicoPorConexion = new Map<string, PuntoHistorico[]>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
     historicoRaw.forEach((r: any) => {
       const lista = historicoPorConexion.get(r.conexionId as string) ?? [];
-      lista.push(r.salud as number);
+      lista.push({ salud: r.salud as number, ruleVersion: r.ruleVersion as string });
       historicoPorConexion.set(r.conexionId as string, lista);
     });
+
+    // RNF9 -- estado "ejecutada" de la recomendacion: una sola consulta
+    // batch para las conexiones de este ciclo, mismo criterio de
+    // "consulta batch, no N+1" que el historico de arriba.
+    const ejecutadasRaw =
+      conexionIds.length > 0
+        ? await tx.recomendacionEjecutada.findMany({
+            where: { cicloPulsoId, conexionId: { in: conexionIds } },
+            select: { conexionId: true, marcadaEn: true },
+          })
+        : [];
+    const ejecutadasPorConexion = new Map<string, Date>(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      ejecutadasRaw.map((r: any) => [r.conexionId as string, r.marcadaEn as Date]),
+    );
 
     const resultadosConexion: ResultadoConexionLeido[] = resultadosConexionRaw.map(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
@@ -116,9 +147,12 @@ export async function obtenerResultadosCiclo(
         const datosCriticidad = r.criticidadSnapshot as DatosCriticidad;
         const tieneAlternativa = Boolean(datosCriticidad?.tieneAlternativa);
         const criticidad = calcularCriticidad(datosCriticidad);
-        const tendenciaSalud = (historicoPorConexion.get(conexionId) ?? [salud]).slice(
-          -TENDENCIA_MAX_CICLOS,
-        );
+        const ruleVersion = r.ruleVersion as string;
+        const historico = historicoPorConexion.get(conexionId) ?? [{ salud, ruleVersion }];
+        const tendenciaSalud = historico
+          .filter((punto) => punto.ruleVersion === ruleVersion)
+          .map((punto) => punto.salud)
+          .slice(-TENDENCIA_MAX_CICLOS);
 
         return {
           id: r.id as string,
@@ -133,6 +167,7 @@ export async function obtenerResultadosCiclo(
             ? generarRecomendacion({ gradoDependencia: gradoDependenciaSnapshot, salud, tieneAlternativa })
             : null,
           tendenciaSalud,
+          recomendacionEjecutadaEn: ejecutadasPorConexion.get(conexionId) ?? null,
         };
       },
     );

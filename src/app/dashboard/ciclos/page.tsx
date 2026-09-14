@@ -22,19 +22,27 @@ export default async function CiclosPage() {
   // manual aparte, a diferencia de infra/ciclos/resultados.ts.
   const ciclos = await tenantClient(session.user.empresaId).cicloPulso.findMany({
     orderBy: { abiertoEn: "desc" },
-    include: { resultadoCiclo: { select: { indiceIntegracion: true } } },
+    include: { resultadoCiclo: { select: { indiceIntegracion: true, ruleVersion: true } } },
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
   const hayCicloAbierto = ciclos.some((c: any) => c.estado === "ABIERTO");
 
   // Tendencia del indice de integracion entre ciclos cerrados, mas viejo
   // primero (orden inverso al de la lista, que muestra el mas reciente
-  // arriba) -- solo presentacion, no un calculo nuevo.
+  // arriba) -- solo presentacion, no un calculo nuevo. Se corta en el
+  // ruleVersion del ciclo cerrado mas reciente: si el motor se recalibra,
+  // un indice calculado con reglas viejas no es comparable con uno nuevo
+  // (mismo criterio que la tendencia de salud de cada conexion, ver
+  // src/infra/ciclos/resultados.ts).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+  const ultimoConResultado = ciclos.find((c: any) => c.resultadoCiclo);
+  const ruleVersionVigente = ultimoConResultado?.resultadoCiclo?.ruleVersion as string | undefined;
   const tendenciaIndice = [...ciclos]
     .reverse()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-    .map((c: any) => c.resultadoCiclo?.indiceIntegracion as number | undefined)
-    .filter((v): v is number => v != null);
+    .filter((c: any) => c.resultadoCiclo?.ruleVersion === ruleVersionVigente)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+    .map((c: any) => c.resultadoCiclo.indiceIntegracion as number);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-12">

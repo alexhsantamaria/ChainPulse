@@ -14,7 +14,14 @@ const respuestaSchema = z.object({
   noSabe: z.boolean().optional(),
   noAplica: z.boolean().optional(),
 });
-const respuestasSchema = z.object({ respuestas: z.array(respuestaSchema).min(1) });
+const respuestasSchema = z.object({
+  respuestas: z.array(respuestaSchema).min(1),
+  // RNF9 -- duracion medida en el cliente (desde que se monta el
+  // formulario hasta el submit), opcional: si falta o es invalida no se
+  // registra la metrica, pero el envio de respuestas nunca se bloquea
+  // por esto (ver registrarRespuestas.ts).
+  duracionSegundos: z.number().min(0).optional(),
+});
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -40,6 +47,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       responsableId: session.user.id,
       eslabonId: session.user.eslabonId,
       respuestas: parsed.data.respuestas,
+      duracionSegundos: parsed.data.duracionSegundos,
     });
     return NextResponse.json({ ok: true, ...resultado });
   } catch (err) {
