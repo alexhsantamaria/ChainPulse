@@ -1,7 +1,7 @@
-// Pagina — resultados de un ciclo cerrado: salud, riesgo, eslabones mas
-// debiles e indice de integracion, ya calculados por el motor (RF7/RF9,
-// version inicial -- el panel completo de RF9/RF10 con historico y
-// tendencia es un paso posterior).
+// Pagina — resultados de un ciclo cerrado: salud, criticidad, riesgo y
+// dependencia (los 4 valores de RF9) por conexion, eslabones mas debiles,
+// indice de integracion, recomendacion (RF8) y tendencia de salud de
+// ciclos anteriores por conexion (RF9).
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/auth";
@@ -59,9 +59,14 @@ export default async function ResultadosCicloPage({ params }: { params: Promise<
                 )}
               </div>
               <p className="text-xs text-slate-500">
-                Salud: {r.salud.toFixed(0)} · Riesgo: {r.riesgo.toFixed(0)} · Dependencia:{" "}
-                {r.gradoDependenciaSnapshot}
+                Salud: {r.salud.toFixed(0)} · Criticidad: {r.criticidad.toFixed(0)} · Riesgo:{" "}
+                {r.riesgo.toFixed(0)} · Dependencia: {r.gradoDependenciaSnapshot}
               </p>
+              {r.tendenciaSalud.length > 1 && (
+                <p className="text-xs text-slate-400">
+                  Tendencia de salud: {r.tendenciaSalud.map((v) => v.toFixed(0)).join(" → ")}
+                </p>
+              )}
               {r.recomendacion && (
                 <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2">
                   <p className="text-xs font-medium text-amber-800">
