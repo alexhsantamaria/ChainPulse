@@ -1,10 +1,19 @@
-// Infraestructura — lee los resultados persistidos de un ciclo (RF7/RF9).
+// Infraestructura — lee los resultados persistidos de un ciclo (RF7/RF9)
+// y deriva la recomendacion priorizada del eslabon mas debil (RF8).
 //
 // ResultadoCiclo/ResultadoConexion no estan en TENANT_SCOPED_MODELS (ver
 // tenantClient.ts) -- se leen con un set_config manual, filtrando ademas
 // CicloPulso por empresaId de forma explicita (defensa en profundidad,
 // mismo criterio que el resto de infra/, aunque RLS ya lo bloquearia).
+//
+// La recomendacion de RF8 NO se persiste (ver comentario de
+// src/engine/recomendacion.ts) -- se calcula aca, cada vez que se leen
+// los resultados, a partir de los valores ya inmutables de
+// ResultadoConexion (salud, gradoDependenciaSnapshot,
+// criticidadSnapshot.tieneAlternativa).
 import { prisma } from "../prisma/client";
+import { generarRecomendacion, type Recomendacion } from "@/engine/recomendacion";
+import type { GradoDependencia } from "@/domain/types";
 
 export interface ResultadoConexionLeido {
   id: string;
@@ -14,6 +23,8 @@ export interface ResultadoConexionLeido {
   gradoDependenciaSnapshot: string;
   origenNombre: string;
   destinoNombre: string;
+  /** Solo presente para las conexiones del conjunto de eslabones mas debiles (RF8). */
+  recomendacion: Recomendacion | null;
 }
 
 export interface ResultadosCiclo {
@@ -49,17 +60,32 @@ export async function obtenerResultadosCiclo(
       }),
     ]);
 
+    const idsMasDebiles = new Set<string>(resultadoCiclo?.eslabonesMasDebilesIds ?? []);
+
     const resultadosConexion: ResultadoConexionLeido[] = resultadosConexionRaw.map(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-      (r: any) => ({
-        id: r.id as string,
-        conexionId: r.conexionId as string,
-        salud: r.salud as number,
-        riesgo: r.riesgo as number,
-        gradoDependenciaSnapshot: r.gradoDependenciaSnapshot as string,
-        origenNombre: r.conexion.origen.nombre as string,
-        destinoNombre: r.conexion.destino.nombre as string,
-      }),
+      (r: any) => {
+        const conexionId = r.conexionId as string;
+        const gradoDependenciaSnapshot = r.gradoDependenciaSnapshot as GradoDependencia;
+        const salud = r.salud as number;
+        // criticidadSnapshot es Json (ver prisma/schema.prisma) -- el
+        // snapshot completo de DatosCriticidad tal como se guardo al
+        // cerrar el ciclo (src/infra/ciclos/cerrarCiclo.ts).
+        const tieneAlternativa = Boolean(r.criticidadSnapshot?.tieneAlternativa);
+
+        return {
+          id: r.id as string,
+          conexionId,
+          salud,
+          riesgo: r.riesgo as number,
+          gradoDependenciaSnapshot,
+          origenNombre: r.conexion.origen.nombre as string,
+          destinoNombre: r.conexion.destino.nombre as string,
+          recomendacion: idsMasDebiles.has(conexionId)
+            ? generarRecomendacion({ gradoDependencia: gradoDependenciaSnapshot, salud, tieneAlternativa })
+            : null,
+        };
+      },
     );
 
     return {
