@@ -54,3 +54,20 @@ export async function enviarAvisoCicloAbierto(datos: { email: string; nombre: st
     `,
   });
 }
+
+// Recuperacion de contraseña -- enlace de un solo uso (ver
+// src/infra/auth/recuperacion.ts), vence en 1 hora.
+export async function enviarCorreoRecuperacion(datos: { email: string; nombre: string; link: string }): Promise<void> {
+  const cliente = obtenerCliente();
+  await cliente.emails.send({
+    from: REMITENTE,
+    to: datos.email,
+    subject: "Recuperá tu contraseña de ChainPulse",
+    html: `
+      <p>Hola ${escaparHtml(datos.nombre)},</p>
+      <p>Pediste recuperar tu contraseña de ChainPulse. Si fuiste vos, hacé clic para elegir una nueva:</p>
+      <p><a href="${datos.link}">Elegir contraseña nueva</a></p>
+      <p>Este enlace vence en 1 hora. Si no pediste esto, podés ignorar este correo -- tu contraseña actual sigue funcionando.</p>
+    `,
+  });
+}
