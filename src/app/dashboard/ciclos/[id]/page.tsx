@@ -47,7 +47,7 @@ export default async function ResultadosCicloPage({ params }: { params: Promise<
       {datos.resultadosConexion.length > 0 ? (
         <ul className="flex flex-col divide-y divide-slate-200 rounded border border-slate-200">
           {datos.resultadosConexion.map((r) => (
-            <li key={r.id} className="flex flex-col gap-1 px-4 py-3">
+            <li key={r.id} className="flex flex-col gap-2 px-4 py-3">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium">
                   {r.origenNombre} → {r.destinoNombre}
@@ -62,6 +62,14 @@ export default async function ResultadosCicloPage({ params }: { params: Promise<
                 Salud: {r.salud.toFixed(0)} · Riesgo: {r.riesgo.toFixed(0)} · Dependencia:{" "}
                 {r.gradoDependenciaSnapshot}
               </p>
+              {r.recomendacion && (
+                <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2">
+                  <p className="text-xs font-medium text-amber-800">
+                    Recomendación · prioridad {r.recomendacion.prioridad.toLowerCase()}
+                  </p>
+                  <p className="mt-1 text-xs text-amber-900">{r.recomendacion.texto}</p>
+                </div>
+              )}
             </li>
           ))}
         </ul>
