@@ -28,6 +28,13 @@ import { tenantClient } from "../tenantClient";
 import { hashPassword } from "@/infra/auth/password";
 import { RULE_VERSION } from "@/engine/constantes";
 
+// Neon "duerme" la base cuando esta inactiva un rato -- la primera
+// conexion de la corrida puede tardar bastante mas que el default de
+// Prisma (maxWait 2000ms / timeout 5000ms), y esta prueba suele ser la
+// primera consulta real del proceso. Mismo margen en las cuatro
+// funciones de abajo que abren una transaccion.
+const TX_OPTIONS = { maxWait: 15000, timeout: 20000 };
+
 interface TenantFixture {
   empresaId: string;
   adminId: string;
@@ -122,7 +129,7 @@ async function crearFixtureTenant(nombreEmpresa: string): Promise<TenantFixture>
       cicloPulsoId: ciclo.id as string,
       resultadoConexionId: resultadoConexion.id as string,
     };
-  });
+  }, TX_OPTIONS);
 }
 
 async function borrarFixtureTenant(empresaId: string): Promise<void> {
@@ -130,7 +137,7 @@ async function borrarFixtureTenant(empresaId: string): Promise<void> {
   await prisma.$transaction(async (tx: any) => {
     await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
     await tx.empresa.delete({ where: { id: empresaId } });
-  });
+  }, TX_OPTIONS);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
@@ -139,7 +146,7 @@ async function bajoTenant(empresaId: string, fn: (tx: any) => Promise<any>): Pro
   return prisma.$transaction(async (tx: any) => {
     await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
     return fn(tx);
-  });
+  }, TX_OPTIONS);
 }
 
 // Misma forma que bajoTenant(), pero sin fijar ningun tenant -- para
@@ -148,7 +155,7 @@ async function bajoTenant(empresaId: string, fn: (tx: any) => Promise<any>): Pro
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
 async function sinTenantFijado(fn: (tx: any) => Promise<any>): Promise<any> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-  return prisma.$transaction(async (tx: any) => fn(tx));
+  return prisma.$transaction(async (tx: any) => fn(tx), TX_OPTIONS);
 }
 
 describe("RNF1 — aislamiento multi-tenant (integración contra Neon real)", () => {
@@ -156,15 +163,24 @@ describe("RNF1 — aislamiento multi-tenant (integración contra Neon real)", ()
   let tenantB: TenantFixture;
 
   beforeAll(async () => {
-    [tenantA, tenantB] = await Promise.all([
-      crearFixtureTenant("Empresa piloto A (prueba RNF1, borrar si queda huerfana)"),
-      crearFixtureTenant("Empresa piloto B (prueba RNF1, borrar si queda huerfana)"),
-    ]);
-  }, 30000);
+    // Secuencial, no Promise.all: Neon "duerme" la base cuando esta
+    // inactiva, y pedir dos conexiones nuevas a la vez mientras todavia
+    // esta despertando es lo que causaba "Unable to start a transaction
+    // in the given time" (maxWait) la primera vez que corrio esta prueba.
+    tenantA = await crearFixtureTenant("Empresa piloto A (prueba RNF1, borrar si queda huerfana)");
+    tenantB = await crearFixtureTenant("Empresa piloto B (prueba RNF1, borrar si queda huerfana)");
+  }, 60000);
 
   afterAll(async () => {
-    await Promise.all([borrarFixtureTenant(tenantA.empresaId), borrarFixtureTenant(tenantB.empresaId)]);
-  }, 30000);
+    // Defensivo: si beforeAll fallo a mitad de camino, no reventar el
+    // afterAll tambien -- borrar solo lo que efectivamente se creo.
+    if (tenantA?.empresaId) {
+      await borrarFixtureTenant(tenantA.empresaId);
+    }
+    if (tenantB?.empresaId) {
+      await borrarFixtureTenant(tenantB.empresaId);
+    }
+  }, 60000);
 
   describe("capa 1 — tenantClient() filtra a nivel de aplicación", () => {
     it("no devuelve un eslabón de otro tenant por id, aunque se pida explícito", async () => {
