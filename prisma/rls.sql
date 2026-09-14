@@ -27,6 +27,10 @@ ALTER TABLE "ciclos_pulso" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "respuestas_crudas" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "resultados_conexion" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "resultados_ciclo" ENABLE ROW LEVEL SECURITY;
+-- RNF9 (instrumentacion minima, agregado 2026-09-14): mismas dos tablas
+-- sin empresaId propio, mismo patron de subconsulta que las de arriba.
+ALTER TABLE "metricas_cuestionario" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "recomendaciones_ejecutadas" ENABLE ROW LEVEL SECURITY;
 
 -- Tablas con empresaId propio: comparan directo contra la variable de sesion.
 CREATE POLICY tenant_isolation_empresas ON "empresas"
@@ -64,6 +68,25 @@ CREATE POLICY tenant_isolation_resultados_conexion ON "resultados_conexion"
   );
 
 CREATE POLICY tenant_isolation_resultados_ciclo ON "resultados_ciclo"
+  USING (
+    "cicloPulsoId" IN (
+      SELECT id FROM "ciclos_pulso"
+      WHERE "empresaId" = current_setting('app.tenant_id', true)
+    )
+  );
+
+-- RNF9 (agregado 2026-09-14): mismas dos tablas hijas sin empresaId
+-- propio, mismo patron de subconsulta via CicloPulso que ya usan
+-- RespuestaCruda/ResultadoConexion/ResultadoCiclo arriba.
+CREATE POLICY tenant_isolation_metricas_cuestionario ON "metricas_cuestionario"
+  USING (
+    "cicloPulsoId" IN (
+      SELECT id FROM "ciclos_pulso"
+      WHERE "empresaId" = current_setting('app.tenant_id', true)
+    )
+  );
+
+CREATE POLICY tenant_isolation_recomendaciones_ejecutadas ON "recomendaciones_ejecutadas"
   USING (
     "cicloPulsoId" IN (
       SELECT id FROM "ciclos_pulso"

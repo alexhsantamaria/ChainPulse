@@ -54,6 +54,8 @@ export interface ResultadoConexionLeido {
   recomendacion: Recomendacion | null;
   /** Salud de esta conexion en los ultimos ciclos, orden cronologico ascendente, el actual incluido al final (RF9). */
   tendenciaSalud: number[];
+  /** Momento en que se marco como ejecutada la recomendacion de esta conexion, o null si no se marco (RNF9). Solo tiene sentido cuando recomendacion no es null. */
+  recomendacionEjecutadaEn: Date | null;
 }
 
 export interface ResultadosCiclo {
@@ -118,6 +120,21 @@ export async function obtenerResultadosCiclo(
       historicoPorConexion.set(r.conexionId as string, lista);
     });
 
+    // RNF9 -- estado "ejecutada" de la recomendacion: una sola consulta
+    // batch para las conexiones de este ciclo, mismo criterio de
+    // "consulta batch, no N+1" que el historico de arriba.
+    const ejecutadasRaw =
+      conexionIds.length > 0
+        ? await tx.recomendacionEjecutada.findMany({
+            where: { cicloPulsoId, conexionId: { in: conexionIds } },
+            select: { conexionId: true, marcadaEn: true },
+          })
+        : [];
+    const ejecutadasPorConexion = new Map<string, Date>(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      ejecutadasRaw.map((r: any) => [r.conexionId as string, r.marcadaEn as Date]),
+    );
+
     const resultadosConexion: ResultadoConexionLeido[] = resultadosConexionRaw.map(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
       (r: any) => {
@@ -150,6 +167,7 @@ export async function obtenerResultadosCiclo(
             ? generarRecomendacion({ gradoDependencia: gradoDependenciaSnapshot, salud, tieneAlternativa })
             : null,
           tendenciaSalud,
+          recomendacionEjecutadaEn: ejecutadasPorConexion.get(conexionId) ?? null,
         };
       },
     );

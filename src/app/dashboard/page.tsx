@@ -63,6 +63,17 @@ export default async function DashboardPage() {
             Abrir un ciclo, responder el cuestionario o ver los resultados calculados (RF5-RF7) →
           </p>
         </Link>
+        {session.user.rol === "ADMINISTRADOR" && (
+          <Link
+            href="/dashboard/metricas"
+            className="rounded border border-slate-200 p-4 hover:border-slate-400 sm:col-span-2"
+          >
+            <p className="text-sm text-slate-500">Métricas</p>
+            <p className="mt-2 text-sm text-slate-600">
+              Duración del cuestionario y recomendaciones ejecutadas (RNF9) →
+            </p>
+          </Link>
+        )}
       </div>
 
       {eslabones.length === 0 && (

@@ -15,6 +15,11 @@ export default function ResponderCuestionarioForm({
   asignaciones: AsignacionConexion[];
 }) {
   const router = useRouter();
+  // RNF9 -- instante en que se monta el formulario, para medir cuanto
+  // tarda el responsable en completarlo (RNF2: objetivo 5 minutos). Se
+  // fija una sola vez con el inicializador perezoso de useState, no en
+  // cada render.
+  const [inicio] = useState(() => Date.now());
   const [respuestas, setRespuestas] = useState<Record<string, Respuesta>>(() => {
     const inicial: Record<string, Respuesta> = {};
     for (const asignacion of asignaciones) {
@@ -49,6 +54,7 @@ export default function ResponderCuestionarioForm({
     }
 
     setCargando(true);
+    const duracionSegundos = Math.round((Date.now() - inicio) / 1000);
     const respuesta = await fetch(`/api/ciclos/${cicloId}/respuestas`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -57,6 +63,7 @@ export default function ResponderCuestionarioForm({
           conexionId: asignacion.conexionId,
           ...respuestas[asignacion.conexionId],
         })),
+        duracionSegundos,
       }),
     });
     const resultado = await respuesta.json();

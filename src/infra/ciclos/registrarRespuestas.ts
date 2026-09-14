@@ -87,6 +87,8 @@ export async function registrarRespuestas(input: {
   responsableId: string;
   eslabonId: string;
   respuestas: RespuestaEntrada[];
+  /** RNF9 — segundos desde que se cargo el formulario hasta el envio, medidos en el cliente. Opcional: si no llega, no se registra metrica (nunca bloquea el envio). */
+  duracionSegundos?: number;
 }): Promise<{ registradas: number }> {
   const client = tenantClient(input.empresaId);
 
@@ -136,6 +138,19 @@ export async function registrarRespuestas(input: {
           valor,
           noSabe,
           noAplica,
+        },
+      });
+    }
+
+    // RNF9 -- una fila por envio (no por respuesta individual), solo si
+    // el cliente mando una duracion valida. Nunca bloquea el registro de
+    // las respuestas en si (RF6 es lo que importa, esto es instrumentacion).
+    if (input.duracionSegundos != null && Number.isFinite(input.duracionSegundos) && input.duracionSegundos >= 0) {
+      await tx.metricaCuestionario.create({
+        data: {
+          cicloPulsoId: input.cicloPulsoId,
+          responsableId: input.responsableId,
+          duracionSegundos: Math.round(input.duracionSegundos),
         },
       });
     }

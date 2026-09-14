@@ -131,6 +131,10 @@ model Usuario {
   eslabon   Eslabon?   @relation(fields: [eslabonId], references: [id])
 
   respuestas RespuestaCruda[]
+  // RNF9 -- instrumentacion minima (ver los dos modelos nuevos al final
+  // de este archivo).
+  metricasCuestionario       MetricaCuestionario[]
+  recomendacionesEjecutadas  RecomendacionEjecutada[]
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -192,6 +196,9 @@ model Conexion {
 
   respuestas RespuestaCruda[]
   resultados ResultadoConexion[]
+  // RNF9 -- si esta conexion (como eslabon mas debil de algun ciclo,
+  // RF7/RF8) tuvo su recomendacion marcada como ejecutada.
+  recomendacionesEjecutadas RecomendacionEjecutada[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -215,6 +222,9 @@ model CicloPulso {
   respuestas         RespuestaCruda[]
   resultadosConexion ResultadoConexion[]
   resultadoCiclo     ResultadoCiclo?
+  // RNF9 -- instrumentacion minima.
+  metricasCuestionario       MetricaCuestionario[]
+  recomendacionesEjecutadas  RecomendacionEjecutada[]
 
   @@index([empresaId])
   @@map("ciclos_pulso")
@@ -230,7 +240,12 @@ model RespuestaCruda {
   conexionId    String
   conexion      Conexion   @relation(fields: [conexionId], references: [id], onDelete: Cascade)
   responsableId String
-  responsable   Usuario    @relation(fields: [responsableId], references: [id])
+  // Hallazgo real de RNF1 (ver README): sin onDelete: Cascade aca, borrar
+  // un Usuario con respuestas propias fallaba (RESTRICT/NO ACTION, el
+  // default de Postgres) aunque la respuesta tambien fuera a borrarse por
+  // el otro camino (cicloPulso -> respuesta, que si cascadea). Corregido
+  // en la misma migracion que agrega las tablas de RNF9 mas abajo.
+  responsable   Usuario    @relation(fields: [responsableId], references: [id], onDelete: Cascade)
 
   valor    Int? // 1-5; null si noSabe o noAplica
   noSabe   Boolean @default(false)
@@ -286,6 +301,52 @@ model ResultadoCiclo {
   createdAt   DateTime @default(now())
 
   @@map("resultados_ciclo")
+}
+
+// RNF9 — instrumentacion minima: cuanto tarda un responsable en
+// completar el cuestionario de un ciclo (RF6), frente al limite de 5
+// minutos de RNF2. Una fila por envio, no por respuesta individual (una
+// persona responde varias conexiones de una vez). La duracion se mide en
+// el cliente (desde que carga el formulario hasta que se envia,
+// src/app/dashboard/ciclos/[id]/responder/ResponderCuestionarioForm.tsx)
+// y llega ya calculada junto con las respuestas -- no hace falta un
+// evento de "inicio" separado en el servidor. No es un sistema de
+// analitica de producto completo (Seccion 12 de requirements.md): esto
+// es la senal minima para una consulta agregada simple, no un evento por
+// interaccion.
+model MetricaCuestionario {
+  id               String     @id @default(cuid())
+  cicloPulsoId     String
+  cicloPulso       CicloPulso @relation(fields: [cicloPulsoId], references: [id], onDelete: Cascade)
+  responsableId    String
+  responsable      Usuario    @relation(fields: [responsableId], references: [id], onDelete: Cascade)
+  duracionSegundos Int
+
+  createdAt DateTime @default(now())
+
+  @@index([cicloPulsoId])
+  @@map("metricas_cuestionario")
+}
+
+// RNF9 — si el administrador o el responsable de una conexion marca la
+// recomendacion priorizada (RF8) como ejecutada. La recomendacion en si
+// no se persiste (ver src/engine/recomendacion.ts) -- esto se ancla al
+// par (ciclo, conexion) que la genero, no al texto/prioridad puntual
+// (que puede recalcularse distinto si las reglas cambian mas adelante).
+// @@unique evita marcar la misma dos veces.
+model RecomendacionEjecutada {
+  id           String     @id @default(cuid())
+  cicloPulsoId String
+  cicloPulso   CicloPulso @relation(fields: [cicloPulsoId], references: [id], onDelete: Cascade)
+  conexionId   String
+  conexion     Conexion   @relation(fields: [conexionId], references: [id], onDelete: Cascade)
+  marcadaPorId String
+  marcadaPor   Usuario    @relation(fields: [marcadaPorId], references: [id], onDelete: Cascade)
+
+  marcadaEn DateTime @default(now())
+
+  @@unique([cicloPulsoId, conexionId])
+  @@map("recomendaciones_ejecutadas")
 }
 
 // RF11-RF18 — evaluacion exprés publica. Sin tenantId a proposito (RNF7):
