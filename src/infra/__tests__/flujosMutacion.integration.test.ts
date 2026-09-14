@@ -61,6 +61,19 @@ describe("Registro de cuenta (RF1) y activación de MFA (ADR-0003) — integraci
   let empresaId: string;
   let emailAdmin: string;
 
+  beforeAll(async () => {
+    // Este es el primer archivo de prueba del run (ver vitest.integration.config.ts,
+    // fileParallelism: false), asi que esta es la primera conexion real hacia Neon.
+    // A diferencia de las demas transacciones de este archivo (que usan TX_OPTIONS
+    // extendido), la transaccion interna de registrarEmpresaYAdmin() usa el timeout
+    // por defecto de Prisma (maxWait 2000ms / timeout 5000ms) porque es codigo de
+    // produccion real -- no lo tocamos (ver README: ya validado en vivo con una sola
+    // conexion a la vez). En su lugar, "despertamos" la base con una consulta trivial
+    // antes de que corra la primera prueba, mismo criterio que el beforeAll de
+    // aislamientoMultitenant.integration.test.ts (RNF1).
+    await prisma.$queryRaw`SELECT 1`;
+  }, 60000);
+
   afterAll(async () => {
     if (empresaId) {
       await borrarEmpresaDePrueba(empresaId);
