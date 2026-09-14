@@ -24,6 +24,12 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Neon: el rol de la app (y hasta neondb_owner) no tiene privilegio
+  // CREATEDB, asi que "prisma migrate dev" no puede crear su base de
+  // sombra temporal sola (error P3014). shadowDatabaseUrl apunta a una
+  // segunda base ya creada a mano en la consola de Neon (no por SQL,
+  // no necesita CREATEDB) -- ver .env.example y el README.
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 enum RolUsuario {
