@@ -1,4 +1,6 @@
-// Pagina — lista los ciclos de pulso y permite abrir/cerrar/responder (RF5-RF7).
+// Pagina — lista los ciclos de pulso, permite abrir/cerrar/responder
+// (RF5-RF7) y muestra el historico de ciclos anteriores con su indice de
+// integracion y la tendencia entre ciclos (RF9).
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/auth";
@@ -12,11 +14,27 @@ export default async function CiclosPage() {
     redirect("/login");
   }
 
+  // RF9 -- el include de resultadoCiclo funciona bajo tenantClient()
+  // porque CicloPulso (el modelo de la consulta) esta tenant-scoped: fija
+  // app.tenant_id en la misma transaccion, y resultados_ciclo tiene su
+  // propia politica RLS que filtra por ese mismo valor via ciclos_pulso
+  // (prisma/rls.sql) -- no hace falta una consulta ni un set_config
+  // manual aparte, a diferencia de infra/ciclos/resultados.ts.
   const ciclos = await tenantClient(session.user.empresaId).cicloPulso.findMany({
     orderBy: { abiertoEn: "desc" },
+    include: { resultadoCiclo: { select: { indiceIntegracion: true } } },
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
   const hayCicloAbierto = ciclos.some((c: any) => c.estado === "ABIERTO");
+
+  // Tendencia del indice de integracion entre ciclos cerrados, mas viejo
+  // primero (orden inverso al de la lista, que muestra el mas reciente
+  // arriba) -- solo presentacion, no un calculo nuevo.
+  const tendenciaIndice = [...ciclos]
+    .reverse()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+    .map((c: any) => c.resultadoCiclo?.indiceIntegracion as number | undefined)
+    .filter((v): v is number => v != null);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-12">
@@ -33,6 +51,13 @@ export default async function CiclosPage() {
 
       {session.user.rol === "ADMINISTRADOR" && !hayCicloAbierto && <AbrirCicloBoton />}
 
+      {tendenciaIndice.length > 1 && (
+        <div className="rounded border border-slate-200 p-4">
+          <p className="text-sm text-slate-500">Tendencia del índice de integración (RF16)</p>
+          <p className="mt-1 text-lg font-medium">{tendenciaIndice.map((v) => v.toFixed(0)).join(" → ")}</p>
+        </div>
+      )}
+
       {ciclos.length > 0 ? (
         <ul className="flex flex-col divide-y divide-slate-200 rounded border border-slate-200">
           {/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003) */}
@@ -46,9 +71,12 @@ export default async function CiclosPage() {
                     {ciclo.estado === "ABIERTO" ? "abierto" : "cerrado"}
                   </span>
                 </p>
-                {ciclo.coberturaRespuesta != null && (
-                  <p className="text-xs text-slate-500">Cobertura: {ciclo.coberturaRespuesta.toFixed(0)}%</p>
-                )}
+                <p className="text-xs text-slate-500">
+                  {ciclo.coberturaRespuesta != null && `Cobertura: ${ciclo.coberturaRespuesta.toFixed(0)}%`}
+                  {ciclo.coberturaRespuesta != null && ciclo.resultadoCiclo && " · "}
+                  {ciclo.resultadoCiclo &&
+                    `Índice de integración: ${ciclo.resultadoCiclo.indiceIntegracion.toFixed(0)}`}
+                </p>
               </div>
               <span className="flex items-center gap-3">
                 {ciclo.estado === "ABIERTO" && session.user.rol === "RESPONSABLE" && session.user.eslabonId && (
