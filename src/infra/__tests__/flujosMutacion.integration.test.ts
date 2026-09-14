@@ -96,9 +96,13 @@ describe("Registro de cuenta (RF1) y activación de MFA (ADR-0003) — integraci
     // usuario falla por email duplicado, la empresa tampoco debe haber
     // quedado creada. No hay forma directa de obtener el empresaId que
     // se intento crear (se genera dentro de la funcion), asi que se
-    // confirma indirectamente: sigue existiendo un solo usuario con ese
-    // email en toda la base, el de la primera llamada.
-    const usuarios = await prisma.usuario.findMany({ where: { email: emailAdmin } });
+    // confirma indirectamente: bajo el tenant ya conocido (el de la
+    // primera llamada) sigue existiendo un solo usuario con ese email.
+    // Nota: tiene que ser tenantClient(), no prisma directo sin
+    // set_config -- RLS "falla cerrado" sin un tenant fijado (ver RNF1),
+    // asi que una consulta cruda aca siempre devolveria [] sin que eso
+    // signifique nada sobre si quedo o no una fila huerfana.
+    const usuarios = await tenantClient(empresaId).usuario.findMany({ where: { email: emailAdmin } });
     expect(usuarios).toHaveLength(1);
     expect(usuarios[0].empresaId).toBe(empresaId);
   });
