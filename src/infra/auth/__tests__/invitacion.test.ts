@@ -32,7 +32,15 @@ describe("crearTokenInvitacion / verificarTokenInvitacion", () => {
       eslabonId: "eslabon-1",
       email: "responsable@example.com",
     });
-    const tokenAlterado = token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");
+    // Se altera el ANTEPENULTIMO caracter, no el ultimo: en base64url, el
+    // ultimo caracter de una firma HS256 (32 bytes) codifica solo 4 bits
+    // reales (los otros 2 son relleno fijo en cero) -- alterar justo ese
+    // caracter puede, en un caso raro, no cambiar ningun bit real y dejar
+    // la firma intacta (test intermitente encontrado en este entorno). El
+    // anteultimo caracter no tiene ese problema: siempre codifica 6 bits
+    // reales, asi que alterarlo siempre invalida la firma.
+    const pos = token.length - 2;
+    const tokenAlterado = token.slice(0, pos) + (token[pos] === "A" ? "B" : "A") + token.slice(pos + 1);
 
     expect(await verificarTokenInvitacion(tokenAlterado)).toBeNull();
   });

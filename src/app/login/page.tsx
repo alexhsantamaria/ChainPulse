@@ -81,6 +81,9 @@ export default function LoginPage() {
           {cargando ? "Ingresando..." : "Ingresar"}
         </button>
       </form>
+      <a href="/recuperar-contrasena" className="text-center text-sm text-slate-500 underline">
+        ¿Olvidaste tu contraseña?
+      </a>
     </main>
   );
 }
