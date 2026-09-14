@@ -136,6 +136,16 @@ async function borrarFixtureTenant(empresaId: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
   await prisma.$transaction(async (tx: any) => {
     await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
+    // Hallazgo real de esta prueba (ver README, seccion RNF1):
+    // RespuestaCruda.responsable (Usuario) no tiene onDelete: Cascade en
+    // el schema -- Postgres bloquea (RESTRICT/NO ACTION) el cascade de
+    // empresa -> usuario en cuanto intenta borrar un Usuario que todavia
+    // tiene respuestas propias, aunque esas mismas respuestas tambien
+    // vayan a borrarse por el otro camino (ciclo -> respuesta, que si
+    // cascadea). Se borran a mano primero para no depender del orden en
+    // que Postgres resuelve los dos caminos de cascade. RLS ya acota este
+    // delete al tenant activo, sin necesidad de un where explicito.
+    await tx.respuestaCruda.deleteMany({});
     await tx.empresa.delete({ where: { id: empresaId } });
   }, TX_OPTIONS);
 }
