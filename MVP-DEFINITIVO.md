@@ -1,8 +1,8 @@
 # ChainPulse — MVP Definitivo
 
 Fecha: 2026-09-15
-Estado: **Hoja de ruta aprobada por Alex (Incrementos 2-6), contenido completo de V2 incorporado a pedido explícito de Alex el 2026-09-15.** Cada pieza de construcción listada abajo queda marcada `[ ]` — sin construir, pendiente de confirmación puntual — hasta que se marque `[x]` al validarla, mismo criterio ya usado en todo el proyecto (nada se construye sin visto bueno explícito).
-Versión: 1.2
+Estado: **Hoja de ruta completa aprobada por Alex — Incrementos 2 a 7, incluyendo Market Signals (aprobado el 2026-09-15).** Las dos decisiones pendientes de la Sección 13 quedaron confirmadas ese mismo día (países = Perú; KPIs = los 10 del catálogo inicial de V2). Cada pieza de construcción listada abajo queda marcada `[ ]` — sin construir, pendiente de confirmación puntual — hasta que se marque `[x]` al validarla, mismo criterio ya usado en todo el proyecto (nada se construye sin visto bueno explícito). Ver Addendum de la Sección 17: antes de escribir código se está ejecutando una revisión de viabilidad (arquitectura, herramientas, seguridad, DDD) más auditoría final.
+Versión: 1.3
 
 ## 0. Qué es este documento y qué no es
 
@@ -54,7 +54,7 @@ V2 define 10 principios obligatorios para todo lo que se construya de aquí en a
 | Investigador | Consultar conjuntos anonimizados autorizados, nunca datos privados identificables | Incremento 6 |
 | Curador metodológico | Versionar preguntas/reglas/biblioteca; aprobar o rechazar candidatas | Incremento 2 (versionado) y 6 (preguntas sugeridas) |
 | Administrador de plataforma | Operación técnica, auditoría y cumplimiento, sin acceso empresarial innecesario | Transversal, formalizar desde Incremento 2 |
-| Comprador de estadísticas | Acceder solo a agregados que superen reglas de privacidad y calidad | Incremento 7 (Market Signals — **excluido de este alcance**, ver Sección 6.6) |
+| Comprador de estadísticas | Acceder solo a agregados que superen reglas de privacidad y calidad | Incremento 7 (Market Signals — **aprobado**, ver Sección 6.6) |
 
 ## 5. Terminología — se mantiene la ya construida
 
@@ -156,7 +156,7 @@ Redefine RF11-RF18 de `requirements.md`. Reemplaza el cuestionario Likert conden
 
 ### 6.3 Incremento 4 — Indicadores (V2 "Incremento 3 — Indicadores", §11)
 
-**Nota sobre la Decisión pendiente #6 de la Sección 13 de este documento:** V2 ya trae un catálogo inicial completo de 10 KPIs, no solo OTIF/Fill Rate. Como Alex pidió incorporar todo el contenido de V2, la recomendación pasa a ser adoptar los 10 tal como están definidos — queda igual como confirmación pendiente de Alex, pero ya no como una pregunta abierta sin propuesta.
+**Decisión #6 de la Sección 13 — confirmada por Alex el 2026-09-15.** Se adoptan los 10 KPIs del catálogo inicial de V2 tal como están definidos abajo, con la salvedad de que la lista puede cambiar, mejorarse o ampliarse más adelante si se justifica.
 
 **Catálogo inicial completo (§11.1):**
 - [ ] OTIF — pedidos completos y a tiempo / pedidos evaluados (campos: pedido, fecha prometida, fecha real, cantidad pedida y entregada)
@@ -269,9 +269,9 @@ Cada `DefinicionKpi` guarda denominador, unidad, periodo, zona horaria, reglas d
 - [ ] Investigación no ve identidad operativa
 - [ ] Toda exportación registra filtros, fecha, esquema y versiones
 
-### 6.6 Incremento 7 — Market Signals (V2 "Incremento 6 — Market Signals", §15) — **EXCLUIDO de este alcance, documentado completo para cuando Alex lo apruebe por separado**
+### 6.6 Incremento 7 — Market Signals (V2 "Incremento 6 — Market Signals", §15) — **APROBADO por Alex el 2026-09-15, último incremento del alcance actual**
 
-Alex confirmó explícitamente construir "hasta el módulo de investigación" — este incremento **no se construye** sin una aprobación nueva y separada, coherente con la Sección 23 del V2 (punto 7) y con el mensaje de Alex del 2026-09-15. Se documenta íntegro aquí, a pedido de Alex de no dejar nada afuera del documento, precisamente para que quede listo y no haya que releer V2 el día que se apruebe.
+Alex aprobó explícitamente este incremento el 2026-09-15 ("apruebo el Market Signals"), revirtiendo la exclusión anterior. Con esto, la hoja de ruta completa (Incrementos 2 a 7) queda aprobada de punta a punta — ver Addendum de la Sección 15 y el nuevo Addendum de la Sección 17. Antes de construirlo debe pasarse el gate de privacidad ya listado en la Sección 9 (evaluación de impacto de privacidad, revisión legal por jurisdicción) y cumplirse la regla de publicación mínima de abajo — no se libera al público sin eso.
 
 **Objetivo (§15):** producto candidato "ChainPulse Market Signals" — ejemplo dado en V2: interés en centros de distribución en la Amazonía peruana.
 
@@ -337,7 +337,7 @@ Nada de esto toca `Eslabon`, `Conexion`, `CicloPulso`, `RespuestaCruda`, `Result
 - [ ] Auditoría de acceso a datos de investigación (Incremento 6)
 - [ ] Retención definida por tipo de dato — **requiere revisar la retención ya definida hoy para la evaluación exprés actual** (`requirements.md` Sección 12) antes de extenderla a los datos nuevos de V2, tal como el propio V2 lo pide explícitamente en su Sección 18
 - [ ] Eliminación o retiro de consentimiento sin borrar irreversiblemente agregados ya anónimos, según política revisada
-- [ ] Evaluación de impacto de privacidad antes de comercializar estadísticas (gate previo al Incremento 7, cuando se apruebe)
+- [ ] Evaluación de impacto de privacidad antes de comercializar estadísticas (gate obligatorio antes de publicar el Incremento 7, ya aprobado pero condicionado a pasar este gate)
 - [ ] Revisión legal por jurisdicción antes de producción — **esta es la Decisión pendiente #5 de la Sección 13 de este documento**, países iniciales
 
 ## 10. Requisitos no funcionales de V2 (Sección 19 del documento original)
@@ -389,7 +389,7 @@ Se listan tal cual V2 los define, agrupados por incremento — el detalle de rut
 - [ ] `GET /api/research/datasets/:version`
 - [ ] `POST /api/research/exports`
 
-**Incremento 7 (Market Signals — excluido, ver Sección 6.6):**
+**Incremento 7 (Market Signals — aprobado, ver Sección 6.6):**
 - [ ] `GET /api/market-signals`
 
 Los endpoints de investigación y mercado requieren permisos separados y solo consultan vistas aprobadas (principio de seguridad ya listado en la Sección 9).
@@ -413,9 +413,9 @@ Los endpoints de investigación y mercado requieren permisos separados y solo co
 2. ✅ Quitar el "% de salud" universal de la experiencia pública hasta validarlo — Sección 2, principio 3.
 3. ✅ Permitir resultado preliminar sin email — ya es así en RF12, se mantiene igual en v2.
 4. ✅ El mapa requiere cuenta registrada para guardarse de forma persistente — coherente con `requirements.md` Sección 10.
-5. ⚠️ **Países iniciales y revisión legal aplicable.** Sigue sin dato más allá de las dos pilotos en Perú — necesito tu respuesta directa.
-6. **Qué KPIs, además de OTIF y Fill Rate, entran en el primer lanzamiento** — con el contenido completo de V2 incorporado (Sección 6.3), la propuesta ahora es adoptar los 10 KPIs del catálogo inicial de V2 tal cual, no elegir un subconjunto. Confirmame si estás de acuerdo o preferís acotar la lista.
-7. ✅ Market Signals queda confirmado como fase posterior, no requisito de lanzamiento — Sección 6.6.
+5. ✅ **Países iniciales: Perú.** Confirmado por Alex el 2026-09-15 — alcance geográfico inicial es únicamente Perú; la revisión legal aplicable es la de jurisdicción peruana (coherente con las dos pilotos ya validadas). Ampliar a otros países requiere revisión legal nueva antes de habilitarlos.
+6. ✅ **KPIs confirmados: los 10 del catálogo inicial de V2, tal cual están definidos** (Sección 6.3). Confirmado por Alex el 2026-09-15, con la salvedad explícita de que la lista puede cambiar, mejorarse o ampliarse más adelante si se justifica — no es una lista cerrada para siempre, es el punto de partida.
+7. ✅ **Market Signals aprobado como parte del alcance actual**, ya no es fase posterior condicionada — Sección 6.6. Sigue sujeto al gate de privacidad de la Sección 9 antes de publicarse al público.
 8. **Política de retención real** — el V2 (Sección 9 de este documento, ítem de retención) pide explícitamente revisar la retención ya definida (`requirements.md` Sección 12: 90 días para identificadores sin desbloqueo, indefinido para agregados) antes de extenderla a todos los datos nuevos — sigue como confirmación pendiente, no asumida.
 
 ## 14. Gobernanza de este documento
@@ -433,3 +433,17 @@ Esta aprobación fija el orden y el contenido de cada incremento — no resuelve
 Alex pidió explícitamente: "vamos a agregar todo lo que se envió en V2... es importante agregar todo", con un mecanismo para confirmar la creación de cada pieza. Esta versión (1.2) reemplaza los resúmenes de la versión 1.1 por el contenido íntegro de las 24 secciones de V2, organizado por incremento, con un checklist `- [ ]` por cada elemento de construcción real (pregunta, campo, endpoint, regla, entidad). Ninguna casilla se marca sola: se marca cuando esa pieza puntual está construida y validada, igual que cada RF del Incremento 1 se fue marcando validado en el README a medida que se probaba en Windows.
 
 Próximo paso concreto: redactar el detalle EARS del Incremento 2 (evaluación exprés v2) como actualización de `requirements.md` Sección 4bis, antes de tocar el schema de Prisma o escribir código.
+
+## 17. Addendum — aprobación final de alcance y arranque de la revisión de viabilidad (2026-09-15, tercera instrucción)
+
+Alex confirmó, en un mismo mensaje, las tres cosas que quedaban pendientes:
+
+1. **Decisión #5 (países):** Perú. Alcance geográfico inicial confirmado.
+2. **Decisión #6 (KPIs):** confirmado adoptar los 10 del catálogo inicial de V2 tal cual, "más adelante cambiamos o mejoramos o aumentamos si se da el caso".
+3. **Market Signals (Incremento 7): aprobado.** Ya no está excluido — la hoja de ruta completa (Incrementos 2 a 7) queda aprobada de punta a punta. Esto reemplaza el límite fijado en el Addendum de la Sección 15 ("hasta el módulo de investigación").
+
+Con las dos decisiones ⚠️ resueltas y el alcance completo aprobado, ya no queda ninguna decisión pendiente de Alex bloqueando el diseño técnico de ningún incremento — incluido el 7, sujeto igual al gate de privacidad de la Sección 9 antes de publicarse.
+
+Alex pidió además, antes de escribir una sola línea de código: **confirmar que este MVP definitivo es viable bajo arquitectura, herramientas, seguridad, DDD (Domain-Driven Design), entre otros** — con varios sub-agentes revisando el documento completo, cada uno preparando su plan de trabajo por dimensión, y una auditoría final que revise todos los puntos en conjunto. Después de esa revisión, el paso siguiente es un análisis de lo ya construido más un plan de trabajo único que se debe cumplir hasta terminar el proyecto completo.
+
+Este proceso de revisión y el plan de trabajo consolidado se documentan por separado en `PLAN-DE-TRABAJO.md` (una vez completado), sin modificar el contenido ya aprobado de este documento — este documento sigue siendo la fuente de **qué** se construye; `PLAN-DE-TRABAJO.md` fija **cómo y en qué orden concreto de tareas**, incorporando cualquier ajuste técnico que la revisión de viabilidad identifique como necesario (nunca de alcance, solo de forma de construcción).
