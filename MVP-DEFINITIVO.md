@@ -330,7 +330,7 @@ Nada de esto toca `Eslabon`, `Conexion`, `CicloPulso`, `RespuestaCruda`, `Result
 - [x] Pruebas automáticas de aislamiento horizontal — ya cumplido (RNF1, 10/10 pruebas)
 - [x] MFA para administradores — ya cumplido (ADR-0003)
 - [x] Cifrado en tránsito y en reposo, secretos fuera del repositorio — ya cumplido
-- [x] Rate limiting para acceso anónimo — ya cumplido (RF15/RF17)
+- [ ] Rate limiting para acceso anónimo — **corregido 2026-09-15: no está construido todavía.** Solo existe `rateLimit.ts` para proteger el login; no hay ninguna entidad `EvaluacionExpres` ni rate limiting real para la evaluación pública anónima (RF15/RF17). Detectado por la revisión de viabilidad — ver `PLAN-DE-TRABAJO.md` Sección 4, primer bloqueante.
 - [ ] Rate limiting específico para consultas en lenguaje natural (Incremento 5, nuevo)
 - [ ] Protección CSRF, validación de entrada y límites de archivo explícitos para las subidas nuevas (CSV de indicadores)
 - [ ] Escaneo de archivos y rechazo de fórmulas peligrosas al exportar/importar CSV (mitiga inyección de fórmulas tipo Excel)
