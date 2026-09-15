@@ -1,8 +1,8 @@
 # ChainPulse — MVP Definitivo
 
 Fecha: 2026-09-15
-Estado: **Propuesto para aprobación de Alex** — no reemplaza nada hasta que Alex lo confirme.
-Versión: 1.0
+Estado: **Hoja de ruta (Sección 8) aprobada por Alex el 2026-09-15** — Incrementos 2 a 6 confirmados, Incremento 7 (Market Signals) sigue excluido. Ver addendum al final de este documento.
+Versión: 1.1
 
 ## 0. Qué es este documento y qué no es
 
@@ -95,3 +95,11 @@ Ningún incremento arranca sin el visto bueno explícito de Alex, mismo criterio
 ## 9. Gobernanza de este documento
 
 Este documento se trata con el mismo criterio que los ADR: cambios de alcance real requieren aprobación explícita de Alex, documentada como una nueva sección o un addendum fechado — nunca una reescritura silenciosa de una sección ya aprobada. `requirements.md` sigue siendo la fuente del detalle EARS/criterios de aceptación del Incremento 1 ya cerrado; cuando se construya el Incremento 2 (evaluación exprés v2), sus RF/RNF de detalle se redactan como una actualización de `requirements.md` Sección 4bis, citada desde aquí — este documento fija el alcance y el orden, no repite el detalle técnico que ya tiene un lugar natural.
+
+## 10. Addendum — aprobación de la hoja de ruta (2026-09-15)
+
+Alex confirmó explícitamente: "vamos a hacer todo lo del MVP V2 que envié hoy hasta el módulo de investigación" — es decir, la hoja de ruta de la Sección 8 queda aprobada de punta a punta para los **Incrementos 2 a 6** (evaluación exprés v2, mapa y profundidad, indicadores, consultas en lenguaje natural, investigación/anonimización). El **Incremento 7 (Market Signals) sigue explícitamente fuera de este alcance** — no se construye salvo una aprobación nueva y separada, coherente con la Sección 23 del V2 (punto 7) y la Sección 5 de este documento.
+
+Esta aprobación fija el orden y el contenido de cada incremento — **no** resuelve todavía las dos decisiones ⚠️ de la Sección 7 (países/revisión legal para el Incremento 6; KPIs más allá de OTIF/Fill Rate para el Incremento 4). Ningún incremento se da por "listo para construir en detalle" sin lo que le falta: el Incremento 2 (evaluación exprés v2) no depende de ninguna de las dos y puede empezar a detallarse ya; el Incremento 3 (mapa) depende solo de que el Incremento 2 exista; los Incrementos 4 y 6 quedan aprobados en cuanto a **que se construyen**, pero su contenido detallado sigue esperando esas dos respuestas de Alex antes de escribir sus RF/RNF.
+
+Próximo paso concreto: redactar el detalle EARS del Incremento 2 (evaluación exprés v2) como actualización de `requirements.md` Sección 4bis, siguiendo el mismo rigor que el resto del proyecto (RF/RNF, criterios de aceptación, valores de calibración) antes de tocar el schema de Prisma o escribir código.
