@@ -23,7 +23,7 @@ export async function abrirCiclo(
   }
 
   const [ciclo, responsables] = await Promise.all([
-    client.cicloPulso.create({ data: {} }),
+    client.cicloPulso.create({ data: { empresaId } }),
     obtenerResponsablesElegibles(empresaId),
   ]);
 

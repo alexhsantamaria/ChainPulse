@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   }
 
   const eslabon = await tenantClient(session.user.empresaId).eslabon.create({
-    data: parsed.data,
+    data: { ...parsed.data, empresaId: session.user.empresaId },
   });
 
   return NextResponse.json({ ok: true, eslabon });

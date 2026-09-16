@@ -69,6 +69,7 @@ export async function POST(request: Request) {
   try {
     const conexion = await client.conexion.create({
       data: {
+        empresaId: session.user.empresaId,
         origenId: datos.origenId,
         destinoId: datos.destinoId,
         gradoDependencia: datos.gradoDependencia ?? undefined,

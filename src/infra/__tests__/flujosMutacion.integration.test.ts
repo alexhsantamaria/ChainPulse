@@ -117,7 +117,7 @@ describe("Registro de cuenta (RF1) y activación de MFA (ADR-0003) — integraci
     // signifique nada sobre si quedo o no una fila huerfana.
     const usuarios = await tenantClient(empresaId).usuario.findMany({ where: { email: emailAdmin } });
     expect(usuarios).toHaveLength(1);
-    expect(usuarios[0].empresaId).toBe(empresaId);
+    expect(usuarios[0]!.empresaId).toBe(empresaId);
   });
 
   it("un código TOTP válido activa MFA para el administrador", async () => {
@@ -185,13 +185,14 @@ describe("CRUD de eslabones/conexiones (RF2/RF3) y ciclo de pulso completo (RF5-
     // (obtenerResponsablesElegibles) una vez que su eslabon participe de
     // una conexion "completa" -- eso lo deja armado el propio test de
     // CRUD de conexiones, mas abajo, antes de llegar al describe de ciclos.
-    const eslabonOrigen = await tenantClient(empresaId).eslabon.create({ data: { nombre: "Compras (prueba)" } });
-    const eslabonDestino = await tenantClient(empresaId).eslabon.create({ data: { nombre: "Producción (prueba)" } });
+    const eslabonOrigen = await tenantClient(empresaId).eslabon.create({ data: { nombre: "Compras (prueba)", empresaId } });
+    const eslabonDestino = await tenantClient(empresaId).eslabon.create({ data: { nombre: "Producción (prueba)", empresaId } });
     eslabonOrigenId = eslabonOrigen.id;
     eslabonDestinoId = eslabonDestino.id;
 
     const responsable = await tenantClient(empresaId).usuario.create({
       data: {
+        empresaId,
         email: `flujo-responsable-${randomUUID()}@chainpulse.test`,
         nombre: "Responsable de prueba",
         rol: "RESPONSABLE",
@@ -221,7 +222,7 @@ describe("CRUD de eslabones/conexiones (RF2/RF3) y ciclo de pulso completo (RF5-
       expect(completa).toBe(false);
 
       const conexion = await tenantClient(empresaId).conexion.create({
-        data: { origenId: eslabonOrigenId, destinoId: eslabonDestinoId, completa },
+        data: { empresaId, origenId: eslabonOrigenId, destinoId: eslabonDestinoId, completa },
       });
       conexionId = conexion.id;
       expect(conexion.completa).toBe(false);
@@ -251,7 +252,7 @@ describe("CRUD de eslabones/conexiones (RF2/RF3) y ciclo de pulso completo (RF5-
       let codigo: string | undefined;
       try {
         await tenantClient(empresaId).conexion.create({
-          data: { origenId: eslabonOrigenId, destinoId: eslabonDestinoId, completa: false },
+          data: { empresaId, origenId: eslabonOrigenId, destinoId: eslabonDestinoId, completa: false },
         });
       } catch (err) {
         codigo = err && typeof err === "object" && "code" in err ? (err as { code?: string }).code : undefined;
