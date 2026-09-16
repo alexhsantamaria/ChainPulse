@@ -30,6 +30,17 @@ datasource db {
   // segunda base ya creada a mano en la consola de Neon (no por SQL,
   // no necesita CREATEDB) -- ver .env.example y el README.
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  // directUrl -- "prisma migrate dev"/"migrate deploy" usan esta URL en
+  // vez de la de arriba para ejecutar las migraciones (Prisma switchea
+  // automaticamente a directUrl cuando esta presente); DATABASE_URL sigue
+  // siendo lo que usa el cliente en runtime (rol chainpulse_app, endpoint
+  // pooled). SEED_DATABASE_URL ya existia para prisma/seed.ts (rol
+  // neondb_owner) y se reusa aca con el mismo rol: migrar tambien necesita
+  // permisos de owner, y de paso evita correr DDL a traves del pooler.
+  // Nunca hace falta cambiar DATABASE_URL a mano para migrar -- ese fue
+  // un error real de esta sesion (ver claude/lecciones-aprendidas.md en el
+  // proyecto de Claude).
+  directUrl = env("SEED_DATABASE_URL")
 }
 
 enum RolUsuario {
