@@ -1,0 +1,35 @@
+name: Disparar jobs en segundo plano (respaldo)
+
+# Respaldo del Cron nativo de Vercel Hobby (cadencia diaria, ver
+# vercel.json y PLAN-DE-TRABAJO.md Seccion 18.1.E): este workflow llama al
+# mismo endpoint cada 15 minutos para que un job con expectativa de
+# turnaround corto (ninguno todavia en el Bloque A, pero si en incrementos
+# futuros como el import de CSV) no quede atado a la cadencia diaria de
+# Vercel. El Cron nativo queda como red de seguridad, no como unico
+# disparador (mitigacion ya documentada en PLAN-DE-TRABAJO.md).
+#
+# Requiere dos secretos del repo (Settings -> Secrets and variables ->
+# Actions -> New repository secret), documentados en
+# SEGURIDAD-credenciales.md:
+#   APP_BASE_URL  — la URL publica del despliegue (ej. https://chainpulse.vercel.app)
+#   CRON_SECRET   — el mismo valor que la variable de entorno CRON_SECRET en Vercel
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  disparar:
+    name: Invocar /api/internal/jobs/run
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Llamar al endpoint
+        run: |
+          curl -sf -X GET \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_BASE_URL }}/api/internal/jobs/run"

@@ -99,3 +99,8 @@ CREATE POLICY tenant_isolation_recomendaciones_ejecutadas ON "recomendaciones_ej
 -- de empresa. Se protegen en cambio por RF15/RF17 (rate limiting) y por
 -- no compartir tablas con los datos de cuentas registradas (RNF7) — nunca
 -- deben llevar empresaId ni entrar en las politicas de arriba.
+
+-- Bloque A del Incremento 2 (PLAN-DE-TRABAJO.md Seccion 18.1.C): "limite_tasa"
+-- es el mismo caso de tenant nulo explicito de arriba — protege el propio
+-- flujo anonimo (RF15/RF17), asi que no tiene sentido aislarla por tenant.
+-- Nunca debe llevar empresaId ni politica de tenant.

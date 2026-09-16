@@ -64,6 +64,15 @@ enum EstadoDato {
   VERIFICADO
 }
 
+// Bloque A del Incremento 2 (PLAN-DE-TRABAJO.md Seccion 18.1.C/18.2.B) — RF15
+// distingue el inicio de una evaluacion del desbloqueo de su detalle (RF17),
+// ambos protegidos por LimiteTasa con el mismo mecanismo pero contadores
+// independientes.
+enum BucketLimiteTasa {
+  INICIO_EVALUACION
+  DESBLOQUEO_DETALLE
+}
+
 // RF3, engine v1 (src/engine/criticidad.ts): nivel categorico del impacto
 // de una interrupcion sobre la promesa al cliente. RF3 no fijaba una
 // escala cerrada para este campo (hallazgo de Full-Stack en la quinta
@@ -435,4 +444,27 @@ model EvaluacionExpresConexion {
 
   @@index([evaluacionExpresId])
   @@map("evaluaciones_expres_conexiones")
+}
+
+// Bloque A del Incremento 2 (PLAN-DE-TRABAJO.md Seccion 18.1.C, 18.4.F) —
+// rate limiting Postgres-nativo de RF15/RF17, sin Redis/store externo (por
+// eso RATE_LIMIT_STORE_URL sale de .env.example, ver Seccion 18.1.C). Tenant
+// nulo explicito, mismo caso que EvaluacionExpres arriba: nunca lleva
+// empresaId ni entra en las politicas de prisma/rls.sql. huellaOrigenHash es
+// siempre un hash salteado (nunca la IP en claro, src/infra/rateLimit) y
+// ventanaInicio es el inicio de la hora en curso (ventana fija, no
+// deslizante) — la fila se resuelve con un UPSERT atomico
+// (src/infra/rateLimit/limiteTasa.ts) para que invocaciones serverless
+// concurrentes nunca pierdan un incremento.
+model LimiteTasa {
+  id                String            @id @default(cuid())
+  huellaOrigenHash  String
+  bucket            BucketLimiteTasa
+  ventanaInicio     DateTime
+  contador          Int               @default(0)
+  createdAt         DateTime          @default(now())
+
+  @@unique([huellaOrigenHash, bucket, ventanaInicio])
+  @@index([ventanaInicio])
+  @@map("limite_tasa")
 }
