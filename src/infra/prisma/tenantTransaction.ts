@@ -37,7 +37,19 @@ function buildScopedTx(tx: any, empresaId: string): ScopedTx {
   return new Proxy(tx, {
     get(target, modelProp: string) {
       const delegate = target[modelProp];
-      if (typeof delegate !== "object" || delegate === null) return delegate;
+      // Ronda 5 de revision: metodos de nivel superior del propio `tx`
+      // (`$executeRaw`, `$queryRaw`, etc., ver src/infra/auth/rateLimit.ts)
+      // son funciones, no "modelos" -- se devuelven ligadas (`.bind(target)`)
+      // en vez de sin ligar, porque el Proxy invoca la funcion con `this`
+      // apuntando al propio Proxy, no al `target` real, y el cliente de
+      // Prisma generado puede depender de campos privados de la instancia
+      // real para resolver la conexion -- sin el bind, una llamada como
+      // `tx.$executeRaw\`...\`` a traves de este Proxy podria fallar en
+      // runtime aunque typecheck/lint no lo detecten (nunca se habia
+      // ejercitado este camino: tenantTransaction() no tenia ningun uso
+      // real hasta esta ronda).
+      if (typeof delegate === "function") return delegate.bind(target);
+      if (delegate === null || typeof delegate !== "object") return delegate;
       const model = modelProp.charAt(0).toUpperCase() + modelProp.slice(1);
       if (!TENANT_SCOPED_MODELS.has(model)) return delegate;
       return new Proxy(delegate, {

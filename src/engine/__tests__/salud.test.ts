@@ -36,4 +36,16 @@ describe("calcularSalud", () => {
     const r = calcularSalud([{ valor: null, noSabe: true, noAplica: false }]);
     expect(r.salud).toBeNull();
   });
+
+  // R5-20 (Ronda 5) -- caso limite sin cobertura de prueba: array vacio
+  // (una conexion sin ninguna respuesta registrada todavia, ej. antes de
+  // cerrar el ciclo). No debe reventar ni devolver un cero falso.
+  it("array vacio: salud null, cobertura null (no cero), sin reventar", () => {
+    const r = calcularSalud([]);
+    expect(r.salud).toBeNull();
+    expect(r.respuestasValidas).toBe(0);
+    expect(r.respuestasNoSabe).toBe(0);
+    expect(r.respuestasNoAplica).toBe(0);
+    expect(r.coberturaConfianza).toBeNull();
+  });
 });

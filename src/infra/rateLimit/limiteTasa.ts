@@ -15,8 +15,16 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 
-export { hashHuellaOrigen, truncarVentanaHora, LIMITE_INICIO_EVALUACION, LIMITE_DESBLOQUEO_DETALLE } from "./huella";
-import { truncarVentanaHora } from "./huella";
+export {
+  hashHuellaOrigen,
+  truncarVentanaBucket,
+  LIMITE_INICIO_EVALUACION,
+  LIMITE_DESBLOQUEO_DETALLE,
+  BUCKET_MINUTOS_LIMITE_TASA,
+  VENTANA_MINUTOS_LIMITE_TASA,
+  BUCKETS_POR_VENTANA_LIMITE_TASA,
+} from "./huella";
+import { truncarVentanaBucket, BUCKET_MINUTOS_LIMITE_TASA, BUCKETS_POR_VENTANA_LIMITE_TASA } from "./huella";
 
 export type BucketLimiteTasa = "INICIO_EVALUACION" | "DESBLOQUEO_DETALLE";
 
@@ -26,12 +34,18 @@ export interface ResultadoLimiteTasa {
 }
 
 /**
- * Incrementa (o crea) atomicamente el contador de la huella+bucket+ventana
- * vigente y evalua si ya supero el limite dado. Una sola sentencia UPSERT
- * (INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING) para que dos
- * invocaciones serverless concurrentes de la misma huella nunca pierdan un
- * incremento por una condicion de carrera de lectura-luego-escritura
- * (PLAN-DE-TRABAJO.md Seccion 18.1.C).
+ * Incrementa (o crea) atomicamente el contador del bucket de 15 minutos
+ * vigente (huella+bucket+ventana) y evalua si la SUMA de los ultimos
+ * BUCKETS_POR_VENTANA_LIMITE_TASA buckets (ventana deslizante aproximada,
+ * R5-19 -- ver el comentario en ./huella.ts) ya supero el limite dado.
+ *
+ * El incremento sigue siendo una sola sentencia UPSERT (INSERT ... ON
+ * CONFLICT ... DO UPDATE) para que dos invocaciones serverless
+ * concurrentes de la misma huella nunca pierdan un incremento por una
+ * condicion de carrera de lectura-luego-escritura (PLAN-DE-TRABAJO.md
+ * Seccion 18.1.C) -- la lectura de la suma es una consulta aparte,
+ * aceptable para un limitador de tasa que ya documenta que no es una
+ * garantia matematica exacta (ver ./huella.ts).
  *
  * `prisma` es obligatorio (sin valor por defecto) a proposito: quien la
  * llama en produccion importa el singleton de src/infra/prisma/client.ts y
@@ -47,15 +61,30 @@ export async function registrarIntento(
   ahora: Date,
   prisma: PrismaClient,
 ): Promise<ResultadoLimiteTasa> {
-  const ventanaInicio = truncarVentanaHora(ahora);
+  const ventanaInicio = truncarVentanaBucket(ahora);
   const id = randomUUID();
-  const filas = await prisma.$queryRaw<{ contador: number }[]>`
+  await prisma.$executeRaw`
     INSERT INTO "limite_tasa" ("id", "huellaOrigenHash", "bucket", "ventanaInicio", "contador")
     VALUES (${id}, ${huellaOrigenHash}, ${bucket}::"BucketLimiteTasa", ${ventanaInicio}, 1)
     ON CONFLICT ("huellaOrigenHash", "bucket", "ventanaInicio")
     DO UPDATE SET "contador" = "limite_tasa"."contador" + 1
-    RETURNING "contador"
   `;
-  const contador = filas[0]?.contador ?? 1;
+
+  const inicioVentanaDeslizante = new Date(
+    ventanaInicio.getTime() - (BUCKETS_POR_VENTANA_LIMITE_TASA - 1) * BUCKET_MINUTOS_LIMITE_TASA * 60_000,
+  );
+  const filas = await prisma.$queryRaw<{ total: bigint | number | null }[]>`
+    SELECT COALESCE(SUM("contador"), 0) AS total
+    FROM "limite_tasa"
+    WHERE "huellaOrigenHash" = ${huellaOrigenHash}
+      AND "bucket" = ${bucket}::"BucketLimiteTasa"
+      AND "ventanaInicio" >= ${inicioVentanaDeslizante}
+      AND "ventanaInicio" <= ${ventanaInicio}
+  `;
+  // SUM() de una columna INTEGER vuelve BIGINT en Postgres -- el driver
+  // "pg" lo entrega como string para no perder precision fuera del rango
+  // seguro de Number; Number() alcanza aca porque el volumen real de
+  // intentos por huella nunca se acerca a ese limite.
+  const contador = Number(filas[0]?.total ?? 0);
   return { contador, permitido: contador <= limite };
 }

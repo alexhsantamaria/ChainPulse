@@ -309,6 +309,11 @@ model CicloPulso {
   metricasCuestionario       MetricaCuestionario[]
   recomendacionesEjecutadas  RecomendacionEjecutada[]
 
+  // R5-7 -- ademas de este indice normal, la migracion
+  // 20260916160000_ciclo_abierto_unico agrega un indice UNICO PARCIAL
+  // ("estado" = 'ABIERTO') que Prisma no puede expresar en este DSL. No
+  // lo borres en un `prisma migrate dev` futuro por "drift": es
+  // intencional (ver el comentario en esa migracion).
   @@index([empresaId])
   @@map("ciclos_pulso")
 }
@@ -520,10 +525,13 @@ model EvaluacionExpresConexion {
 // nulo explicito, mismo caso que EvaluacionExpres arriba: nunca lleva
 // empresaId ni entra en las politicas de prisma/rls.sql. huellaOrigenHash es
 // siempre un hash salteado (nunca la IP en claro, src/infra/rateLimit) y
-// ventanaInicio es el inicio de la hora en curso (ventana fija, no
-// deslizante) — la fila se resuelve con un UPSERT atomico
-// (src/infra/rateLimit/limiteTasa.ts) para que invocaciones serverless
-// concurrentes nunca pierdan un incremento.
+// ventanaInicio es el inicio del bucket de 15 minutos en curso (R5-19,
+// Ronda 5: antes un bucket fijo de 60 min duplicaba de hecho el limite
+// alrededor de cada frontera de hora; registrarIntento() ahora suma los
+// ultimos 4 buckets de 15 min como ventana deslizante aproximada, ver
+// src/infra/rateLimit/huella.ts) — la fila se resuelve con un UPSERT
+// atomico (src/infra/rateLimit/limiteTasa.ts) para que invocaciones
+// serverless concurrentes nunca pierdan un incremento.
 model LimiteTasa {
   id                String            @id @default(cuid())
   huellaOrigenHash  String
@@ -578,6 +586,14 @@ model UsuarioPlataforma {
 // cualquier edicion post-publicacion y crea numero+1 en su lugar; el
 // indice unico parcial de la migracion (WHERE estado = 'PUBLICADA') es el
 // backstop de base de datos.
+// R5-5 (Ronda 5) -- ese indice unico parcial (uq_cuestionario_version_publicada,
+// prisma/migrations/20260916150000_incremento2_evaluacion_expres_v2) no es
+// representable en schema.prisma (Prisma no soporta indices parciales en su
+// DSL): existe solo en la migracion SQL escrita a mano. Una futura
+// `prisma migrate dev` con red real NO debe interpretarlo como "drift" ni
+// intentar generar una migracion que lo elimine -- mismo patron de riesgo
+// que el indice parcial de CicloPulso.estado = 'ABIERTO' (ver comentario en
+// ese modelo).
 model CuestionarioVersion {
   id          String                 @id @default(cuid())
   codigo      String // "evaluacion-expres-v2"
@@ -585,15 +601,25 @@ model CuestionarioVersion {
   estado      EstadoVersionContenido @default(BORRADOR)
   publicadaEn DateTime?
   retiradaEn  DateTime?
-  curadorId   String? // UsuarioPlataforma.id — sin relacion FK a proposito,
-  // mismo criterio minimalista que el resto de este bloque (ver Seccion 13)
-  curador     UsuarioPlataforma?     @relation(fields: [curadorId], references: [id])
+  // R5-17 -- el comentario original de esta columna decia "sin relacion FK
+  // a proposito", pero la linea de abajo si define una relacion (curador)
+  // con su FK -- quedo desactualizado de una version anterior del schema.
+  // Nullable porque un BORRADOR puede no tener curador asignado todavia
+  // (Seccion 13); onDelete por defecto (Restrict) es intencional: no tiene
+  // sentido borrar un UsuarioPlataforma que curo versiones existentes.
+  curadorId String?
+  curador   UsuarioPlataforma? @relation(fields: [curadorId], references: [id])
   notasCambio String?
 
   preguntas          PreguntaVersion[]
   evaluacionesExpres EvaluacionExpresV2[]
 
   @@unique([codigo, numero])
+  // R5-25 -- sin este indice, "que versiones curo este usuario de
+  // plataforma" (o el JOIN que arma la relacion "curador") hace un scan
+  // completo de la tabla; curadorId es nullable pero eso no le quita valor
+  // al indice para las filas que si lo tienen.
+  @@index([curadorId])
   @@map("cuestionario_versiones")
 }
 
@@ -693,6 +719,13 @@ model Respuesta {
   createdAt DateTime @default(now())
 
   @@unique([evaluacionExpresV2Id, preguntaVersionId])
+  // R5-25 -- el unique de arriba tiene a evaluacionExpresV2Id como primera
+  // columna, asi que no sirve para resolver "que respuestas usan esta
+  // preguntaVersion" (regla del prefijo izquierdo de un indice B-tree
+  // compuesto) -- la consulta que dispara el onDelete: Restrict de
+  // preguntaVersion (y cualquier reporte por pregunta) necesita su propio
+  // indice.
+  @@index([preguntaVersionId])
   @@map("respuestas")
 }
 
@@ -720,7 +753,13 @@ model ConsentimientoExpres {
 
   createdAt DateTime @default(now())
 
-  @@index([evaluacionExpresV2Id, finalidad])
+  // R5-18 -- la consulta real (RF23/RF24) es "el consentimiento vigente
+  // mas reciente de esta evaluacion para esta finalidad", es decir el
+  // mismo filtro de mas abajo pero ORDER BY createdAt DESC LIMIT 1.
+  // Agregar createdAt al final del indice compuesto deja que Postgres
+  // resuelva el ORDER BY con el indice (evita un sort aparte) sin
+  // necesitar un segundo indice solo para eso.
+  @@index([evaluacionExpresV2Id, finalidad, createdAt])
   @@map("consentimientos_expres")
 }
 
@@ -750,27 +789,51 @@ model ConsentimientoCuenta {
 
   createdAt DateTime @default(now())
 
-  @@index([empresaId, usuarioId, finalidad])
+  // R5-18 -- mismo motivo que ConsentimientoExpres de arriba: createdAt al
+  // final del indice para resolver "el mas reciente por finalidad" sin un
+  // sort aparte.
+  @@index([empresaId, usuarioId, finalidad, createdAt])
   @@map("consentimientos_cuenta")
 }
 
 // RF22/RNF10 (Seccion 18.2.C) — hallazgo de la evaluacion expres V2. Solo
 // variables NO identificables en "contextoSnapshot" — nunca un id de fila
-// de Respuesta/EvaluacionExpresV2 aqui. La trazabilidad operacional (para
-// que el propio visitante vea su resultado detallado) vive en
-// HallazgoExpresTraza, una tabla SEPARADA con permisos propios — la
-// separacion es estructural (dos tablas), no solo una lista de columnas
-// a evitar. Investigacion (Incremento 6) nunca tiene, ni por JOIN
-// accidental, acceso a la tabla de traza.
+// de Respuesta aqui. La trazabilidad operacional (para que el propio
+// visitante vea su resultado detallado) vive en HallazgoExpresTraza, una
+// tabla SEPARADA con permisos propios — la separacion es estructural (dos
+// tablas), no solo una lista de columnas a evitar.
+//
+// R5-3 (Ronda 5, correccion 2026-09-16) — el comentario original de este
+// bloque decia que Investigacion (Incremento 6) "nunca tiene acceso a la
+// tabla de traza" y dejaba entender que eso bastaba para el anonimato.
+// Eso es incompleto: evaluacionExpresV2Id (abajo) es un FK real hacia
+// EvaluacionExpresV2, que SI puede tener correo/nombreCompleto/telefono
+// (si detalleDesbloqueado=true) — un JOIN corriente desde HallazgoExpres
+// hasta ahi re-identifica al visitante sin tocar HallazgoExpresTraza para
+// nada. No se saca el FK: hace falta para que el propio visitante vea su
+// resultado detallado (mismo flujo que RF22), y quitarlo no reduciria el
+// riesgo de re-identificacion de todos modos (el mismo JOIN por id
+// funciona igual a nivel de aplicacion, con o sin FK declarado en el
+// schema). El gate real es de ACCESO, no de schema: la funcion
+// SECURITY DEFINER de agregacion de Incremento 6 (Seccion 18.2.C) tiene
+// que exponer SOLO contextoSnapshot + los campos no identificables ya
+// documentados aca abajo, sin GRANT de SELECT sobre "evaluaciones_expres_v2"
+// para el rol que la ejecuta — igual criterio de permisos-a-nivel-de-Postgres
+// que ya aplica a "hallazgos_expres_traza", extendido explicitamente a
+// esta relacion. Ver PLAN-DE-TRABAJO.md, item de backlog de Incremento 6.
 model HallazgoExpres {
   id                   String             @id @default(cuid())
+  // FK real e intencional (ver nota de arriba) — necesaria para que RF22
+  // le muestre al propio visitante su resultado detallado. El limite de
+  // anonimato para Investigacion (Incremento 6) se aplica con permisos de
+  // Postgres sobre la tabla EvaluacionExpresV2, no quitando este campo.
   evaluacionExpresV2Id String
   evaluacionExpresV2   EvaluacionExpresV2 @relation(fields: [evaluacionExpresV2Id], references: [id], onDelete: Cascade)
 
   dimension             DimensionDiagnosticoV2
   estadoCategoria       String // uno de los 5 estados por dimension (catalogo cerrado en src/engine/v2)
   enunciado             String
-  evidenceState         EstadoEvidencia
+  estadoEvidencia       EstadoEvidencia
   coberturaConfianza    Float
   evidenciaFaltante     String?
   siguienteVerificacion String?

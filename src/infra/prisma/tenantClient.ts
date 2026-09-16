@@ -1,6 +1,7 @@
 // Infraestructura — extension de Prisma que inyecta el filtro de tenant en cada consulta (RNF1, capa 1).
 import { Prisma } from "@prisma/client";
 import { prisma } from "./client";
+import { TENANT_SCOPED_MODELS, injectTenantFilter, uncapitalize } from "./tenantScope";
 
 // RNF1, capa 1 (middleware de Prisma) — ADR-0001.
 //
@@ -14,32 +15,14 @@ import { prisma } from "./client";
 // TypeScript infiera los tipos exactos del cliente generado; en ese punto
 // vale la pena quitar los `any` y dejar que la inferencia haga el trabajo.
 //
-// Modelos con "empresaId" propio: se envuelve cada consulta en una
-// transaccion que primero fija la variable de sesion de Postgres que
-// consume prisma/rls.sql (capa 2), y se inyecta el filtro de tenant en el
-// WHERE de cada operacion. Aunque una consulta "olvide" el filtro en el
-// codigo de aplicacion, RLS igual la bloquea del lado de la base — las
-// dos capas son independientes a proposito (ADR-0001, "cinturon y
-// tirantes").
-//
-// EvaluacionExpres y sus hijas NO pasan por aqui: no tienen empresaId
-// (adenda de ADR-0001) y se consultan con `prisma` directo.
-
-// Exportado (Incremento 2, PLAN-DE-TRABAJO.md Seccion 18.3.B): lo reusa
-// src/infra/prisma/tenantTransaction.ts para inyectar el mismo filtro de
-// tenant dentro de una transaccion manual con set_config, sin duplicar
-// esta logica. "ConsentimientoCuenta" es la primera tabla tenant-scoped
-// nueva desde el Incremento 1 (Seccion 18.2.A) — toda tabla nueva con
-// empresaId propio se agrega aqui en la misma migracion que la crea,
-// nunca despues (regla de docs/PATRONES.md, Seccion 18.1.C).
-export const TENANT_SCOPED_MODELS = new Set([
-  "Empresa",
-  "Usuario",
-  "Eslabon",
-  "Conexion",
-  "CicloPulso",
-  "ConsentimientoCuenta",
-]);
+// R5-6 (Ronda 5) -- TENANT_SCOPED_MODELS, injectTenantFilter y
+// uncapitalize se movieron a ./tenantScope.ts (modulo puro, sin import de
+// Prisma) para que las pruebas unitarias de injectTenantFilter() no
+// arrastren la construccion del singleton real de PrismaClient con solo
+// cargar el modulo -- ver el comentario de cabecera de tenantScope.ts.
+// Se re-exportan aqui sin cambios para no romper a quien ya las importa
+// desde este archivo (tenantTransaction.ts, etc.).
+export { TENANT_SCOPED_MODELS, injectTenantFilter, uncapitalize };
 
 export function tenantClient(empresaId: string) {
   if (!empresaId) {
@@ -69,41 +52,6 @@ export function tenantClient(empresaId: string) {
       },
     },
   });
-}
-
-// Exportado (Seccion 18.3.B) por el mismo motivo que TENANT_SCOPED_MODELS
-// de arriba: tenantTransaction.ts lo reusa para invocar el modelo
-// correcto sobre el `tx` de Prisma.
-export function uncapitalize(model: string): string {
-  return model.charAt(0).toLowerCase() + model.slice(1);
-}
-
-// Empresa se filtra por "id"; el resto de los modelos tenant-scoped tiene
-// una columna "empresaId" propia.
-// Exportado (Seccion 18.3.B) — mismo motivo que arriba.
-export function injectTenantFilter(
-  model: string,
-  operation: string,
-  args: Record<string, unknown> | undefined,
-  empresaId: string,
-): Record<string, unknown> {
-  const tenantField = model === "Empresa" ? "id" : "empresaId";
-  const base = args ?? {};
-
-  if (operation === "create") {
-    return {
-      ...base,
-      data: { ...(base.data as object), [tenantField]: empresaId },
-    };
-  }
-
-  if (operation === "createMany" && Array.isArray((base as { data?: unknown[] }).data)) {
-    const data = (base as { data: Record<string, unknown>[] }).data;
-    return { ...base, data: data.map((d) => ({ ...d, [tenantField]: empresaId })) };
-  }
-
-  const where = { ...(base.where as object), [tenantField]: empresaId };
-  return { ...base, where };
 }
 
 export type TenantPrismaClient = ReturnType<typeof tenantClient>;

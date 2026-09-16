@@ -6,6 +6,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { fetchJsonSeguro } from "@/infra/http/fetchJsonSeguro";
 
 export default function MarcarEjecutadaBoton({
   cicloId,
@@ -19,6 +20,7 @@ export default function MarcarEjecutadaBoton({
 }) {
   const router = useRouter();
   const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (yaEjecutada) {
     return <p className="text-xs text-emerald-700">Ejecutada el {yaEjecutada}</p>;
@@ -26,23 +28,30 @@ export default function MarcarEjecutadaBoton({
 
   async function marcar() {
     setCargando(true);
-    const respuesta = await fetch(`/api/ciclos/${cicloId}/recomendaciones/${conexionId}/ejecutar`, {
-      method: "POST",
-    });
+    setError(null);
+    const resultado = await fetchJsonSeguro(
+      `/api/ciclos/${cicloId}/recomendaciones/${conexionId}/ejecutar`,
+      { method: "POST" },
+    );
     setCargando(false);
-    if (respuesta.ok) {
+    if (resultado.ok) {
       router.refresh();
+      return;
     }
+    setError("No se pudo marcar. Intentá de nuevo.");
   }
 
   return (
-    <button
-      type="button"
-      onClick={marcar}
-      disabled={cargando}
-      className="self-start rounded border border-amber-300 px-2 py-1 text-xs text-amber-800 hover:border-amber-500 disabled:opacity-50"
-    >
-      {cargando ? "Marcando..." : "Marcar como ejecutada"}
-    </button>
+    <div className="flex flex-col items-start gap-1">
+      <button
+        type="button"
+        onClick={marcar}
+        disabled={cargando}
+        className="self-start rounded border border-amber-300 px-2 py-1 text-xs text-amber-800 hover:border-amber-500 disabled:opacity-50"
+      >
+        {cargando ? "Marcando..." : "Marcar como ejecutada"}
+      </button>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+    </div>
   );
 }

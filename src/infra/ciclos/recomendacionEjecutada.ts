@@ -6,7 +6,7 @@
 // RecomendacionEjecutada no esta en TENANT_SCOPED_MODELS (no tiene su
 // propia columna empresaId), mismo patron de set_config manual que el
 // resto de infra/ciclos/.
-import { prisma } from "../prisma/client";
+import { tenantTransaction } from "../prisma/tenantTransaction";
 
 export async function marcarRecomendacionEjecutada(input: {
   empresaId: string;
@@ -14,9 +14,8 @@ export async function marcarRecomendacionEjecutada(input: {
   conexionId: string;
   usuarioId: string;
 }): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-  await prisma.$transaction(async (tx: any) => {
-    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${input.empresaId}, true)`;
+  // R5-11 -- helper estandar en vez de set_config manual (ver registro.ts).
+  await tenantTransaction(input.empresaId, async (tx) => {
     // Idempotente a proposito (upsert con update vacio): marcarla dos
     // veces no es un error, solo no cambia quien la marco primero.
     await tx.recomendacionEjecutada.upsert({

@@ -6,7 +6,7 @@
 // SECURITY DEFINER nueva (misma resolucion que el addendum de RF1 en
 // ADR-0003: alli el problema es distinto -- el login no conoce el tenant
 // de antemano, aca si, porque lo trae el propio token).
-import { prisma } from "../prisma/client";
+import { tenantTransaction } from "../prisma/tenantTransaction";
 import { hashPassword } from "./password";
 import { EmailYaRegistradoError } from "./errores";
 
@@ -23,11 +23,9 @@ export async function crearUsuarioResponsable(input: AceptarInvitacionInput): Pr
   const passwordHash = await hashPassword(input.password);
 
   try {
-    // "tx: any" a proposito -- mismo motivo documentado en registro.ts y
-    // tenantClient.ts (engineType="client" tipa PrismaClient como any).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const usuarioId = await prisma.$transaction(async (tx: any) => {
-      await tx.$executeRaw`SELECT set_config('app.tenant_id', ${input.empresaId}, true)`;
+    // R5-11 -- ver el mismo comentario en registro.ts: usa el helper
+    // estandar en vez de abrir su propia transaccion con set_config manual.
+    const usuarioId = await tenantTransaction(input.empresaId, async (tx) => {
       const usuario = await tx.usuario.create({
         data: {
           empresaId: input.empresaId,

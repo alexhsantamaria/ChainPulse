@@ -1,0 +1,14 @@
+-- R5-21 (Ronda 5, BAJO) -- "evidenceState" quedo en ingles por descuido en
+-- la migracion del Incremento 2 (20260916150000_incremento2_evaluacion_expres_v2):
+-- el resto de columnas de "hallazgos_expres" (y del esquema completo) esta
+-- en español (estadoCategoria, evidenciaFaltante, siguienteVerificacion,
+-- etc.). Se corrige con un RENAME COLUMN en vez de tocar la migracion ya
+-- aplicada (esa migracion ya corrio contra la base real de Alex, editarla
+-- retroactivamente no cambia lo que ya existe en Neon).
+--
+-- No hay datos que migrar mas alla del rename: al momento de esta
+-- correccion no existe todavia codigo de aplicacion que escriba
+-- HallazgoExpres (Incremento 2 completa el schema primero, la logica de
+-- evaluacion expres V2 es trabajo posterior), asi que no hay filas reales
+-- en riesgo.
+ALTER TABLE "hallazgos_expres" RENAME COLUMN "evidenceState" TO "estadoEvidencia";

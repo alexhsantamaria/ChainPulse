@@ -48,9 +48,12 @@ export interface ResultadoPurga {
 }
 
 /**
- * Purga la huella de origen de toda EvaluacionExpres con mas de 48h de
- * antiguedad que todavia no fue purgada, y elimina las filas de LimiteTasa
- * ya fuera de su ventana vigente.
+ * Purga la huella de origen de toda EvaluacionExpres (v1) Y EvaluacionExpresV2
+ * (R5-4, Ronda 5: el Incremento 2 agrego una segunda tabla con el mismo
+ * patron huellaOrigen/huellaOrigenPurgadaEn -- ver el comentario de ese
+ * campo en prisma/schema.prisma -- y este job no la purgaba todavia) con
+ * mas de 48h de antiguedad que todavia no fue purgada, y elimina las filas
+ * de LimiteTasa ya fuera de su ventana vigente.
  */
 export async function purgarHuellasOrigen(
   ahora: Date,
@@ -58,16 +61,28 @@ export async function purgarHuellasOrigen(
 ): Promise<ResultadoPurga> {
   const limiteEdad = new Date(ahora.getTime() - HUELLA_ORIGEN_PURGA_HORAS * HORA_MS);
 
-  const evaluaciones = await prisma.evaluacionExpres.updateMany({
-    where: {
-      huellaOrigenPurgadaEn: null,
-      createdAt: { lte: limiteEdad },
-    },
-    data: {
-      huellaOrigen: HUELLA_ORIGEN_PURGADA,
-      huellaOrigenPurgadaEn: ahora,
-    },
-  });
+  const [evaluaciones, evaluacionesV2] = await Promise.all([
+    prisma.evaluacionExpres.updateMany({
+      where: {
+        huellaOrigenPurgadaEn: null,
+        createdAt: { lte: limiteEdad },
+      },
+      data: {
+        huellaOrigen: HUELLA_ORIGEN_PURGADA,
+        huellaOrigenPurgadaEn: ahora,
+      },
+    }),
+    prisma.evaluacionExpresV2.updateMany({
+      where: {
+        huellaOrigenPurgadaEn: null,
+        createdAt: { lte: limiteEdad },
+      },
+      data: {
+        huellaOrigen: HUELLA_ORIGEN_PURGADA,
+        huellaOrigenPurgadaEn: ahora,
+      },
+    }),
+  ]);
 
   const limiteVentana = new Date(ahora.getTime() - LIMITE_TASA_MARGEN_HORAS * HORA_MS);
   const limiteTasa = await prisma.limiteTasa.deleteMany({
@@ -75,7 +90,7 @@ export async function purgarHuellasOrigen(
   });
 
   return {
-    huellasOrigenPurgadas: evaluaciones.count,
+    huellasOrigenPurgadas: evaluaciones.count + evaluacionesV2.count,
     filasLimiteTasaEliminadas: limiteTasa.count,
   };
 }

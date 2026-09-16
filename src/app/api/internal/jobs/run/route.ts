@@ -14,8 +14,13 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { obtenerBoss } from "@/infra/jobs/pgBoss";
 import { encolarPurgaHuellaOrigen, procesarPurgaHuellaOrigen } from "@/infra/jobs/purgaHuellaOrigenJob";
+import { logError } from "@/infra/log";
 
 export const runtime = "nodejs"; // pg-boss necesita el pool "pg" (modulo "node:net"), no corre en Edge.
+// R5-14 -- el default de Vercel (10s en plan Hobby) puede no alcanzar para
+// procesar varios jobs de purga en una sola invocacion; 60s da margen sin
+// pasarse del limite del plan Hobby (que es 60s como maximo permitido).
+export const maxDuration = 60;
 
 function autorizado(request: Request): boolean {
   const secreto = process.env.CRON_SECRET;
@@ -39,7 +44,7 @@ export async function GET(request: Request) {
     const resultado = await procesarPurgaHuellaOrigen(boss);
     return NextResponse.json({ ok: true, ...resultado });
   } catch (err) {
-    console.error(err);
+    logError("api/internal/jobs/run", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }
 }

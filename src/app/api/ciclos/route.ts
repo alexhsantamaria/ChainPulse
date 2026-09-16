@@ -1,16 +1,15 @@
 // Ruta API — lista y abre ciclos de pulso (RF5).
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { requireSession, requireAdmin } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import { abrirCiclo, YaHayCicloAbiertoError } from "@/infra/ciclos/abrirCiclo";
+import { logError } from "@/infra/log";
 
 export async function GET() {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    return NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 });
-  }
+  const resultado = await requireSession();
+  if ("respuesta" in resultado) return resultado.respuesta;
 
-  const ciclos = await tenantClient(session.user.empresaId).cicloPulso.findMany({
+  const ciclos = await tenantClient(resultado.sesion.empresaId).cicloPulso.findMany({
     orderBy: { abiertoEn: "desc" },
   });
 
@@ -18,23 +17,18 @@ export async function GET() {
 }
 
 export async function POST() {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    return NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 });
-  }
   // RF5 es una accion de administrador -- un RESPONSABLE no abre ciclos.
-  if (session.user.rol !== "ADMINISTRADOR") {
-    return NextResponse.json({ ok: false, error: "NO_AUTORIZADO" }, { status: 403 });
-  }
+  const resultado = await requireAdmin();
+  if ("respuesta" in resultado) return resultado.respuesta;
 
   try {
-    const resultado = await abrirCiclo(session.user.empresaId);
-    return NextResponse.json({ ok: true, ...resultado });
+    const resultadoCiclo = await abrirCiclo(resultado.sesion.empresaId);
+    return NextResponse.json({ ok: true, ...resultadoCiclo });
   } catch (err) {
     if (err instanceof YaHayCicloAbiertoError) {
       return NextResponse.json({ ok: false, error: "CICLO_YA_ABIERTO" }, { status: 409 });
     }
-    console.error(err);
+    logError("api/ciclos POST", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }
 }

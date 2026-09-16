@@ -4,6 +4,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { AsignacionConexion } from "@/infra/ciclos/registrarRespuestas";
+import { fetchJsonSeguro } from "@/infra/http/fetchJsonSeguro";
 
 type Respuesta = { valor: number | null; noSabe: boolean; noAplica: boolean };
 
@@ -55,7 +56,7 @@ export default function ResponderCuestionarioForm({
 
     setCargando(true);
     const duracionSegundos = Math.round((Date.now() - inicio) / 1000);
-    const respuesta = await fetch(`/api/ciclos/${cicloId}/respuestas`, {
+    const resultado = await fetchJsonSeguro(`/api/ciclos/${cicloId}/respuestas`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -66,11 +67,14 @@ export default function ResponderCuestionarioForm({
         duracionSegundos,
       }),
     });
-    const resultado = await respuesta.json();
     setCargando(false);
 
     if (!resultado.ok) {
-      setError("No se pudo enviar el cuestionario. Intentá de nuevo.");
+      setError(
+        resultado.error === "ERROR_RED"
+          ? "No se pudo conectar. Revisá tu conexión e intentá de nuevo."
+          : "No se pudo enviar el cuestionario. Intentá de nuevo.",
+      );
       return;
     }
 

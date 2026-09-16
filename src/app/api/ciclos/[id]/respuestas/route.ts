@@ -1,12 +1,13 @@
 // Ruta API — un responsable registra sus respuestas al cuestionario del ciclo abierto (RF6).
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/auth";
+import { requireSession } from "@/infra/auth/session";
 import {
   registrarRespuestas,
   CicloNoAbiertoError,
   ConexionNoAsignadaError,
 } from "@/infra/ciclos/registrarRespuestas";
+import { logError } from "@/infra/log";
 
 const respuestaSchema = z.object({
   conexionId: z.string().min(1),
@@ -24,12 +25,12 @@ const respuestasSchema = z.object({
 });
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    return NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 });
-  }
+  const resultadoSesion = await requireSession();
+  if ("respuesta" in resultadoSesion) return resultadoSesion.respuesta;
+  const { sesion } = resultadoSesion;
+
   // RF6 es una accion de responsable, limitada a su propio eslabon.
-  if (session.user.rol !== "RESPONSABLE" || !session.user.eslabonId) {
+  if (sesion.rol !== "RESPONSABLE" || !sesion.eslabonId) {
     return NextResponse.json({ ok: false, error: "NO_AUTORIZADO" }, { status: 403 });
   }
 
@@ -42,10 +43,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   try {
     const resultado = await registrarRespuestas({
-      empresaId: session.user.empresaId,
+      empresaId: sesion.empresaId,
       cicloPulsoId: id,
-      responsableId: session.user.id,
-      eslabonId: session.user.eslabonId,
+      responsableId: sesion.usuarioId,
+      eslabonId: sesion.eslabonId,
       respuestas: parsed.data.respuestas,
       duracionSegundos: parsed.data.duracionSegundos,
     });
@@ -57,7 +58,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (err instanceof ConexionNoAsignadaError) {
       return NextResponse.json({ ok: false, error: "CONEXION_NO_ASIGNADA" }, { status: 403 });
     }
-    console.error(err);
+    logError("api/ciclos/[id]/respuestas", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }
 }

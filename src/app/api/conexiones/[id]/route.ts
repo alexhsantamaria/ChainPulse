@@ -3,7 +3,7 @@
 // como incompleta" -- esta ruta es como se completa despues).
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/auth";
+import { requireSession } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import { calcularCompletitud } from "@/infra/conexiones/completitud";
 
@@ -16,10 +16,8 @@ const actualizarSchema = z.object({
 });
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    return NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 });
-  }
+  const resultado = await requireSession();
+  if ("respuesta" in resultado) return resultado.respuesta;
 
   const { id } = await context.params;
   const body = await request.json().catch(() => null);
@@ -28,7 +26,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return NextResponse.json({ ok: false, error: "DATOS_INVALIDOS" }, { status: 400 });
   }
 
-  const client = tenantClient(session.user.empresaId);
+  const client = tenantClient(resultado.sesion.empresaId);
   const existente = await client.conexion.findUnique({ where: { id } });
   if (!existente) {
     return NextResponse.json({ ok: false, error: "CONEXION_INEXISTENTE" }, { status: 404 });

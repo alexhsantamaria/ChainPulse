@@ -10,6 +10,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { fetchJsonSeguro } from "@/infra/http/fetchJsonSeguro";
 
 type Eslabon = { id: string; nombre: string };
 
@@ -90,19 +91,20 @@ export default function ConexionForm({
     const url = modo === "crear" ? "/api/conexiones" : `/api/conexiones/${conexionExistente!.id}`;
     const method = modo === "crear" ? "POST" : "PATCH";
 
-    const respuesta = await fetch(url, {
+    const resultado = await fetchJsonSeguro(url, {
       method,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const resultado = await respuesta.json();
     setCargando(false);
 
     if (!resultado.ok) {
       setError(
         resultado.error === "CONEXION_YA_EXISTE"
           ? "Ya existe una conexión declarada entre esos dos eslabones."
-          : "No se pudo guardar la conexión. Revisá los datos e intentá de nuevo.",
+          : resultado.error === "ERROR_RED"
+            ? "No se pudo conectar. Revisá tu conexión e intentá de nuevo."
+            : "No se pudo guardar la conexión. Revisá los datos e intentá de nuevo.",
       );
       return;
     }

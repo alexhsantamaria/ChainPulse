@@ -15,7 +15,7 @@
 // como login_lookup() (ahi el problema es distinto: el login no conoce el
 // tenant de antemano; aca sí, porque lo estamos creando).
 import { randomUUID } from "crypto";
-import { prisma } from "../prisma/client";
+import { tenantTransaction } from "../prisma/tenantTransaction";
 import { hashPassword } from "./password";
 import { generarSecretoMfa } from "./mfa";
 import { EmailYaRegistradoError } from "./errores";
@@ -39,15 +39,13 @@ export async function registrarEmpresaYAdmin(input: RegistroInput): Promise<Regi
   const { secretoBase32 } = generarSecretoMfa(email);
 
   try {
-    // "tx: any" a proposito, mismo motivo que tenantClient.ts: con
-    // engineType="client" (adenda ARM64 de ADR-0003) los tipos generados
-    // de PrismaClient/TransactionClient son `any`, asi que anotarlo
-    // explicito solo evita el "implicit any" de TypeScript -- no hay tipo
-    // mas preciso disponible en este modo.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await prisma.$transaction(async (tx: any) => {
-      await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
-
+    // R5-11 (Ronda 5) -- antes, este archivo abria su propia
+    // prisma.$transaction() + set_config manual (el mismo bloque de 3
+    // lineas copiado en media docena de sitios de infra/). Ahora usa el
+    // helper estandar (PLAN-DE-TRABAJO.md Seccion 18.3.B), que hace
+    // exactamente lo mismo -- set_config + injectTenantFilter para los
+    // modelos tenant-scoped -- desde un solo lugar.
+    await tenantTransaction(empresaId, async (tx) => {
       await tx.empresa.create({ data: { id: empresaId, nombre: input.nombreEmpresa } });
 
       await tx.usuario.create({

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { verificarTokenInvitacion } from "@/infra/auth/invitacion";
 import { crearUsuarioResponsable } from "@/infra/auth/aceptarInvitacion";
 import { EmailYaRegistradoError } from "@/infra/auth/errores";
+import { logError } from "@/infra/log";
 
 const aceptarSchema = z.object({
   token: z.string().min(1),
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
     if (err instanceof EmailYaRegistradoError) {
       return NextResponse.json({ ok: false, error: "EMAIL_YA_REGISTRADO" }, { status: 409 });
     }
-    console.error(err);
+    logError("api/invitaciones/aceptar", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }
 

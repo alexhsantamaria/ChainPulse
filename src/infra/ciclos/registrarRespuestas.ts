@@ -2,10 +2,11 @@
 //
 // RespuestaCruda no esta en TENANT_SCOPED_MODELS de tenantClient.ts (no
 // tiene su propia columna empresaId -- llega a su tenant via conexionId/
-// cicloPulsoId), asi que se lee/escribe con un set_config manual dentro
-// de la transaccion, mismo patron que aceptarInvitacion.ts.
-import { prisma } from "../prisma/client";
+// cicloPulsoId): tenantTransaction() igual fija app.tenant_id en la sesion
+// (para RLS, capa 2), simplemente no le inyecta un filtro de WHERE/data
+// automatico a este modelo en particular (R5-11).
 import { tenantClient } from "../prisma/tenantClient";
+import { tenantTransaction } from "../prisma/tenantTransaction";
 
 export interface RespuestaEntrada {
   conexionId: string;
@@ -53,10 +54,8 @@ export async function obtenerAsignacionesResponsable(input: {
     include: { origen: true, destino: true },
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-  return prisma.$transaction(async (tx: any) => {
-    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${input.empresaId}, true)`;
-
+  // R5-11 -- helper estandar en vez de set_config manual (ver registro.ts).
+  return tenantTransaction(input.empresaId, async (tx) => {
     const resultado: AsignacionConexion[] = [];
     for (const conexion of conexiones) {
       const existente = await tx.respuestaCruda.findUnique({
@@ -114,9 +113,8 @@ export async function registrarRespuestas(input: {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-  await prisma.$transaction(async (tx: any) => {
-    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${input.empresaId}, true)`;
+  // R5-11 -- helper estandar en vez de set_config manual (ver registro.ts).
+  await tenantTransaction(input.empresaId, async (tx) => {
     for (const respuesta of input.respuestas) {
       const noSabe = respuesta.noSabe ?? false;
       const noAplica = respuesta.noAplica ?? false;

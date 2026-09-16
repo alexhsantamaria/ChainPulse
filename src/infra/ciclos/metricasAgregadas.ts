@@ -3,7 +3,7 @@
 // como ejecutadas. No es un sistema de analitica de producto completo
 // (Seccion 12 de requirements.md) -- son las dos consultas agregadas
 // simples que RNF9 pide, nada mas.
-import { prisma } from "../prisma/client";
+import { tenantTransaction } from "../prisma/tenantTransaction";
 import { calcularMetricasCuestionario, type MetricasCuestionario } from "./metricasCuestionario";
 
 export interface MetricasAgregadas {
@@ -16,10 +16,8 @@ export interface MetricasAgregadas {
 }
 
 export async function obtenerMetricasAgregadas(empresaId: string): Promise<MetricasAgregadas> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-  return prisma.$transaction(async (tx: any) => {
-    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
-
+  // R5-11 -- helper estandar en vez de set_config manual (ver registro.ts).
+  return tenantTransaction(empresaId, async (tx) => {
     const [metricasRaw, resultadosCiclo, totalEjecutadas] = await Promise.all([
       tx.metricaCuestionario.findMany({ select: { duracionSegundos: true } }),
       tx.resultadoCiclo.findMany({ select: { eslabonesMasDebilesIds: true } }),

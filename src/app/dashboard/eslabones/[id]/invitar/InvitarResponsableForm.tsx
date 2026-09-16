@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { fetchJsonSeguro } from "@/infra/http/fetchJsonSeguro";
 
 export default function InvitarResponsableForm({ eslabonId }: { eslabonId: string }) {
   const [email, setEmail] = useState("");
@@ -15,12 +16,11 @@ export default function InvitarResponsableForm({ eslabonId }: { eslabonId: strin
     setExito(false);
     setCargando(true);
 
-    const respuesta = await fetch("/api/invitaciones", {
+    const resultado = await fetchJsonSeguro("/api/invitaciones", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, eslabonId }),
     });
-    const resultado = await respuesta.json();
     setCargando(false);
 
     if (!resultado.ok) {
@@ -29,7 +29,9 @@ export default function InvitarResponsableForm({ eslabonId }: { eslabonId: strin
           ? "Ya existe una cuenta con ese email."
           : resultado.error === "ERROR_ENVIO_CORREO"
             ? "No se pudo enviar el correo. Revisá la configuración de Resend e intentá de nuevo."
-            : "No se pudo enviar la invitación. Revisá el email e intentá de nuevo.",
+            : resultado.error === "ERROR_RED"
+              ? "No se pudo conectar. Revisá tu conexión e intentá de nuevo."
+              : "No se pudo enviar la invitación. Revisá el email e intentá de nuevo.",
       );
       return;
     }

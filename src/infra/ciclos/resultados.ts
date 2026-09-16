@@ -31,7 +31,7 @@
 // sin ningun aviso. El efecto practico de un cambio de version es que la
 // tendencia "se corta" y vuelve a crecer desde cero con la version nueva,
 // nunca que mezcla ambas.
-import { prisma } from "../prisma/client";
+import { tenantTransaction } from "../prisma/tenantTransaction";
 import { generarRecomendacion, type Recomendacion } from "@/engine/recomendacion";
 import { calcularCriticidad } from "@/engine/criticidad";
 import type { GradoDependencia, DatosCriticidad } from "@/domain/types";
@@ -74,10 +74,12 @@ export async function obtenerResultadosCiclo(
   empresaId: string,
   cicloPulsoId: string,
 ): Promise<ResultadosCiclo | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-  return prisma.$transaction(async (tx: any) => {
-    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
-
+  // R5-11 -- helper estandar en vez de set_config manual (ver registro.ts).
+  // cicloPulso SI esta en TENANT_SCOPED_MODELS, asi que ademas de fijar la
+  // sesion, tenantTransaction() ya inyecta empresaId en su WHERE -- el
+  // filtro explicito de abajo queda como defensa en profundidad (mismo
+  // criterio documentado al inicio del archivo), no porque haga falta.
+  return tenantTransaction(empresaId, async (tx) => {
     const ciclo = await tx.cicloPulso.findFirst({ where: { id: cicloPulsoId, empresaId } });
     if (!ciclo) {
       return null;

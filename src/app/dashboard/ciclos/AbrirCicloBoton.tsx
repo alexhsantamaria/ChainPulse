@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { fetchJsonSeguro } from "@/infra/http/fetchJsonSeguro";
 
 export default function AbrirCicloBoton() {
   const router = useRouter();
@@ -13,13 +14,16 @@ export default function AbrirCicloBoton() {
     setCargando(true);
     setError(null);
 
-    const respuesta = await fetch("/api/ciclos", { method: "POST" });
-    const resultado = await respuesta.json();
+    const resultado = await fetchJsonSeguro("/api/ciclos", { method: "POST" });
     setCargando(false);
 
     if (!resultado.ok) {
       setError(
-        resultado.error === "CICLO_YA_ABIERTO" ? "Ya hay un ciclo abierto." : "No se pudo abrir el ciclo.",
+        resultado.error === "CICLO_YA_ABIERTO"
+          ? "Ya hay un ciclo abierto."
+          : resultado.error === "ERROR_RED"
+            ? "No se pudo conectar. Revisá tu conexión e intentá de nuevo."
+            : "No se pudo abrir el ciclo.",
       );
       return;
     }

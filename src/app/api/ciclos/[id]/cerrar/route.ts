@@ -1,27 +1,23 @@
 // Ruta API — cierra un ciclo de pulso y calcula sus resultados reales (RF7).
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { requireAdmin } from "@/infra/auth/session";
 import { cerrarCiclo, CicloNoAbiertoError } from "@/infra/ciclos/cerrarCiclo";
+import { logError } from "@/infra/log";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    return NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 });
-  }
-  if (session.user.rol !== "ADMINISTRADOR") {
-    return NextResponse.json({ ok: false, error: "NO_AUTORIZADO" }, { status: 403 });
-  }
+  const resultado = await requireAdmin();
+  if ("respuesta" in resultado) return resultado.respuesta;
 
   const { id } = await params;
 
   try {
-    const resultado = await cerrarCiclo(session.user.empresaId, id);
-    return NextResponse.json({ ok: true, ...resultado });
+    const resultadoCierre = await cerrarCiclo(resultado.sesion.empresaId, id);
+    return NextResponse.json({ ok: true, ...resultadoCierre });
   } catch (err) {
     if (err instanceof CicloNoAbiertoError) {
       return NextResponse.json({ ok: false, error: "CICLO_NO_ABIERTO" }, { status: 409 });
     }
-    console.error(err);
+    logError("api/ciclos/[id]/cerrar", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }
 }

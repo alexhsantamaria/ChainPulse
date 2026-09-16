@@ -3,11 +3,11 @@
 // integracion reales, usando el motor v1 ya probado (RF7).
 //
 // RespuestaCruda/ResultadoConexion/ResultadoCiclo no estan en
-// TENANT_SCOPED_MODELS (ver tenantClient.ts) -- se leen/escriben con un
-// set_config manual, mismo patron que aceptarInvitacion.ts y
-// registrarRespuestas.ts.
-import { prisma } from "../prisma/client";
+// TENANT_SCOPED_MODELS (ver tenantClient.ts) -- se leen/escriben dentro de
+// tenantTransaction() (R5-11), que fija app.tenant_id igual que un
+// set_config manual pero sin repetir el boilerplate en cada archivo.
 import { tenantClient } from "../prisma/tenantClient";
+import { tenantTransaction } from "../prisma/tenantTransaction";
 import { calcularSalud } from "@/engine/salud";
 import { calcularCriticidad } from "@/engine/criticidad";
 import { calcularRiesgo } from "@/engine/riesgo";
@@ -63,10 +63,8 @@ export async function cerrarCiclo(
   const conexionesParaIndice: ConexionParaIndice[] = [];
   const responsablesQueRespondieron = new Set<string>();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-  await prisma.$transaction(async (tx: any) => {
-    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
-
+  // R5-11 -- helper estandar en vez de set_config manual (ver registro.ts).
+  await tenantTransaction(empresaId, async (tx) => {
     for (const conexion of conexionesCompletas) {
       const respuestasCrudas = await tx.respuestaCruda.findMany({
         where: { cicloPulsoId, conexionId: conexion.id },
@@ -137,9 +135,8 @@ export async function cerrarCiclo(
   const responsablesElegibles = await obtenerResponsablesElegibles(empresaId);
   const coberturaRespuesta = calcularCobertura(responsablesElegibles.length, responsablesQueRespondieron.size);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-  await prisma.$transaction(async (tx: any) => {
-    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
+  // R5-11 -- helper estandar en vez de set_config manual (ver registro.ts).
+  await tenantTransaction(empresaId, async (tx) => {
     await tx.resultadoCiclo.create({
       data: { cicloPulsoId, indiceIntegracion, eslabonesMasDebilesIds, ruleVersion: RULE_VERSION },
     });

@@ -29,9 +29,30 @@ export function hashHuellaOrigen(valorCrudo: string): string {
   return createHmac("sha256", salt).update(valorCrudo).digest("hex");
 }
 
-/** Trunca una fecha al inicio de su hora en UTC — la clave de la ventana fija de LimiteTasa. */
-export function truncarVentanaHora(fecha: Date): Date {
+// R5-19 (Ronda 5, MEDIO) -- LimiteTasa usaba una ventana FIJA por hora
+// (un solo bucket de 60 min, truncarVentanaHora): un visitante podia mandar
+// hasta `limite` intentos a las 13:59 y otros `limite` a las 14:00:00 --
+// dos ventanas "distintas" desde el punto de vista de la tabla, pero
+// separadas por segundos en el reloj real, duplicando de hecho el limite
+// alrededor de cada frontera de hora.
+//
+// La correccion no toca el schema ("ventanaInicio" en prisma/schema.prisma
+// ya es un DateTime generico, sin significado de "hora exacta" grabado en
+// la estructura): se reduce la granularidad del bucket a 15 minutos y
+// registrarIntento() (./limiteTasa.ts) suma los ultimos BUCKETS_POR_VENTANA
+// buckets (incluido el actual) en vez de mirar uno solo. Sigue sin ser una
+// ventana deslizante exacta -- el peor caso de doble conteo baja de "una
+// ventana completa" a "como mucho un bucket de 15 minutos", que alcanza
+// para el proposito de RF15/RF17 (limitar abuso, no una garantia
+// matematica): mismo criterio ya documentado en limiteTasa.ts.
+export const BUCKET_MINUTOS_LIMITE_TASA = 15;
+export const VENTANA_MINUTOS_LIMITE_TASA = 60;
+export const BUCKETS_POR_VENTANA_LIMITE_TASA = VENTANA_MINUTOS_LIMITE_TASA / BUCKET_MINUTOS_LIMITE_TASA;
+
+/** Trunca una fecha al inicio de su bucket de `bucketMinutos` minutos, en UTC. */
+export function truncarVentanaBucket(fecha: Date, bucketMinutos: number = BUCKET_MINUTOS_LIMITE_TASA): Date {
   const truncada = new Date(fecha);
-  truncada.setUTCMinutes(0, 0, 0);
+  const minutoBucket = Math.floor(truncada.getUTCMinutes() / bucketMinutos) * bucketMinutos;
+  truncada.setUTCMinutes(minutoBucket, 0, 0);
   return truncada;
 }

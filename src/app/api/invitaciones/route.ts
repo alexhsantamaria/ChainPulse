@@ -1,11 +1,12 @@
 // Ruta API — un administrador invita a un responsable de eslabon por correo (RF4).
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/auth";
+import { requireAdmin } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import { buscarUsuarioPorEmail } from "@/infra/auth/loginLookup";
 import { crearTokenInvitacion } from "@/infra/auth/invitacion";
 import { enviarInvitacionResponsable } from "@/infra/email/resend";
+import { logError } from "@/infra/log";
 
 const invitarSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
@@ -13,14 +14,10 @@ const invitarSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    return NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 });
-  }
   // RF4 es una accion de administrador -- un RESPONSABLE no invita a otros.
-  if (session.user.rol !== "ADMINISTRADOR") {
-    return NextResponse.json({ ok: false, error: "NO_AUTORIZADO" }, { status: 403 });
-  }
+  const resultado = await requireAdmin();
+  if ("respuesta" in resultado) return resultado.respuesta;
+  const { sesion } = resultado;
 
   const body = await request.json().catch(() => null);
   const parsed = invitarSchema.safeParse(body);
@@ -28,10 +25,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "DATOS_INVALIDOS" }, { status: 400 });
   }
 
-  const client = tenantClient(session.user.empresaId);
+  const client = tenantClient(sesion.empresaId);
   const [eslabon, empresa, usuarioExistente] = await Promise.all([
     client.eslabon.findUnique({ where: { id: parsed.data.eslabonId } }),
-    client.empresa.findUnique({ where: { id: session.user.empresaId } }),
+    client.empresa.findUnique({ where: { id: sesion.empresaId } }),
     buscarUsuarioPorEmail(parsed.data.email),
   ]);
 
@@ -43,7 +40,7 @@ export async function POST(request: Request) {
   }
 
   const token = await crearTokenInvitacion({
-    empresaId: session.user.empresaId,
+    empresaId: sesion.empresaId,
     eslabonId: eslabon.id,
     email: parsed.data.email,
   });
@@ -59,7 +56,7 @@ export async function POST(request: Request) {
       linkInvitacion,
     });
   } catch (err) {
-    console.error(err);
+    logError("api/invitaciones POST", err);
     return NextResponse.json({ ok: false, error: "ERROR_ENVIO_CORREO" }, { status: 502 });
   }
 

@@ -61,4 +61,14 @@ describe("calcularEslabonesMasDebiles", () => {
       r2.conjuntoNoDominado.map((c) => c.conexionId),
     );
   });
+
+  // R5-20 (Ronda 5) -- caso limite sin cobertura de prueba: sin ninguna
+  // conexion con salud calculada (ej. un ciclo donde ninguna respuesta fue
+  // valida todavia), el conjunto no dominado tiene que ser vacio, no
+  // reventar ni marcar ambiguedad.
+  it("array vacio: conjunto no dominado vacio, nunca ambiguo, sin reventar", () => {
+    const r = calcularEslabonesMasDebiles([]);
+    expect(r.conjuntoNoDominado).toEqual([]);
+    expect(r.esAmbiguo).toBe(false);
+  });
 });

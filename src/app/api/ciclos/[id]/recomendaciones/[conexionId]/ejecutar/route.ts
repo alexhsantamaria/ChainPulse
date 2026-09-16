@@ -4,33 +4,29 @@
 // en la lectura actual -- eso ya lo filtra la UI que muestra el boton -- aca solo
 // se registra la marca, idempotente via upsert (ver recomendacionEjecutada.ts).
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { requireAdmin } from "@/infra/auth/session";
 import { marcarRecomendacionEjecutada } from "@/infra/ciclos/recomendacionEjecutada";
+import { logError } from "@/infra/log";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string; conexionId: string }> },
 ) {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    return NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 });
-  }
-  if (session.user.rol !== "ADMINISTRADOR") {
-    return NextResponse.json({ ok: false, error: "NO_AUTORIZADO" }, { status: 403 });
-  }
+  const resultado = await requireAdmin();
+  if ("respuesta" in resultado) return resultado.respuesta;
 
   const { id, conexionId } = await params;
 
   try {
     await marcarRecomendacionEjecutada({
-      empresaId: session.user.empresaId,
+      empresaId: resultado.sesion.empresaId,
       cicloPulsoId: id,
       conexionId,
-      usuarioId: session.user.id,
+      usuarioId: resultado.sesion.usuarioId,
     });
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error(err);
+    logError("api/ciclos/[id]/recomendaciones/[conexionId]/ejecutar", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }
 }

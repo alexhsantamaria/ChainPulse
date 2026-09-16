@@ -1,9 +1,11 @@
 // Ruta API — declara conexiones (dependencias) entre eslabones (RF2/RF3).
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/auth";
+import { requireSession } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import { calcularCompletitud } from "@/infra/conexiones/completitud";
+import { esViolacionUnica } from "@/infra/prisma/errores";
+import { logError } from "@/infra/log";
 
 // RF3: los 4 datos de criticidad son opcionales al crear -- una conexion
 // se puede declarar solo con origen/destino (y opcionalmente el grado de
@@ -25,12 +27,10 @@ const conexionSchema = z
   });
 
 export async function GET() {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    return NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 });
-  }
+  const resultado = await requireSession();
+  if ("respuesta" in resultado) return resultado.respuesta;
 
-  const conexiones = await tenantClient(session.user.empresaId).conexion.findMany({
+  const conexiones = await tenantClient(resultado.sesion.empresaId).conexion.findMany({
     orderBy: { createdAt: "asc" },
     include: { origen: true, destino: true },
   });
@@ -39,10 +39,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    return NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 });
-  }
+  const resultadoSesion = await requireSession();
+  if ("respuesta" in resultadoSesion) return resultadoSesion.respuesta;
+  const { sesion } = resultadoSesion;
 
   const body = await request.json().catch(() => null);
   const parsed = conexionSchema.safeParse(body);
@@ -50,7 +49,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "DATOS_INVALIDOS" }, { status: 400 });
   }
 
-  const client = tenantClient(session.user.empresaId);
+  const client = tenantClient(sesion.empresaId);
   const datos = parsed.data;
 
   // Confirma que ambos eslabones existen Y pertenecen a este tenant --
@@ -69,7 +68,7 @@ export async function POST(request: Request) {
   try {
     const conexion = await client.conexion.create({
       data: {
-        empresaId: session.user.empresaId,
+        empresaId: sesion.empresaId,
         origenId: datos.origenId,
         destinoId: datos.destinoId,
         gradoDependencia: datos.gradoDependencia ?? undefined,
@@ -83,13 +82,10 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, conexion });
   } catch (err) {
-    // Duck-typing en vez de instanceof: engineType="client" no reexporta
-    // PrismaClientKnownRequestError (ver ADR-0003, addendum de RF1/MFA).
-    const codigo = err && typeof err === "object" && "code" in err ? (err as { code?: string }).code : undefined;
-    if (codigo === "P2002") {
+    if (esViolacionUnica(err)) {
       return NextResponse.json({ ok: false, error: "CONEXION_YA_EXISTE" }, { status: 409 });
     }
-    console.error(err);
+    logError("api/conexiones POST", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }
 }

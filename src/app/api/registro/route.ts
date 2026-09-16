@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { registrarEmpresaYAdmin, EmailYaRegistradoError } from "@/infra/auth/registro";
+import { logError } from "@/infra/log";
 
 const registroSchema = z.object({
   nombreEmpresa: z.string().trim().min(2).max(120),
@@ -23,7 +24,7 @@ export async function POST(request: Request) {
     if (err instanceof EmailYaRegistradoError) {
       return NextResponse.json({ ok: false, error: "EMAIL_YA_REGISTRADO" }, { status: 409 });
     }
-    console.error(err);
+    logError("api/registro", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }
 

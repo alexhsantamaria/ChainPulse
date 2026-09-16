@@ -4,5 +4,6 @@
       "path": "/api/internal/jobs/run",
       "schedule": "0 8 * * *"
     }
-  ]
+  ],
+  "regions": ["gru1"]
 }

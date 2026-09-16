@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { fetchJsonSeguro } from "@/infra/http/fetchJsonSeguro";
 
 export default function CerrarCicloBoton({ cicloId }: { cicloId: string }) {
   const router = useRouter();
@@ -13,12 +14,15 @@ export default function CerrarCicloBoton({ cicloId }: { cicloId: string }) {
     setCargando(true);
     setError(null);
 
-    const respuesta = await fetch(`/api/ciclos/${cicloId}/cerrar`, { method: "POST" });
-    const resultado = await respuesta.json();
+    const resultado = await fetchJsonSeguro(`/api/ciclos/${cicloId}/cerrar`, { method: "POST" });
     setCargando(false);
 
     if (!resultado.ok) {
-      setError("No se pudo cerrar el ciclo.");
+      setError(
+        resultado.error === "ERROR_RED"
+          ? "No se pudo conectar. Revisá tu conexión e intentá de nuevo."
+          : "No se pudo cerrar el ciclo.",
+      );
       return;
     }
 

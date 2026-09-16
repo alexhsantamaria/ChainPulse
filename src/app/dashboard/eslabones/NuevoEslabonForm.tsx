@@ -3,6 +3,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { fetchJsonSeguro } from "@/infra/http/fetchJsonSeguro";
 
 export default function NuevoEslabonForm() {
   const router = useRouter();
@@ -16,16 +17,19 @@ export default function NuevoEslabonForm() {
     setError(null);
     setCargando(true);
 
-    const respuesta = await fetch("/api/eslabones", {
+    const resultado = await fetchJsonSeguro("/api/eslabones", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ nombre, esProveedorExterno }),
     });
-    const resultado = await respuesta.json();
     setCargando(false);
 
     if (!resultado.ok) {
-      setError("No se pudo guardar el eslabón. Revisá el nombre e intentá de nuevo.");
+      setError(
+        resultado.error === "ERROR_RED"
+          ? "No se pudo conectar. Revisá tu conexión e intentá de nuevo."
+          : "No se pudo guardar el eslabón. Revisá el nombre e intentá de nuevo.",
+      );
       return;
     }
 
