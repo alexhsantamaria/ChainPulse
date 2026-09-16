@@ -287,7 +287,7 @@ Alex aprobó explícitamente este incremento el 2026-09-15 ("apruebo el Market S
 - [ ] Contratación
 
 **Regla de publicación inicial:**
-- [ ] Mínimo 10 organizaciones independientes por segmento publicado, y revisión de reidentificación aprobada (el `10` es un umbral de producto candidato, no garantía legal — debe ser configurable y revisado por privacidad)
+- [ ] Mínimo 20 organizaciones independientes por segmento publicado, y revisión de reidentificación aprobada (umbral confirmado por Alex el 2026-09-16 tras la Ronda 3 de revisión de `PLAN-DE-TRABAJO.md`, sube de un candidato inicial de 10 a 20 — sigue pendiente de validación por la revisión legal Ley 29733, no es garantía legal por sí solo)
 - [ ] Nunca exponer: respuestas individuales, texto libre sin revisión, nombres, correos, teléfonos, IP, archivos, o combinaciones que identifiquen indirectamente
 
 **Actor nuevo:** Comprador de estadísticas (Sección 4 de este documento) — accede solo a agregados que superen las reglas de privacidad y calidad de arriba.

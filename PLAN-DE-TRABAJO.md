@@ -1,8 +1,8 @@
 # ChainPulse — Plan de Trabajo hasta Completar el Proyecto
 
 Fecha: 2026-09-16
-Estado: **Revisión de viabilidad completada en 3 rondas.** Ronda 1: arquitectura, herramientas, seguridad, DDD + auditoría final. Veredicto global: **Viable con condiciones.** Alex confirmó las 3 decisiones de infraestructura pendientes (cola de jobs Postgres-nativa, Cloudflare R2, `ConexionCadena` como tabla nueva) el 2026-09-15. Ronda 2: las mismas 4 dimensiones más un quinto agente de **implementación práctica/developer** entregaron cada una su plan de trabajo detallado y accionable hasta el cierre del proyecto (Secciones 10-14). Ronda 3: **Calidad 1 (QA/testing)**, **Calidad 2 (calidad de código/ingeniería)** y **Finanzas (costos de infraestructura y operación)** revisaron el documento completo en paralelo, y **Auditoría** consolidó y verificó sus hallazgos (Sección 17) — veredicto: **viable con condiciones, aprobado con correcciones documentales obligatorias.** La corrección crítica (H1, inconsistencia de la tabla `LimiteTasa`) ya está aplicada en las Secciones 10-14. Ninguna condición de ninguna ronda exige cambiar el alcance ya aprobado en `MVP-DEFINITIVO.md` v1.3 — todas son decisiones de "cómo construir", no de "qué construir". Este documento fija el plan de tareas concreto, ordenado, hasta terminar el proyecto (Incrementos 2 a 7). Cada tarea es una casilla `- [ ]` que se marca `[x]` solo cuando está resuelta y validada, mismo mecanismo que `MVP-DEFINITIVO.md`.
-Versión: 3.0
+Estado: **Revisión de viabilidad completada en 4 rondas.** Ronda 1: arquitectura, herramientas, seguridad, DDD + auditoría final. Veredicto global: **Viable con condiciones.** Alex confirmó las 3 decisiones de infraestructura pendientes (cola de jobs Postgres-nativa, Cloudflare R2, `ConexionCadena` como tabla nueva) el 2026-09-15. Ronda 2: las mismas 4 dimensiones más un quinto agente de **implementación práctica/developer** entregaron cada una su plan de trabajo detallado y accionable hasta el cierre del proyecto (Secciones 10-14). Ronda 3: **Calidad 1 (QA/testing)**, **Calidad 2 (calidad de código/ingeniería)** y **Finanzas (costos de infraestructura y operación)** revisaron el documento completo en paralelo, y **Auditoría** consolidó y verificó sus hallazgos (Sección 17) — veredicto: **viable con condiciones, aprobado con correcciones documentales obligatorias.** La corrección crítica (H1, inconsistencia de la tabla `LimiteTasa`) ya está aplicada en las Secciones 10-14. Alex confirmó el 2026-09-16 la autenticación de `UsuarioPlataforma` (correo+contraseña+autenticador), el presupuesto de infraestructura ($0/mes, evaluar mes a mes) y el umbral de k-anonimato (20 organizaciones), y pidió cerrar todas las brechas, errores y vacíos antes de empezar. Ronda 4: 4 agentes (arquitectura, seguridad, DDD, developer/tooling) resolvieron, con esas 3 decisiones como fijas, prácticamente todos los ítems abiertos de las Secciones 4/15/17 con diseños concretos y listos para implementar (Sección 18) — de 16 hallazgos de Ronda 3, solo la revisión legal Ley 29733 sigue [HUMANO]. Ninguna condición de ninguna ronda exige cambiar el alcance ya aprobado en `MVP-DEFINITIVO.md` — todas son decisiones de "cómo construir", no de "qué construir" (la única excepción, el umbral de k-anonimato, ya se propagó a `MVP-DEFINITIVO.md` §6.6 como 20 organizaciones). Este documento fija el plan de tareas concreto, ordenado, hasta terminar el proyecto (Incrementos 2 a 7). Cada tarea es una casilla `- [ ]` que se marca `[x]` solo cuando está resuelta y validada, mismo mecanismo que `MVP-DEFINITIVO.md`.
+Versión: 4.0
 
 ## 0. Cómo se hizo esta revisión
 
@@ -49,21 +49,21 @@ La Ronda 2 (Secciones 10-14) profundizó estas tres decisiones y encontró **dec
 
 Cada ítem es una casilla que se marca `[x]` cuando está resuelto (documentado como decisión o implementado, según corresponda) y validado.
 
-- [ ] **Corregir el checkbox de rate limiting en `MVP-DEFINITIVO.md` Sección 9** (de `[x]` a `[ ]`) y construir el rate limiting real para la evaluación pública anónima (store externo, no memoria de proceso) + el job de purga de `huellaOrigen` a 48-72h.
-- [ ] **ADR-0004 — infraestructura transversal:** cola de jobs + almacenamiento de objetos (ver Sección 3 de este plan).
-- [ ] **Observabilidad mínima** (logging estructurado + tracking de errores, p. ej. Sentry con scrubbing de PII) sobre los Route Handlers existentes, antes de exponer el motor V2 a tráfico público en el Incremento 2.
+- [ ] **Corregir el checkbox de rate limiting en `MVP-DEFINITIVO.md` Sección 9** (de `[x]` a `[ ]`) — pendiente, es una construcción real (Incremento 2), no una decisión de diseño; el diseño de `LimiteTasa` en sí ya está cerrado (ver H1 abajo).
+- [x] **ADR-0004 — infraestructura transversal (cola de jobs + storage) — confirmado (Sección 3)**; el detalle de dónde corre el worker de la cola quedó resuelto en la Sección 15 y formalizado como `docs/ADR/0004-worker-cola-jobs.md` en la Sección 18.1.
+- [x] **Observabilidad mínima (Sentry) — especificación cerrada, lista para implementar en la Sección 18.1.B**: paquete, plan (Developer, gratuito — coherente con presupuesto $0/mes), variables de entorno, y scrubbing explícito de PII por nombre de campo real del schema.
 - [x] **Resuelto con Alex el 2026-09-15:** la contradicción entre la Sección 6.2 y la Sección 7 de `MVP-DEFINITIVO.md` se resuelve con una tabla nueva `ConexionCadena` (aditiva, sin tocar `conexiones`) — diseño completo de esta tabla y sus relaciones en la Sección 12 (DDD).
-- [ ] **Diseñar `Consentimiento`** (4 finalidades: `DIAGNOSTICO`, `INVESTIGACION`, `ESTADISTICAS_COMERCIALES`, `CONTACTO_COMERCIAL`) como registro append-only/histórico (texto, versión, fecha, jurisdicción, método de retiro) + estrategia de congelamiento de los booleanos `consentimientoEnvio`/`consentimientoMejoraAlgoritmo` que ya existen en `EvaluacionExpres` (no se migran retroactivamente, quedan como snapshot histórico).
-- [ ] **Diseñar versionado nativo en base de datos** para `CuestionarioVersion`/`PreguntaVersion` y, más adelante, `DefinicionKpi` — el patrón actual (`ruleVersion` como constante de código) sirve para el motor, no para contenido que un Curador metodológico edita sin desplegar código. Necesita su propio patrón: aggregate de versión + filas hijas inmutables.
-- [ ] **Confirmar aggregate root y política RLS de `Respuesta`** para el visitante anónimo sin tenant, extendiendo el patrón tenant-nulo ya usado en `EvaluacionExpres`.
-- [ ] **Fijar el patrón snapshot-JSON para `Hallazgo`** (mismo patrón que `ResultadoConexion.criticidadSnapshot`) — nunca FK directa a la fila operativa, para que investigación (Incremento 6) nunca vea identidad operativa reutilizando la misma tabla.
-- [ ] **Revisión legal formal (Ley 29733, Perú)** — registro de banco de datos personales, validación de transferencia internacional (Neon/Vercel son infraestructura fuera de Perú), suficiencia de los textos de consentimiento — antes de abrir el Incremento 2 a tráfico público general. *(Esta es la Decisión pendiente #5/#8 de `MVP-DEFINITIVO.md`, ya con país confirmado — Perú — pero la revisión legal en sí sigue sin hacerse.)*
-- [ ] **Fijar regla de denormalización de `empresaId`** + inclusión en `TENANT_SCOPED_MODELS` (`src/infra/prisma/tenantClient.ts`) para toda tabla nueva tenant-scoped, para no perder la garantía de doble capa de aislamiento que hoy tienen `Eslabon`/`Conexion`.
-- [ ] **Declarar como estándar oficial** el patrón de transacción manual + `set_config` (ya usado en `registrarEmpresaYAdmin()`) para escrituras atómicas multi-entidad, ya que `tenantClient()` no da atomicidad entre modelos — lo necesitan el Incremento 3 (crear `Cadena` + `Nodo` + `Conexión` juntos) y el Incremento 4 (persistir un CSV completo).
+- [x] **Diseñar `Consentimiento`** — resuelto en la Sección 18.2.A: dos tablas (`ConsentimientoExpres`, `ConsentimientoCuenta`), append-only garantizado a nivel de permisos de Postgres (`REVOKE UPDATE, DELETE`), estrategia de congelamiento exacta de los booleanos legacy de `EvaluacionExpres` (sin backfill, sin mezclar regímenes).
+- [x] **Diseñar versionado nativo en base de datos** — resuelto en la Sección 18.3.A: aggregate `codigo`+`numero`+`estado`, filas hijas inmutables, inmutabilidad garantizada por módulo único de escritura + índice único parcial en Postgres (`WHERE estado = 'PUBLICADA'`).
+- [x] **Confirmar aggregate root y política RLS de `Respuesta`** — resuelto en la Sección 18.2.B: aggregate root es `EvaluacionExpresV2`, sin RLS (mismo régimen tenant-nulo que `EvaluacionExpres`), protegida por cascada + `LimiteTasa` + disciplina de nunca exponer un endpoint de lectura directa.
+- [x] **Fijar el patrón snapshot-JSON para `Hallazgo`** — resuelto en la Sección 18.2.C: `HallazgoExpres.contextoSnapshot` (solo variables no identificables) separado en una tabla propia, `HallazgoExpresTraza`, de la lista de `respuestaIds` — Investigación (Incremento 6) nunca tiene acceso, ni siquiera por JOIN accidental, a la segunda tabla.
+- [ ] **Revisión legal formal (Ley 29733, Perú)** — sigue [HUMANO], no se puede cerrar sin abogado. Checklist concreto y accionable ya preparado en la Sección 18.2.D (4 bloques: registro de banco de datos, transferencia internacional, suficiencia de los 4 textos de consentimiento, validación del umbral de k-anonimato = 20 organizaciones) — antes de abrir el Incremento 2 a tráfico público general.
+- [x] **Fijar regla de denormalización de `empresaId`** — resuelto en la Sección 18.1.C: regla formal redactada, lista para `docs/PATRONES.md`.
+- [x] **Declarar como estándar oficial** el patrón de transacción manual + `set_config` (`tenantTransaction()`) — resuelto en la Sección 18.3.B: firma de función concreta, tabla de "cuándo usar cada uno", y el cambio previo necesario en `tenantClient.ts` (exportar `TENANT_SCOPED_MODELS`/`injectTenantFilter`).
 - [x] **[Ronda 3 — H1, CRÍTICO, ya corregido en este documento]** La tabla de rate limiting anónimo (RF15/RF17) tenía 4 nombres distintos entre Secciones 10/11/12/13/14 (`LimiteTasa`, `LimiteTasaEvaluacion`, `LimiteTasaContador`) y una de las versiones omitía la columna `bucket` que distingue RF15 de RF17. `grep -rn "LimiteTasa" .` contra el repo real confirmó que la tabla no existe aún en código, así que la corrección es de costo cero. Ya unificado en todo el documento como `LimiteTasa` (`huellaOrigenHash`, `bucket`, `ventanaInicio`, `contador`) — ver Sección 12 para el diseño canónico.
-- [ ] **[Ronda 3 — H2]** **No existe CI** (`find .github -type f` no devuelve nada) — cada commit se sube sin `lint`/`typecheck`/`test` automático; el propio commit `13018c9` documenta una migración que quedó sin subir por depender de disciplina manual. Antes de tocar el schema del Incremento 2: workflow mínimo de GitHub Actions (`npm run lint && npm run typecheck && npm run test`, ~1.5s hoy) en cada push/PR — no requiere resolver el bloqueo de red de Prisma en Mac/Claude.
-- [ ] **[Ronda 3 — H3]** **Sin guardas de compilación** contra mezclar `tenantClient()` (una transacción por operación) y el futuro helper `tenantTransaction()`/`ejecutarEnTransaccionDeTenant` (atómico multi-modelo) en el mismo flujo — riesgo real de una escritura parcialmente aplicada si un desarrollador usa el helper equivocado. Definir y documentar en `docs/PATRONES.md` (Sección 17) cuál se usa cuándo, antes del Incremento 3 (primer caso real: `Cadena`+`Nodo`s+`ConexionCadena`s en una sola operación).
-- [ ] **[Ronda 3 — H4]** **`ObservacionKpi` no tiene restricción de idempotencia en el schema real** — la Sección 10 (Arquitectura) exige una clave de idempotencia para evitar duplicar observaciones ante reintentos, pero la Sección 13 (DDD/schema) solo define un `@@index`, no un `@@unique`. Agregar la restricción `@@unique` correspondiente en la migración del Incremento 4, antes de escribir el motor de agregación de KPIs.
+- [x] **[Ronda 3 — H2] No existía CI — resuelto y ya aplicado al repo.** `.github/workflows/ci.yml` (lint+typecheck+test en cada push/PR a `main`), `.husky/pre-commit` (lint+typecheck en cada commit) — ver Sección 18.4 para el detalle y la justificación de cada elección.
+- [x] **[Ronda 3 — H3] Sin guardas contra mezclar `tenantClient()`/`tenantTransaction()` — resuelto en la Sección 18.3.B**: tabla de "cuándo usar cada uno" + convención de nombre de función (`xxxAtomico`) como heurística barata de revisión, documentada en `docs/PATRONES.md` (ya aplicado al repo, Sección 18.4.C).
+- [x] **[Ronda 3 — H4] `ObservacionKpi` sin restricción de idempotencia — resuelto en la Sección 18.3.F**: dos `@@unique` distintos (uno para carga manual/pegada por período, otro para reintentos de importación CSV vía `importId`+`importFilaHash`), listos para la migración del Incremento 4.
 
 ## 5. Recomendado, no bloqueante (se resuelve en el incremento correspondiente, no antes)
 
@@ -135,7 +135,7 @@ Depende de: patrón snapshot-JSON de `Hallazgo` + `Consentimiento` append-only, 
 Depende de: Incremento 6 cerrado + gate de privacidad.
 - [ ] Redactar detalle EARS.
 - [ ] Construir camino de acceso separado para Comprador de estadísticas.
-- [ ] Implementar regla de dominancia + agregación por rango + supresión de celdas pequeñas + recómputo dinámico del umbral de 10 organizaciones.
+- [ ] Implementar regla de dominancia + agregación por rango + supresión de celdas pequeñas + recómputo dinámico del umbral de 20 organizaciones.
 - [ ] Evaluación de impacto de privacidad por segmento (gate obligatorio antes de publicar cada segmento, no una sola vez).
 - [ ] Construir y validar.
 
@@ -321,13 +321,13 @@ Depende de: Incremento 6 cerrado (mismo camino de acceso no-tenant y patrón de 
 
 **Tareas:**
 - [ ] Camino de acceso separado para el actor Comprador de estadísticas — mismo patrón que Investigador, permisos distintos.
-- [ ] Job de agregación (`pg-boss`, recomputado periódicamente vía Cron, no on-demand por cada consulta pública) que calcula: regla de dominancia, agregación por rango, supresión de celdas pequeñas, y **recómputo dinámico del umbral de 10 organizaciones** — un cálculo caro sobre todo el dataset relevante, mismo motivo que en el Incremento 6 debe ir en cola, no en una Route Handler síncrona.
+- [ ] Job de agregación (`pg-boss`, recomputado periódicamente vía Cron, no on-demand por cada consulta pública) que calcula: regla de dominancia, agregación por rango, supresión de celdas pequeñas, y **recómputo dinámico del umbral de 20 organizaciones** — un cálculo caro sobre todo el dataset relevante, mismo motivo que en el Incremento 6 debe ir en cola, no en una Route Handler síncrona.
 - [ ] Pipeline en dos etapas: el job escribe a una tabla/vista de **staging** (no publicada); un paso de revisión de privacidad (evaluación de impacto por segmento, gate ya definido en `MVP-DEFINITIVO.md` Sección 9) aprueba explícitamente antes de que el segmento pase a la vista pública que sirve `GET /api/market-signals`. Este gate es un paso humano, no se automatiza — la arquitectura solo necesita dejar un estado intermedio (`PENDIENTE_REVISION` / `PUBLICADO`) para que ese paso exista.
 - [ ] Endpoint `GET /api/market-signals` — solo lee de la vista ya aprobada, nunca de la tabla de staging.
 - [ ] Nunca exponer respuestas individuales/texto libre/PII ni combinaciones re-identificables — validar con una prueba de re-identificación básica (no solo revisión manual) antes de marcar el incremento como cerrado.
 
 **Riesgos:**
-- El umbral de 10 organizaciones "dinámico" implica que un segmento publicado puede dejar de cumplir el umbral si organizaciones se dan de baja o retiran consentimiento — el job de recómputo periódico debe poder **despublicar** un segmento automáticamente, no solo publicar; si esto no se diseña desde el inicio, es un gap de cumplimiento, no solo de producto.
+- El umbral de 20 organizaciones "dinámico" implica que un segmento publicado puede dejar de cumplir el umbral si organizaciones se dan de baja o retiran consentimiento — el job de recómputo periódico debe poder **despublicar** un segmento automáticamente, no solo publicar; si esto no se diseña desde el inicio, es un gap de cumplimiento, no solo de producto.
 
 ---
 
@@ -533,10 +533,10 @@ Esta es la primera vez que el sistema expone una superficie pública nueva a tr�
 
 ### Incremento 7 — Market Signals
 
-- [ ] Sin librería nueva — reutiliza vistas materializadas (Incremento 4/6), pg-boss para recómputo dinámico del umbral de 10 organizaciones (job programado, mismo mecanismo que el refresh de vistas), y el patrón `SECURITY DEFINER` de acceso separado (Incremento 6) para el actor nuevo "Comprador de estadísticas".
+- [ ] Sin librería nueva — reutiliza vistas materializadas (Incremento 4/6), pg-boss para recómputo dinámico del umbral de 20 organizaciones (job programado, mismo mecanismo que el refresh de vistas), y el patrón `SECURITY DEFINER` de acceso separado (Incremento 6) para el actor nuevo "Comprador de estadísticas".
 - [ ] La regla de dominancia + supresión de celdas pequeñas es una extensión directa de la lógica de generalización ya escrita en `domain/investigacion/anonimizacion.ts` (Incremento 6) — no una librería ni un módulo nuevo desde cero.
 - **Testeo:** igual criterio que Incremento 6 — unitario para la lógica de supresión/dominancia, integración para el aislamiento del rol de Comprador de estadísticas.
-- **Riesgo concreto, no genérico:** este incremento tiene un gate de proceso (evaluación de impacto de privacidad **por segmento**, no una sola vez — `MVP-DEFINITIVO.md` §6.6) que ninguna herramienta automatiza. El riesgo real de stack es que el job de recómputo dinámico del umbral (vía pg-boss) publique un segmento que cruza el umbral de 10 organizaciones automáticamente, sin que el gate de privacidad manual lo haya revisado todavía para ese segmento puntual — el job debe dejar el segmento en estado "candidato a publicar" y nunca marcarlo visible al Comprador de estadísticas sin una confirmación humana explícita registrada aparte (no basta con el umbral numérico como condición suficiente).
+- **Riesgo concreto, no genérico:** este incremento tiene un gate de proceso (evaluación de impacto de privacidad **por segmento**, no una sola vez — `MVP-DEFINITIVO.md` §6.6) que ninguna herramienta automatiza. El riesgo real de stack es que el job de recómputo dinámico del umbral (vía pg-boss) publique un segmento que cruza el umbral de 20 organizaciones automáticamente, sin que el gate de privacidad manual lo haya revisado todavía para ese segmento puntual — el job debe dejar el segmento en estado "candidato a publicar" y nunca marcarlo visible al Comprador de estadísticas sin una confirmación humana explícita registrada aparte (no basta con el umbral numérico como condición suficiente).
 
 ---
 
@@ -742,7 +742,7 @@ Inspeccioné `src/infra/auth/rateLimit.ts`, `src/infra/prisma/tenantClient.ts`, 
 ### Incremento 7 — Market Signals (aprobado, último incremento del alcance actual)
 
 #### Contexto de riesgo específico
-El umbral fijo de "10 organizaciones" (MVP-DEFINITIVO Sección 6.6) es insuficiente por sí solo dado que el mercado peruano es chico y concentrado: en un segmento con pocas organizaciones grandes, alcanzar 10 orgs no impide que una o dos dominen el agregado (permitiendo inferir su dato individual por diferencia), ni que un cambio pequeño en el segmento (una organización que deja de participar) reduzca el conteo real por debajo de 10 sin que nadie lo note si el chequeo es solo al momento de publicar.
+El umbral fijo de "20 organizaciones" (MVP-DEFINITIVO Sección 6.6) es insuficiente por sí solo dado que el mercado peruano es chico y concentrado: en un segmento con pocas organizaciones grandes, alcanzar 20 orgs no impide que una o dos dominen el agregado (permitiendo inferir su dato individual por diferencia), ni que un cambio pequeño en el segmento (una organización que deja de participar) reduzca el conteo real por debajo de 20 sin que nadie lo note si el chequeo es solo al momento de publicar.
 
 #### Tareas — los 4 controles adicionales, cada uno con su implementación concreta
 - [ ] **Regla de dominancia**: antes de publicar un segmento, calcular qué porcentaje del agregado corresponde a la organización con mayor peso (ej. la que más participantes/respuestas aporta). Si esa organización supera un umbral (ej. 40% del segmento — valor a confirmar con la revisión de privacidad), el segmento se suprime o se fuerza a un `n` mínimo mayor que 10 hasta diluir la dominancia. Implementar como función pura versionada (mismo patrón que k-anonimato de Incremento 6), corrida junto al chequeo de umbral, no como paso separado opcional.
@@ -762,7 +762,7 @@ El umbral fijo de "10 organizaciones" (MVP-DEFINITIVO Sección 6.6) es insuficie
 - Revisión legal de Market Signals completada antes de la primera venta/publicación real (no antes de construir/probar internamente).
 
 #### Riesgos
-- El riesgo de negocio-reputacional es alto: un mercado concentrado como el peruano hace que "10 organizaciones" sea fácilmente vulnerable a reidentificación por alguien con conocimiento del sector (ej. un competidor que sabe quiénes son los jugadores grandes de un segmento y puede inferir el dato de uno por descarte). Los 4 controles existen específicamente para esto — omitir cualquiera de los 4 no es "menos seguro", es directamente insuficiente para este mercado en particular.
+- El riesgo de negocio-reputacional es alto: un mercado concentrado como el peruano hace que "20 organizaciones" sea fácilmente vulnerable a reidentificación por alguien con conocimiento del sector (ej. un competidor que sabe quiénes son los jugadores grandes de un segmento y puede inferir el dato de uno por descarte). Los 4 controles existen específicamente para esto — omitir cualquiera de los 4 no es "menos seguro", es directamente insuficiente para este mercado en particular.
 
 ---
 
@@ -1527,7 +1527,7 @@ Sin `empresaId`, sin FK a ninguna fila identificable — mismo criterio de `Data
 
 - [ ] Migración: `SegmentoMercado` + `SegmentoMercadoAgregado` — **depende funcionalmente de `DatasetVersion`/`ConsentimientoCuenta`+`ConsentimientoExpres` (finalidad `CONTACTO_COMERCIAL`/`ESTADISTICAS_COMERCIALES`)** del Incremento 6, aunque a nivel de FK de Prisma no dependa de nada (no hay join).
 - [ ] Sin RLS, sin `TENANT_SCOPED_MODELS` — acceso vía `UsuarioPlataforma` con rol `COMPRADOR_ESTADISTICAS`.
-- [ ] Implementar regla de dominancia + supresión de celdas pequeñas + recómputo dinámico del umbral (10 organizaciones, configurable) antes de marcar `publicado = true`.
+- [ ] Implementar regla de dominancia + supresión de celdas pequeñas + recómputo dinámico del umbral (20 organizaciones, configurable) antes de marcar `publicado = true`.
 - [ ] Evaluación de impacto de privacidad por segmento como gate obligatorio, registrada en `revisionReidentificacionAprobadaEn` — no es un gate único global, es por cada fila de `SegmentoMercadoAgregado`.
 
 #### Riesgos de migración
@@ -1758,13 +1758,13 @@ Con eso, el plan por incremento:
 ### Incremento 7 — Market Signals
 
 #### Bloque A — Gate de privacidad + regla de publicación
-**Esfuerzo: L.** Justificación: la lógica en sí (dominancia, agregación por rango, supresión de celdas pequeñas, umbral de 10 organizaciones) es acotada, pero el gate de privacidad por segmento (recómputo dinámico, no una sola vez) es un proceso que hay que operacionalizar, no solo codificar una función.
+**Esfuerzo: L.** Justificación: la lógica en sí (dominancia, agregación por rango, supresión de celdas pequeñas, umbral de 20 organizaciones) es acotada, pero el gate de privacidad por segmento (recómputo dinámico, no una sola vez) es un proceso que hay que operacionalizar, no solo codificar una función.
 
 - [ ] Camino de acceso separado para Comprador de estadísticas (mismo patrón de acceso cross-tenant acotado que Investigador, Incremento 6 — reutilizar, no reinventar).
-- [ ] Regla de dominancia + agregación + supresión + recómputo dinámico del umbral de 10 organizaciones — función pura testeable con casos límite (exactamente 10, 9, un segmento que cae por debajo después de publicado).
+- [ ] Regla de dominancia + agregación + supresión + recómputo dinámico del umbral de 20 organizaciones — función pura testeable con casos límite (exactamente 20, 19, un segmento que cae por debajo después de publicado).
 - [ ] Evaluación de impacto de privacidad **por segmento**, no una sola vez para todo el producto — esto implica que el sistema necesita registrar cuándo se evaluó cada segmento y bloquear la publicación de uno nuevo hasta que pase su propia evaluación, no solo una casilla global.
 
-**Riesgo concreto:** el umbral de 10 organizaciones necesita recomputarse dinámicamente porque un segmento puede caer por debajo del umbral si una organización se da de baja o retira su consentimiento — si el sistema solo evalúa el umbral al momento de publicar y no lo revisa periódicamente, un segmento publicado puede quedar por debajo del mínimo sin que nadie lo note. Vale la pena un job periódico (pg-boss otra vez) que re-verifique segmentos publicados, no solo una verificación en el momento de publicar.
+**Riesgo concreto:** el umbral de 20 organizaciones necesita recomputarse dinámicamente porque un segmento puede caer por debajo del umbral si una organización se da de baja o retira su consentimiento — si el sistema solo evalúa el umbral al momento de publicar y no lo revisa periódicamente, un segmento publicado puede quedar por debajo del mínimo sin que nadie lo note. Vale la pena un job periódico (pg-boss otra vez) que re-verifique segmentos publicados, no solo una verificación en el momento de publicar.
 
 **Deuda a pagar antes de avanzar:** este incremento depende de que el Incremento 6 (consentimiento append-only, snapshot-JSON, k-anonimato) esté sólido — Market Signals es, en la práctica, un consumidor más exigente del mismo pipeline de anonimización que Investigación ya construyó. Construirlo antes de que el Incremento 6 esté maduro significa duplicar la lógica de privacidad en dos lugares.
 
@@ -1805,25 +1805,24 @@ El orden de incrementos del roadmap (2→3→4→5→6→7) es correcto a nivel 
 
 Los 5 planes detallados de las Secciones 10-14 profundizaron las 3 decisiones ya confirmadas (Sección 3) y encontraron preguntas mas finas que no estaban resueltas. Ninguna cambia el alcance aprobado; son todas decisiones de "como construirlo".
 
-- [ ] **ADR-0004 — donde vive el worker de la cola de jobs (`pg-boss`).** Vercel Functions no sostienen un proceso persistente. Recomendacion: **Opcion A — Vercel Cron + polling por lotes** (un endpoint interno que la cola consulta cada 1 minuto), en vez de la Opcion B (un proceso Node separado siempre encendido en otro host). La Opcion A requiere pasar a **plan Vercel Pro** (Cron de 1 minuto y `maxDuration` extendido no estan en Hobby). Ver Sección 10.
-  - [ ] Confirmar: Opción A (Vercel Cron, recomendada) vs. Opción B (worker externo).
-  - [ ] Confirmar: pasar a Vercel Pro ahora (recomendado, lo necesita el job de purga de huella de origen del Incremento 2) vs. diferirlo.
-- [ ] **Rate limiting de la evaluación pública anónima (RF15/RF17): tabla Postgres propia (recomendado, sin proveedor nuevo) vs. Upstash Redis.** Las 5 dimensiones coinciden en recomendar Postgres (mismo criterio que ya evitó Redis para el login) — se deja como confirmación formal, no como debate abierto.
-  - [ ] Confirmar: tabla Postgres nueva `LimiteTasa` (recomendado).
+- [x] **ADR-0004 — dónde vive el worker de la cola de jobs (`pg-boss`) — resuelto el 2026-09-16, dentro de la restricción de presupuesto $0/mes (ver H14 abajo).** Se mantiene **Opción A — Vercel Cron**, pero **en el plan Hobby** (cadencia diaria, no cada 1 minuto) en vez de pasar a Vercel Pro ahora. Esto funciona sin degradar nada del Incremento 2: el único job real de esa etapa es la purga de `huellaOrigen` a 48-72h, que tolera perfectamente una cadencia diaria (la ventana de tolerancia es de horas, no de minutos). El rate limiting de RF15/RF17 **no** pasa por la cola — es una escritura síncrona (`UPSERT` atómico) en la propia ruta pública, así que no depende de la cadencia del Cron. Se revisa este ADR y se sube a Vercel Pro cuando: (a) un job futuro necesite latencia menor a un día (candidato: recómputo de Market Signals en el Incremento 7, o el import de CSV del Incremento 4 si se decide asíncrono), o (b) el volumen de tráfico lo justifique económicamente — evaluación mes a mes, según confirmó Alex.
+  - [x] Confirmado: Opción A (Vercel Cron), plan Hobby por ahora, cadencia diaria.
+  - [x] Confirmado: **no** pasar a Vercel Pro todavía — se difiere hasta que el presupuesto o la latencia lo exijan.
+- [x] **Rate limiting de la evaluación pública anónima (RF15/RF17): tabla Postgres propia — confirmado.** `LimiteTasa` (huellaOrigenHash, bucket, ventanaInicio, contador), sin proveedor nuevo. Sin costo adicional de infraestructura — encaja en el presupuesto $0/mes.
 - [ ] **Rediseño de `EvaluacionExpres`:** el modelo ya en el schema fue pensado para el diagnóstico viejo (4 valores) y no representa las 5 dimensiones de V2. Como no tiene ninguna fila real todavía, el plan de Developer (Sección 14) recomienda **rediseñarlo in place** en vez de crear un modelo paralelo — evita mantener dos tablas con el mismo propósito. El plan de DDD (Sección 13) llega al mismo resultado por otro camino, usando el nombre `EvaluacionExpresV2` como tabla nueva; ambos planes coinciden en el fondo (separar el motor v2 del v1 sin tocar datos), difieren solo en si la tabla se llama distinto o se reescribe — se resuelve como parte del detalle EARS del Incremento 2, no bloquea nada mas.
-- [ ] **Plan de Neon (autosuspend/SLA):** confirmar si el plan de Neon activo hoy tiene SLA contractual (relevante para el objetivo de 99% de disponibilidad) y si conviene desactivar el autosuspend agresivo en producción (ya causó un incidente real documentado en los tests de integración) — puede tener costo adicional.
-- [ ] **Cifrado de Cloudflare R2:** confirmar si el cifrado por defecto de R2 (a nivel de infraestructura) satisface el requisito de "cifrado" de `MVP-DEFINITIVO.md` Sección 8, o si se espera cifrado adicional a nivel de aplicación antes de subir un archivo (trabajo extra real, no cosmético).
-- [ ] **[Ronda 3 — H5] Mecanismo de autenticación de `UsuarioPlataforma`.** El actor transversal (Curador metodológico, Administrador de plataforma y, más adelante, Investigador/Comprador de estadísticas) no puede usar el mecanismo NextAuth existente: `src/infra/auth/next-auth.d.ts` define `Session`/`User`/`JWT` con `empresaId: string` **obligatorio y no-nulable**, y `UsuarioPlataforma` por definición no pertenece a ningún tenant. Decisión pendiente: ¿segundo `NextAuth` provider/config en paralelo (haciendo `empresaId` opcional a nivel de tipos), o mecanismo de sesión completamente separado para estos roles? Recomendación de Calidad 2/Auditoría: resolverlo como parte del detalle EARS del Incremento 2 (donde aparece el primer `UsuarioPlataforma` real, el Curador), no diferirlo al Incremento 6.
-- [ ] **[Ronda 3 — H14] Presupuesto de infraestructura y su relación con ADR-0004.** El agente de Finanzas estimó (precios de septiembre 2026, vía búsqueda web): escenario pilotos-only ≈ $0/mes; Incremento 2 en tráfico público moderado ≈ $40-61/mes ($480-732/año); Incremento 5 con IA activa (~9.000 consultas NL/mes) ≈ $170-200/mes ($2.040-2.400/año, dominado por ~$81-98/mes de costo de API de Claude por las 2 llamadas LLM seriadas por consulta). El salto de plan Vercel Pro ($20/mes, ya recomendado en ADR-0004) y la elección de plan de Neon (Launch $0.106/CU-hora sin SLA vs. Scale $0.222/CU-hora con SLA) están incluidos en estos números. Confirmar: (a) presupuesto mensual aceptable antes de abrir el Incremento 2 a tráfico público, (b) si el objetivo de disponibilidad 99% justifica el plan Neon con SLA desde ya o se difiere.
-- [ ] **[Ronda 3 — H16] Umbral de k-anonimato / supresión de celdas pequeñas.** El umbral concreto (cuántas organizaciones mínimas por segmento antes de publicar un agregado, tanto en Investigación — Incremento 6 — como en Market Signals — Incremento 7, donde `MVP-DEFINITIVO.md` ya fija 10 organizaciones) es una decisión legal/de producto, no técnica — ninguno de los 9 agentes de las Rondas 2 y 3 debe fijarlo por su cuenta. Confirmar explícitamente el número (y si es el mismo para Investigación que para Market Signals) antes de escribir la función de supresión, junto con la revisión legal Ley 29733 ya listada en la Sección 4.
+- [x] **Plan de Neon (autosuspend/SLA) — resuelto el 2026-09-16, misma lógica que ADR-0004.** Se queda en el plan actual (Launch, sin SLA contractual) mientras el tráfico sea de pilotos — coherente con el presupuesto $0/mes. El autosuspend agresivo sí conviene extenderlo (no tiene costo adicional relevante, solo configuración) para evitar el cold-start ya observado en los tests de integración; pasar a un plan con SLA (Scale) queda condicionado a cuándo el Incremento 2 reciba tráfico público real, mismo criterio de revisión mes a mes.
+- [ ] **Cifrado de Cloudflare R2:** confirmar si el cifrado por defecto de R2 (a nivel de infraestructura) satisface el requisito de "cifrado" de `MVP-DEFINITIVO.md` Sección 8, o si se espera cifrado adicional a nivel de aplicación antes de subir un archivo (trabajo extra real, no cosmético). *(No bloquea el Incremento 2 — R2 recién se usa desde el Incremento 4.)*
+- [x] **[Ronda 3 — H5] Mecanismo de autenticación de `UsuarioPlataforma` — confirmado por Alex el 2026-09-16: correo + contraseña + autenticador (TOTP), el mismo mecanismo ya aprobado y construido para `Usuario`/`ADMINISTRADOR` (Argon2id + MFA, ADR-0003).** No puede ser una reutilización literal de la sesión NextAuth existente porque `src/infra/auth/next-auth.d.ts` exige `empresaId: string` obligatorio y `UsuarioPlataforma` no tiene tenant — el diseño técnico concreto (segundo provider/config de NextAuth vs. sesión separada) queda para la ronda de cierre de brechas (ver Sección 18).
+- [x] **[Ronda 3 — H14] Presupuesto de infraestructura — confirmado por Alex el 2026-09-16: arrancar en $0/mes y evaluar mes a mes** a medida que el tráfico real lo justifique. Esto fija, en cascada: Vercel Hobby (no Pro) por ahora, Neon Launch (no Scale) por ahora, Cron diario (no cada minuto) por ahora — ver ADR-0004 y Plan de Neon arriba, ambos ya resueltos bajo esta misma restricción.
+- [x] **[Ronda 3 — H16] Umbral de k-anonimato / supresión de celdas pequeñas — confirmado por Alex el 2026-09-16: 20 organizaciones**, mismo número para Investigación (Incremento 6) y Market Signals (Incremento 7). Ya propagado a `MVP-DEFINITIVO.md` Sección 6.6 y a todas las menciones en este documento. Sigue pendiente la revisión legal Ley 29733 (Sección 4) para validar el número desde el punto de vista normativo, no solo técnico — el umbral numérico es la posición de producto de Alex, no un cierre legal.
 
-Ninguna de estas bloquea redactar el detalle EARS del Incremento 2 — son decisiones que se resuelven en paralelo o al momento de tocar cada pieza puntual, salvo la de ADR-0004 (Cron/Vercel Pro), que sí conviene cerrar antes de construir el Bloque A del Incremento 2 (cola de jobs), según el orden recomendado por Developer y Arquitectura. Las tres nuevas de Ronda 3 (H5, H14, H16) tampoco bloquean el arranque del detalle EARS del Incremento 2, salvo H5 si el primer flujo de Curador se incluye en ese mismo incremento — a confirmar junto con el resto.
+**Estado al 2026-09-16: de las 8 decisiones de esta sección, 6 ya están confirmadas** (ADR-0004, rate limiting, plan de Neon, H5, H14, H16) **y quedan 2 abiertas, ninguna bloqueante** (rediseño de `EvaluacionExpres`, que se resuelve dentro del propio detalle EARS del Incremento 2; cifrado de R2, que recién aplica desde el Incremento 4). Con esto, la Sección 15 deja de ser un obstáculo para arrancar el detalle EARS del Incremento 2.
 
 ## 16. Próximo paso concreto (vigente)
 
-1. **Ronda 3 completada** (Calidad 1, Calidad 2, Finanzas, Auditoría) — sus hallazgos consolidados están en la Sección 17. El hallazgo crítico (H1, inconsistencia de nombre/columnas de `LimiteTasa`) ya fue corregido directamente en las Secciones 10-14 de este documento; H2-H4 se agregaron como nuevos ítems bloqueantes en la Sección 4; H5/H14/H16 se agregaron como nuevas decisiones para Alex en la Sección 15.
-2. Alex confirma la Sección 15 completa (ADR-0004 y el resto de las decisiones técnicas finas de las Rondas 2 y 3) — ninguna bloquea el inicio del detalle EARS salvo ADR-0004 (antes de construir la cola de jobs) y, parcialmente, H5 (si el Curador entra en el Incremento 2).
-3. Una vez confirmada la Sección 15, se redacta el detalle EARS del Incremento 2 (`requirements.md` Sección 4bis) y recién ahí se toca el schema de Prisma — mismo criterio de "nada se construye sin confirmación explícita" que rige todo el proyecto.
+1. **Rondas 3 y 4 completadas.** Ronda 3 (Calidad 1, Calidad 2, Finanzas, Auditoría): hallazgos consolidados en la Sección 17, hallazgo crítico H1 corregido. Ronda 4 (cierre de brechas): con las 3 decisiones que Alex confirmó el 2026-09-16 (auth de `UsuarioPlataforma`, presupuesto $0/mes, k-anonimato = 20 organizaciones) como fijas, se resolvieron con diseños concretos casi todos los ítems que quedaban abiertos en las Secciones 4, 15 y 17 — ver Sección 18. Los cambios de tooling seguros (CI, pre-commit hook, `docs/PATRONES.md`, cobertura de tests) ya se aplicaron directamente al repositorio.
+2. **Único punto genuinamente pendiente y fuera del alcance de cualquier agente:** la revisión legal formal de Ley 29733 (checklist de 4 bloques ya preparado en la Sección 18.2.D) — no bloquea empezar a construir los pilotos ya controlados, sí bloquea abrir el Incremento 2 a tráfico público general.
+3. **Con esto, la preparación previa a construir queda cerrada.** El siguiente paso natural es redactar el detalle EARS del Incremento 2 (`requirements.md` Sección 4bis) y recién ahí tocar el schema de Prisma — se espera la confirmación explícita de Alex para arrancar ese paso, mismo criterio de "nada se construye sin visto bueno" que rigió toda esta etapa de planificación.
 
 ## 17. Ronda 3 de revisión — Calidad, Finanzas y Auditoría (hallazgos consolidados)
 
@@ -1838,21 +1837,21 @@ Ninguna de estas bloquea redactar el detalle EARS del Incremento 2 — son decis
 | # | Hallazgo | Severidad | Secciones afectadas | Origen | Ruteo |
 |---|---|---|---|---|---|
 | H1 | `LimiteTasa` con 4 nombres distintos entre secciones (`LimiteTasa`/`LimiteTasaEvaluacion`/`LimiteTasaContador`) y una versión sin columna `bucket` (RF15 vs. RF17 indistinguibles) | CRÍTICO | 10, 11, 12, 13, 14 | Auditoría (verificado con `grep` contra el repo real: la tabla no existe aún en código → corrección sin costo) | [Técnico] — **ya corregido en este documento** |
-| H2 | No existe CI (`.github/` vacío) — cada commit depende de disciplina manual; ya causó un incidente real (commit `13018c9`) | ALTO | 14, Gaps de entorno | Calidad 2, Calidad 1 | [Técnico] — agregado a Sección 4 |
-| H3 | Sin guarda de compilación contra mezclar `tenantClient()` y el futuro `tenantTransaction()` en el mismo flujo | ALTO | 10, 13, 14 | Calidad 2 | [Técnico] — agregado a Sección 4 |
-| H4 | `ObservacionKpi`: la Sección 10 exige idempotencia pero el schema real (Sección 13) solo define `@@index`, no `@@unique` | ALTO | 10, 13 | Calidad 1, Auditoría | [Técnico] — agregado a Sección 4 |
-| H5 | `UsuarioPlataforma` no tiene mecanismo de autenticación definido — no puede usar NextAuth existente (`empresaId` obligatorio en los tipos de sesión) | ALTO | 13, 14 | Calidad 2, Auditoría | [Alex+Técnico] — agregado a Sección 15 |
-| H6 | Estado de publicación de Market Signals modelado de forma distinta entre Arquitectura (enum tri-estado con despublicación) y DDD (`publicado: Boolean`) | MEDIO | 10, 13 | Calidad 2 | No bloqueante — a resolver en el detalle EARS del Incremento 7 |
-| H7 | 7 enums `Estado*` sin convención de nombres compartida | MEDIO | 13 | Calidad 2 | No bloqueante — candidato a `docs/PATRONES.md` |
-| H8 | `Hallazgo*`/`Consentimiento*` divididos en pares anónimo/tenant-scoped sin tipos de dominio ni funciones constructoras compartidas | MEDIO | 13, 14 | Calidad 2 | No bloqueante — candidato a `docs/PATRONES.md` |
-| H9 | Granularidad de migraciones despareja (6 migraciones para el Incremento 2 vs. 1 para el Incremento 7), relevante porque cada migración necesita una sesión de Windows | BAJO | 13, 14 | Calidad 1 | No bloqueante — criterio a fijar antes del Incremento 3 |
-| H10 | Falta un pre-commit hook — el commit `13018c9` (real, confirmado en `git log`) es evidencia de que uno lo habría evitado | MEDIO | 14, Gaps de entorno | Calidad 1, Calidad 2 | No bloqueante — se resuelve junto con H2 (CI) |
-| H11 | Sin documento único de patrones transversales (`docs/PATRONES.md`) para las convenciones que hoy solo existen implícitas en el código | MEDIO | 13, 14 | Calidad 1, Calidad 2, Auditoría | No bloqueante — propuesto como entregable antes del Incremento 3 |
-| H12 | Tests de integración (aislamiento multi-tenant, el más crítico) solo corren a mano en Windows contra Neon real, nunca en CI | ALTO | 14, Gaps de entorno | Calidad 1 | No bloqueante — se resuelve junto con H2 (CI), recomienda branch de Neon para CI |
-| H13 | Cero cobertura de tests medida (`--coverage` no configurado) | BAJO | 14, Gaps de entorno | Calidad 1 | No bloqueante — agregar `vitest --coverage` sin umbral bloqueante al principio |
-| H14 | Presupuesto de infraestructura: pilotos $0/mes; Incremento 2 público $40-61/mes; Incremento 5 con IA ~$170-200/mes (dominado por costo de API de Claude) | INFORMATIVO | 3, 15 | Finanzas | [Alex] — agregado a Sección 15 |
+| H2 | No existe CI (`.github/` vacío) — cada commit depende de disciplina manual; ya causó un incidente real (commit `13018c9`) | ALTO | 14, Gaps de entorno | Calidad 2, Calidad 1 | [Técnico] — **resuelto, Sección 18.4.A, ya aplicado al repo** |
+| H3 | Sin guarda de compilación contra mezclar `tenantClient()` y el futuro `tenantTransaction()` en el mismo flujo | ALTO | 10, 13, 14 | Calidad 2 | [Técnico] — **resuelto, Sección 18.3.B** |
+| H4 | `ObservacionKpi`: la Sección 10 exige idempotencia pero el schema real (Sección 13) solo define `@@index`, no `@@unique` | ALTO | 10, 13 | Calidad 1, Auditoría | [Técnico] — **resuelto, Sección 18.3.F** |
+| H5 | `UsuarioPlataforma` no tiene mecanismo de autenticación definido — no puede usar NextAuth existente (`empresaId` obligatorio en los tipos de sesión) | ALTO | 13, 14 | Calidad 2, Auditoría | [Alex+Técnico] — **confirmado por Alex (correo+contraseña+autenticador) y diseño técnico cerrado, Sección 18.1.A / 18.2.F** |
+| H6 | Estado de publicación de Market Signals modelado de forma distinta entre Arquitectura (enum tri-estado con despublicación) y DDD (`publicado: Boolean`) | MEDIO | 10, 13 | Calidad 2 | **Resuelto, Sección 18.3.C** — gana el enum tri-estado |
+| H7 | 7 enums `Estado*` sin convención de nombres compartida | MEDIO | 13 | Calidad 2 | **Resuelto, Sección 18.3.D**, incorporado a `docs/PATRONES.md` (Sección 18.4.C) |
+| H8 | `Hallazgo*`/`Consentimiento*` divididos en pares anónimo/tenant-scoped sin tipos de dominio ni funciones constructoras compartidas | MEDIO | 13, 14 | Calidad 2 | **Resuelto, Sección 18.3.E** — tipos Zod + builders compartidos especificados |
+| H9 | Granularidad de migraciones despareja (6 migraciones para el Incremento 2 vs. 1 para el Incremento 7), relevante porque cada migración necesita una sesión de Windows | BAJO | 13, 14 | Calidad 1 | **Resuelto, Sección 18.4.E** — criterio fijado (1 migración = 1 Bloque de trabajo) |
+| H10 | Falta un pre-commit hook — el commit `13018c9` (real, confirmado en `git log`) es evidencia de que uno lo habría evitado | MEDIO | 14, Gaps de entorno | Calidad 1, Calidad 2 | **Resuelto, Sección 18.4.B, ya aplicado al repo (Husky)** |
+| H11 | Sin documento único de patrones transversales (`docs/PATRONES.md`) para las convenciones que hoy solo existen implícitas en el código | MEDIO | 13, 14 | Calidad 1, Calidad 2, Auditoría | **Resuelto, Sección 18.4.C, ya aplicado al repo** |
+| H12 | Tests de integración (aislamiento multi-tenant, el más crítico) solo corren a mano en Windows contra Neon real, nunca en CI | ALTO | 14, Gaps de entorno | Calidad 1 | Parcialmente resuelto — CI mínimo ya corre `test` (unitario) en cada push (H2); el branch de Neon dedicado a CI para `test:integration` queda pendiente, no bloqueante |
+| H13 | Cero cobertura de tests medida (`--coverage` no configurado) | BAJO | 14, Gaps de entorno | Calidad 1 | **Resuelto, Sección 18.4.D, ya aplicado al repo** (`test:coverage`, sin umbral bloqueante) |
+| H14 | Presupuesto de infraestructura: pilotos $0/mes; Incremento 2 público $40-61/mes; Incremento 5 con IA ~$170-200/mes (dominado por costo de API de Claude) | INFORMATIVO | 3, 15 | Finanzas | [Alex] — **confirmado: arrancar en $0/mes, evaluar mes a mes** |
 | H15 | El costo de Claude API en el Incremento 5 depende de 2 llamadas LLM seriadas por consulta NL — posible optimización futura (1 llamada, o caché de prompts) si el volumen crece | BAJO | 14 (Bloque de consultas NL) | Finanzas | No bloqueante — revisar al llegar al Incremento 5 |
-| H16 | Umbral de k-anonimato/supresión de celdas pequeñas (Investigación y Market Signals) es una decisión legal/de producto, no técnica, y ningún agente debe fijarlo | ALTO | 6, 15 | Auditoría | [Alex] — agregado a Sección 15 |
+| H16 | Umbral de k-anonimato/supresión de celdas pequeñas (Investigación y Market Signals) es una decisión legal/de producto, no técnica, y ningún agente debe fijarlo | ALTO | 6, 15 | Auditoría | [Alex] — **confirmado: 20 organizaciones**, pendiente de validación legal (Sección 18.2.D) |
 
 ### 17.3 Estimación de costos (Finanzas, precios de septiembre 2026)
 
@@ -1868,3 +1867,444 @@ Ninguna de estas bloquea redactar el detalle EARS del Incremento 2 — son decis
 ### 17.4 Verificación cruzada (Auditoría)
 
 La Auditoría confirmó, contra el documento real y el repositorio, los hallazgos con mayor impacto antes de incluirlos en la tabla: comparó lado a lado las Secciones 10/11/12/13/14 para H1 y corrió `grep -rn "LimiteTasa" . --include="*.ts" --include="*.prisma"` contra el repo, que devolvió cero resultados (confirma que la tabla no existe en código, haciendo la corrección segura); confirmó con `find .github -type f` que no hay CI (H2); confirmó con `git log` que el commit `13018c9` citado como evidencia de H10 existe realmente. Ningún hallazgo de esta ronda quedó sin verificar contra una fuente primaria (documento o repositorio).
+
+## 18. Ronda 4 — Cierre de brechas (resoluciones concretas antes de empezar)
+
+A pedido de Alex ("cerremos las brechas, errores y vacíos, y demos solución a todo antes de empezar"), se lanzó una **Ronda 4**: 4 agentes (arquitectura, seguridad, DDD, developer/tooling) recibieron la lista completa de ítems abiertos en las Secciones 4, 5, 6, 15 y 17, más las 3 decisiones que Alex acababa de confirmar (autenticación de `UsuarioPlataforma` = correo+contraseña+autenticador; presupuesto $0/mes, evaluar mes a mes; umbral de k-anonimato = 20 organizaciones), con instrucción explícita de producir **resoluciones concretas, no más hallazgos**. Cada uno inspeccionó el repo real antes de escribir. Los resultados están organizados por dimensión abajo (18.1-18.4) y ya están reflejados como checkboxes `[x]` en las Secciones 4 y 17 de este documento, con referencia de vuelta a la subsección correspondiente.
+
+**Lo que esta ronda deja genuinamente resuelto (diseño listo para implementar en el detalle EARS del Incremento 2):** autenticación de `UsuarioPlataforma`, observabilidad mínima, regla de denormalización de `empresaId`, restricción de idempotencia de `ObservacionKpi`, ADR-0004 con presupuesto $0/mes, diseño de `Consentimiento`/`Respuesta`/`Hallazgo`, patrón `tenantTransaction()`, resolución del estado de publicación de Market Signals, convención de nombres de enums, tipos de dominio compartidos.
+
+**Lo que ya se aplicó directamente al repositorio** (tooling, no schema ni producto — dentro del criterio de "no construir alcance nuevo sin visto bueno", porque no toca `prisma/schema.prisma` ni ninguna funcionalidad): `.github/workflows/ci.yml`, `.husky/pre-commit`, `docs/PATRONES.md`, y los cambios de `package.json`/`vitest.config.ts` para cobertura de tests. Ver Sección 18.4 para el detalle de cada uno.
+
+**Lo que sigue sin poder cerrarse sin una persona externa** (marcado [HUMANO] en la Sección 4): la revisión legal formal de Ley 29733 — esta ronda dejó un checklist concreto de 4 bloques listo para llevarle a un abogado (Sección 18.2.D), pero la validación en sí no la puede hacer ningún agente.
+
+### 18.1 Arquitectura — resoluciones concretas (ADR-0004, observabilidad, denormalización, ObservacionKpi, cadencia de Cron)
+
+*Producido por el agente de arquitectura de la Ronda 4 de cierre de brechas, con inspección directa del repo real.*
+
+#### A. Autenticación de `UsuarioPlataforma`
+
+**Decisión: sesión completamente separada, con JWT propio firmado con `jose` (ya es dependencia del proyecto). No usar un segundo `NextAuth()`/provider en paralelo.**
+
+##### Por qué no un segundo provider de NextAuth
+
+La opción obvia — agregar un segundo `Credentials` provider al mismo `auth.ts` o montar una segunda instancia `NextAuth()` — no resuelve el problema real. `src/infra/auth/next-auth.d.ts` amplía las interfaces `Session`/`User`/`JWT` de los módulos `next-auth`, `@auth/core/types`, `next-auth/jwt`, `@auth/core/jwt` mediante *declaration merging* de TypeScript. Esa ampliación es **global al proyecto**, no por instancia: aunque se creen dos `NextAuth()` distintos, ambos comparten el mismo tipo `Session` compilado. Hacer `empresaId` opcional (`string | null`) para acomodar a `UsuarioPlataforma` obliga a tocar cada uno de los sitios que hoy asumen `session.user.empresaId` no-nulo (todo `tenantClient(session.user.empresaId)` en rutas de dashboard) — el peor de los dos mundos: contamina código que hoy funciona, y el compilador no puede impedir que una sesión de `UsuarioPlataforma` "preste" un `empresaId` inexistente.
+
+##### Diseño concreto (archivos, sin código todavía)
+
+**Nuevo, aislado de todo lo existente:**
+- `prisma/schema.prisma` — `model UsuarioPlataforma` (sin `empresaId`; `email @unique`, `passwordHash`, `mfaSecret`, `mfaHabilitado`, `rol RolUsuarioPlataforma`, `intentosFallidos`, `bloqueadoHasta`) + `enum RolUsuarioPlataforma { CURADOR_METODOLOGICO ADMINISTRADOR_PLATAFORMA }` (agregar `INVESTIGADOR_COMPRADOR` cuando llegue el Incremento 6). **No entra en `TENANT_SCOPED_MODELS`** — mismo caso que `EvaluacionExpres`, consultado con `prisma` directo.
+- `src/infra/auth-plataforma/session.ts` — `crearSesionPlataforma()` (firma un JWT con `jose`'s `SignJWT`, payload `{ sub, rol }`, TTL corto ~8h) y `leerSesionPlataforma(req)` (`jwtVerify`), cookie propia `chainpulse.plataforma-session` (nombre distinto de `authjs.session-token`, para que ambas sesiones coexistan sin colisión de cookie). Firma con un secreto **nuevo y distinto**, `PLATAFORMA_SESSION_SECRET` — nunca reutilizar `NEXTAUTH_SECRET`, así un JWT de una sesión nunca es válido como la otra aunque se filtre.
+- `src/infra/auth-plataforma/loginLookup.ts` — `prisma.usuarioPlataforma.findUnique({ where: { email } })` directo; no necesita la función `SECURITY DEFINER login_lookup()` que sí usa `Usuario` (esa existe para resolver el tenant sin conocerlo de antemano — `UsuarioPlataforma` no tiene tenant que resolver).
+- `src/infra/auth-plataforma/rateLimit.ts` — mismo patrón que `src/infra/auth/rateLimit.ts` pero contra `prisma.usuarioPlataforma` (no `tenantClient`).
+- `src/app/api/auth-plataforma/login/route.ts` + `.../logout/route.ts` — Route Handlers Node runtime, reutilizan **sin modificar** `verifyPassword()`/`hashPassword()` (`src/infra/auth/password.ts`) y `verificarCodigoMfa()`/`generarSecretoMfa()` (`src/infra/auth/mfa.ts`): ambos son funciones puras que no dependen de `Usuario` ni de `empresaId`, se reutilizan tal cual.
+- `src/app/plataforma/login/page.tsx`, `src/app/plataforma/activar-mfa/page.tsx` — mirror de `src/app/login` y `src/app/activar-mfa`.
+
+**Modificado (cambio mínimo, localizado):**
+- `src/middleware.ts` — hoy es `export default auth((req) => {...})`, un único wrapper de NextAuth. Pasa a ser una función propia que despacha por prefijo de ruta: si `pathname` empieza con `/plataforma`, llama a `leerSesionPlataforma(req)` (verificación JWT con `jose`, Edge-safe — es la misma librería que NextAuth usa internamente para esto, ya es dependencia del proyecto); si no, conserva exactamente la lógica actual (`auth()` de `authConfig`) sin tocarla. `matcher` gana `"/plataforma/:path*"`.
+- `.env.example` — agregar `PLATAFORMA_SESSION_SECRET`.
+
+**Explícitamente sin tocar:** `src/infra/auth/next-auth.d.ts`, `src/auth.ts`, `src/auth.config.ts`, `TENANT_SCOPED_MODELS`. El radio de impacto sobre código de `Usuario` que hoy funciona es cero.
+
+Cada `route.ts` bajo `/api/plataforma/**` valida la sesión otra vez del lado del servidor con un helper `requireSesionPlataforma(req, rolesPermitidos)` — mismo criterio de "cinturón y tirantes" que ya documenta el comentario de `middleware.ts` para el resto del sistema.
+
+#### B. Observabilidad mínima (Sentry) — especificación lista para implementar
+
+- **Paquete:** `@sentry/nextjs` únicamente. **No** instalar `@sentry/profiling-node`.
+- **Plan de Sentry: Developer (gratuito), no Team ($26/mes)** — coherente con el presupuesto $0/mes confirmado por Alex. El plan gratuito alcanza para pilotos y el arranque del Incremento 2. Revaluar el salto a Team junto con el resto de esa decisión, no antes.
+- **Archivos:** `sentry.server.config.ts`, `sentry.client.config.ts`, **`sentry.edge.config.ts`** (faltante en el plan anterior y necesario porque `src/middleware.ts` corre en Edge runtime y, con el diseño del punto A, gana lógica nueva que puede fallar), `instrumentation.ts`, `next.config.ts` envuelto con `withSentryConfig(nextConfig)`.
+- **Variables de entorno:** `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT` (mapeado de `VERCEL_ENV`), `SENTRY_TRACES_SAMPLE_RATE=0` (apagado al inicio). `SENTRY_AUTH_TOKEN` se difiere hasta que exista CI (ya resuelto, Sección 18.4).
+- **Scrubbing explícito (no depender del scrubbing genérico por nombre de campo de Sentry):** `sendDefaultPii: false` + `beforeSend`/`beforeSendTransaction` que remueve por nombre real de campo: `correo`, `telefono`, `nombreCompleto`, `empresaNombre`, `huellaOrigen`/`huellaOrigenHash`, `descripcionLibre` (y, cuando exista, `email` de `UsuarioPlataforma`).
+- **Dónde se integra primero:** rutas nuevas del Incremento 2 (`src/app/api/public/evaluations/**`), `src/app/api/auth-plataforma/**` y `src/middleware.ts` — las rutas del Incremento 1 se migran después, en un commit separado.
+- **Prueba:** `src/infra/__tests__/sentryScrub.test.ts` — evento sintético con los campos sensibles, verifica que `beforeSend` los remueve.
+- **Riesgo de red:** verificar `sentry.io`/`*.ingest.sentry.io` contra el allowlist antes de instalar; si está bloqueado, instalar/validar desde Windows.
+
+#### C. Regla de denormalización de `empresaId` (para `docs/PATRONES.md`)
+
+> **Toda tabla nueva que tenga una relación (directa o indirecta, vía FK encadenada) con `Empresa` debe denormalizar su propio campo `empresaId` (nunca delegar el aislamiento a un `JOIN` hacia la tabla padre) y debe agregarse a `TENANT_SCOPED_MODELS` (`src/infra/prisma/tenantClient.ts`) en el mismo commit que introduce su migración — sin excepción, salvo que el modelo sea, por diseño, catálogo de plataforma sin tenant (p. ej. `DefinicionKpi`) o un aggregate explícitamente tenant-nulo ya documentado (p. ej. `EvaluacionExpres`/`EvaluacionExpresV2`, `LimiteTasa`, `UsuarioPlataforma`), en cuyo caso el modelo debe llevar un comentario explícito en `schema.prisma` explicando por qué queda fuera.**
+
+Aplicación inmediata pendiente (a resolver junto con sus propias migraciones): `ConexionCadena`, `ObservacionKpi`/`ImportacionCsv` (Incremento 4) deben sumar `empresaId` propio y entrar al `Set`.
+
+#### D. `ObservacionKpi` — restricción `@@unique` de idempotencia (H4)
+
+```prisma
+numeroFila Int?   // índice de la fila dentro del CSV, asignado una sola vez durante
+                   // el parseo/mapeo (antes de encolar el job), nunca recalculado en
+                   // cada intento — es la mitad de la clave de idempotencia (H4).
+```
+```prisma
+@@unique([importId, numeroFila])
+```
+
+Se prefiere un índice ordinal estable a un "hash de fila" porque un hash de contenido es frágil ante re-parseos con formato distinto y colisiona legítimamente si dos filas tienen los mismos valores para el mismo período; `NULL` de `importId` nunca colisiona entre filas manuales/pegadas, que no pasan por reintentos de `pg-boss`. El job usa `INSERT ... ON CONFLICT (importId, numeroFila) DO NOTHING`. *(Nota de consolidación: el agente de DDD, Sección 18.3.F, llegó de forma independiente a una segunda restricción complementaria — `@@unique([cadenaId, definicionKpiId, periodoInicio, periodoFin, fuente])` para cargas manuales/pegadas — las dos no son excluyentes, cubren escenarios de duplicado distintos; el modelo final del Incremento 4 lleva ambas.)*
+
+#### E. ADR-0004 con cadencia diaria en Vercel Hobby ($0/mes) — riesgo real, no genérico
+
+**Riesgo bajo/aceptable — purga de `huellaOrigen`.** Con cron diario en vez de horario, el peor caso empuja la purga hasta ~96h en vez de 72h — excede nominalmente el rango documentado pero sigue muy por debajo del límite duro de 90 días. Aceptable para la etapa $0, con una corrección de redacción en `requirements.md`/plan: "purgado dentro de las ~24h siguientes a cumplir 48-72h (peor caso ~96h) mientras el proyecto esté en Vercel Hobby".
+
+**Riesgo real y concreto — el resto de la cola de `pg-boss` queda huérfana.** Si `/api/internal/jobs/run` solo se invoca por el Cron diario, todos los demás jobs futuros (import CSV del Incremento 4, recómputo de Market Signals del Incremento 7) quedan atados a esa misma cadencia — un usuario que sube un CSV vería "procesando" hasta 24 horas.
+
+**Mitigación concreta, sin costo adicional:** cada punto del código que hace `boss.send()` hace además, en el mismo request, una llamada HTTP *fire-and-forget* a `/api/internal/jobs/run` inmediatamente después de encolar — procesamiento en segundos en el caso normal. El Cron diario pasa a ser una red de seguridad (jobs huérfanos), no el disparador esperado. El mecanismo de *checkpoint* del Incremento 4 (reencolarse ante CSVs grandes) debe disparar también su propia llamada fire-and-forget al reencolarse.
+
+**Conclusión:** la cadencia diaria es viable en Hobby solo con el patrón "disparo al encolar" — sin esa pieza, bloquea funcionalmente el Incremento 4 tal como está descrito.
+
+
+---
+
+### 18.2 Seguridad y privacidad — resoluciones concretas (Consentimiento, Respuesta, Hallazgo, checklist legal, R2, auth de plataforma)
+
+*Producido por el agente de seguridad de la Ronda 4 de cierre de brechas, con inspección directa del repo real (`prisma/schema.prisma`, `prisma/rls.sql`, `prisma/auth_functions.sql`, `src/infra/prisma/tenantClient.ts`, `src/infra/auth/*`).*
+
+#### A. `Consentimiento` — modelo final y congelamiento de los booleanos legacy
+
+**Decisión: dos tablas, no una polimórfica** — mismo criterio que ya separa `EvaluacionExpres*` (tenant nulo) de `Empresa/Usuario` (tenant-scoped):
+
+```prisma
+enum FinalidadConsentimiento { DIAGNOSTICO  INVESTIGACION  ESTADISTICAS_COMERCIALES  CONTACTO_COMERCIAL }
+enum MetodoRetiro { NINGUNO  FORMULARIO_PUBLICO  SOLICITUD_SOPORTE }
+
+model ConsentimientoExpres {           // sin tenant, mismo régimen que EvaluacionExpresV2 — NO lleva RLS
+  id                    String   @id @default(cuid())
+  evaluacionExpresV2Id  String
+  evaluacionExpresV2    EvaluacionExpresV2 @relation(fields: [evaluacionExpresV2Id], references: [id], onDelete: Cascade)
+  finalidad             FinalidadConsentimiento
+  aceptado              Boolean
+  textoVersion          String
+  textoSnapshot         String            // texto legal completo mostrado, no un puntero
+  jurisdiccion          String   @default("PE")
+  vigenteDesde          DateTime @default(now())
+  metodoRetiro          MetodoRetiro @default(NINGUNO)
+  retiradoEn            DateTime?
+  createdAt             DateTime @default(now())
+  @@index([evaluacionExpresV2Id, finalidad])
+  @@map("consentimientos_expres")
+}
+
+model ConsentimientoCuenta {           // empresaId propio → SÍ entra en TENANT_SCOPED_MODELS + rls.sql
+  id            String   @id @default(cuid())
+  empresaId     String
+  empresa       Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  usuarioId     String
+  usuario       Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  finalidad     FinalidadConsentimiento
+  aceptado      Boolean
+  textoVersion  String
+  textoSnapshot String
+  jurisdiccion  String   @default("PE")
+  vigenteDesde  DateTime @default(now())
+  metodoRetiro  MetodoRetiro @default(NINGUNO)
+  retiradoEn    DateTime?
+  createdAt     DateTime @default(now())
+  @@index([empresaId, usuarioId, finalidad])
+  @@map("consentimientos_cuenta")
+}
+```
+
+**Append-only real — garantía SQL, no solo disciplina de código.** Igual que `login_lookup()` en `prisma/auth_functions.sql` acota lo que `chainpulse_app` puede hacer:
+
+```sql
+REVOKE UPDATE, DELETE ON "consentimientos_expres", "consentimientos_cuenta" FROM chainpulse_app;
+GRANT INSERT, SELECT ON "consentimientos_expres", "consentimientos_cuenta" TO chainpulse_app;
+```
+
+Retirar consentimiento es literalmente `INSERT` de una fila nueva con `aceptado=false, retiradoEn=now()` — el registro histórico queda intacto por diseño de permisos, no por convención.
+
+**Congelamiento exacto de `consentimientoEnvio`/`consentimientoMejoraAlgoritmo` (`EvaluacionExpres`):** los dos campos no se tocan en el schema, solo ganan un comentario `//` de "congelado, no escribir desde Incremento 2 en adelante". **No hay backfill** — `textoVersion`/`textoSnapshot`/`jurisdiccion` de ese momento nunca se capturaron y fabricarlos falsificaría el histórico legal. `EvaluacionExpres` (v1) se consulta por los dos booleans; `EvaluacionExpresV2` se consulta por `ConsentimientoExpres` — nunca en la misma query. Si algún día se necesita un reporte agregado que cruce v1 y v2, se construye explícitamente como unión con columna `origenRegimen`, nunca tratando el boolean viejo como si fuera la finalidad `INVESTIGACION` (el boolean autoriza algo más angosto que lo que V2 define).
+
+#### B. Aggregate root y política RLS de `Respuesta`
+
+**Aggregate root: `EvaluacionExpresV2`. `Respuesta` es entidad hija, no su propio aggregate** — se accede siempre por `evaluacionExpresV2Id` (nunca se lista `Respuesta` de forma independiente, eso permitiría reconstruir el patrón de respuestas de cualquier evaluación anónima sin pasar por el gate de detalle). `@@unique([evaluacionExpresV2Id, preguntaVersionId])` es la invariante de dominio suficiente.
+
+**RLS: ninguna — mismo régimen de tenant nulo que `EvaluacionExpres`.** Verificado contra `prisma/rls.sql`: esas tablas no tienen `ENABLE ROW LEVEL SECURITY` ni política propia. Acción concreta: agregar al final de `prisma/rls.sql`, en el mismo bloque de comentario ya existente, la lista explícita de tablas nuevas del Incremento 2 que comparten el régimen de tenant nulo:
+
+```sql
+-- Incremento 2 (Evaluación exprés V2): mismo régimen de tenant nulo que
+-- EvaluacionExpres arriba. NUNCA agregar empresaId ni política RLS a:
+--   "evaluaciones_expres_v2", "respuestas", "hallazgos_expres",
+--   "consentimientos_expres" — se protegen por RF15/RF17 (rate limiting)
+--   y por no compartir tabla con datos de cuentas registradas (RNF7).
+-- ConsentimientoCuenta SÍ es tenant-scoped y SÍ lleva política propia.
+```
+
+Protección real sin RLS: (1) cascada `onDelete: Cascade` desde `EvaluacionExpresV2` — no hay `Respuesta` huérfana consultable, (2) `LimiteTasa` en el endpoint de inicio/desbloqueo, (3) disciplina de nunca exponer un endpoint `GET /api/public/respuestas/:id` — todo acceso pasa por `evaluacionExpresV2Id` en el path.
+
+#### C. Patrón snapshot-JSON de `Hallazgo` — corrección sobre el borrador existente
+
+**Gap real encontrado:** el `HallazgoExpres.origenSnapshot` drafteado en la Sección 13 (`{ preguntaCodigos, respuestaIds }`) **incluye `respuestaIds`** — no es un snapshot seguro, sigue siendo un puntero funcional hacia `Respuesta`/`EvaluacionExpresV2` (que puede llevar correo/nombre si `detalleDesbloqueado=true`). Si Incremento 6 lee este campo para construir `DatasetVersion`, un JOIN "solo para depurar" desde `respuestaIds` reintroduce la fuga que la Sección 4 quiere evitar.
+
+**Resolución: separar en dos tablas — una que Investigación lee, otra que nunca toca.**
+
+```prisma
+model HallazgoExpres {
+  id  String @id @default(cuid())
+  evaluacionExpresV2Id String
+  evaluacionExpresV2    EvaluacionExpresV2 @relation(fields: [evaluacionExpresV2Id], references: [id], onDelete: Cascade)
+
+  dimension              DimensionDiagnosticoV2
+  estadoCategoria        String
+  enunciado              String
+  evidenceState          EstadoEvidencia
+  coberturaConfianza     Float
+  evidenciaFaltante      String?
+  siguienteVerificacion  String?
+  ruleVersion            String
+
+  // Único campo que Incremento 6 lee para construir DatasetVersion.
+  // SOLO variables no identificables — preguntaCodigos son códigos de
+  // contenido ("Q1".."Q7"), no IDs de fila.
+  contextoSnapshot Json  // { dimension, sector, subsector, rangoTamano,
+                         //   rolParticipante, pais, preguntaCodigos, ruleVersion }
+
+  createdAt DateTime @default(now())
+  @@index([evaluacionExpresV2Id])
+  @@map("hallazgos_expres")
+}
+
+// Tabla separada — 1:1, PK propia — para trazabilidad operacional (el
+// visitante viendo su propio resultado detallado). Incremento 6 NUNCA
+// hace JOIN contra esta tabla.
+model HallazgoExpresTraza {
+  id                String         @id @default(cuid())
+  hallazgoExpresId  String         @unique
+  hallazgoExpres    HallazgoExpres @relation(fields: [hallazgoExpresId], references: [id], onDelete: Cascade)
+  respuestaIds      String[]
+  createdAt         DateTime       @default(now())
+  @@map("hallazgos_expres_traza")
+}
+```
+
+Con tabla separada, la función `SECURITY DEFINER` del job de Incremento 6 (mismo patrón que `login_lookup()`) directamente no tiene ningún `JOIN`/`GRANT` hacia `hallazgos_expres_traza` — la separación es estructural (dos tablas, dos permisos), no solo una lista de columnas. Esto se hereda sin rediseño en Incremento 6.
+
+#### D. Checklist de revisión legal (Ley 29733) — [HUMANO], para Alex/abogado
+
+**1. Registro de banco de datos personales** (Autoridad Nacional de Protección de Datos, Perú): ¿el volumen/tipo de datos de RF13/RF14 obliga a registrar? ¿uno solo o separado (flujo anónimo vs. cuentas)? Plazo estimado, para planificar antes del Incremento 2 con tráfico público general (no bloquea los pilotos ya controlados).
+
+**2. Transferencia internacional de datos** (Neon + Vercel, fuera de Perú): confirmar región física real de producción. Ley 29733 Art. 15 exige nivel de protección adecuado en destino o consentimiento explícito e informado de la transferencia — el texto de consentimiento actual de RF13 no cubre esto todavía. Si no hay nivel adecuado declarado, redactar la cláusula de transferencia internacional (afecta las 4 finalidades).
+
+**3. Suficiencia jurídica de los 4 textos de consentimiento** (`DIAGNOSTICO`, `INVESTIGACION`, `ESTADISTICAS_COMERCIALES`, `CONTACTO_COMERCIAL`): libre, previo, informado, expreso e inequívoco — "checkbox no premarcado" es necesario, no suficiente. Confirmar que `ConsentimientoExpres.textoSnapshot` es el mecanismo correcto para demostrar qué leyó cada persona.
+
+**4. Umbral de k-anonimato = 20 organizaciones** (decisión de Alex, ya fija — validar, no re-decidir): ¿20 es estadística/jurídicamente suficiente en los sectores más chicos donde ChainPulse probablemente opere primero, dado que el mercado peruano es chico/concentrado? ¿el umbral de dominancia de Market Signals (40% recomendado) también necesita revisión legal?
+
+**Adicionales:** confirmar que retener el registro de `Consentimiento` tras un retiro (append-only, nunca se borra — es el "recibo" legal) no entra en conflicto con el derecho de cancelación/oposición — aclarar con el abogado para no generar expectativa de "borrado total" que el producto no ofrece. Confirmar si comercializar agregados a un "Comprador de estadísticas" requiere autorización/registro adicional.
+
+#### E. Cifrado de Cloudflare R2 — recomendación
+
+**Sí, cifrado adicional a nivel de aplicación, antes de subir el archivo.** El cifrado en reposo de R2 (automático) satisface el checkbox literal de `MVP-DEFINITIVO.md` Sección 8 pero solo cubre robo físico de disco — no cubre un bucket mal configurado, un token de API con permisos amplios filtrado, o una URL firmada mal manejada. Recomendación concreta, sin proveedor nuevo (coherente con presupuesto $0):
+
+- **Mecanismo:** envelope encryption con AES-256-GCM usando el módulo `crypto` nativo de Node — cero dependencias nuevas.
+- **Clave maestra:** `R2_ENCRYPTION_KEY` (env var), mismo procedimiento de generación/rotación que `NEXTAUTH_SECRET`.
+- **Flujo:** DEK aleatoria por archivo, cifra el contenido, la propia DEK se cifra con `R2_ENCRYPTION_KEY`; `(iv, authTag, dekCifrada)` se guarda como metadata en Postgres (no como metadata de R2). El objeto que llega a R2 es siempre ciphertext.
+- **Descarga recomendada:** un endpoint propio que descifra server-side y transmite el CSV en claro solo al usuario ya autorizado del tenant dueño (evita complicar el sanitizador de fórmulas CSV, que corre server-side).
+- **Limitación documentada:** clave maestra sin versionado — rotar `R2_ENCRYPTION_KEY` requiere un job de re-cifrado, documentado en `SEGURIDAD-credenciales.md`.
+
+#### F. Autenticación de `UsuarioPlataforma` — riesgo y aislamiento
+
+**Riesgo real:** no es "más superficie de ataque" en abstracto — es superficie *más sensible*, porque todo rol de plataforma tiene alcance cross-tenant por definición (un `Usuario` comprometido expone un tenant; un `UsuarioPlataforma` comprometido expone potencialmente todos).
+
+**Reusar sin cambios** (funciones puras, ya desacopladas de `NextAuth`/`empresaId`): `src/infra/auth/password.ts` (Argon2id), `src/infra/auth/mfa.ts` (TOTP).
+
+**No reusar tal cual — necesitan implementación propia:**
+- `login_lookup()` está tipado contra `usuarios`. Se clona el **patrón**, no el código: `login_lookup_plataforma(email)` `SECURITY DEFINER`, `REVOKE ALL FROM PUBLIC` + `GRANT EXECUTE` solo a `chainpulse_app`.
+- `src/infra/auth/rateLimit.ts` depende de `tenantClient(empresaId, ...)` — no aplica. Módulo nuevo, o reutilizar `LimiteTasa` con un `bucket` nuevo (`LOGIN_PLATAFORMA`).
+- `UsuarioPlataforma` necesita `intentosFallidos`/`bloqueadoHasta` propios (espejando `Usuario`) — gap del borrador de schema.
+- **No ampliar `next-auth.d.ts` a `empresaId?: string`** — el propio cambio de tipo sería la vulnerabilidad (basta que un desarrollador olvide un chequeo null en un endpoint tenant-scoped). Aislamiento estructural: sesión separada, cookie con nombre distinto, `jose` en vez de NextAuth, guard propio que nunca comparte código de resolución de sesión con el de `Usuario`.
+- **MFA obligatorio desde el día uno para los 4 roles de plataforma**, no solo `ADMINISTRADOR_PLATAFORMA` — incluso `CURADOR_METODOLOGICO` tiene impacto amplio (puede publicar una `PreguntaVersion` maliciosa que afecta el motor de scoring de toda la plataforma).
+
+
+---
+
+### 18.3 DDD y modelo de datos — resoluciones concretas (versionado, tenantTransaction, Market Signals, enums, tipos compartidos, ObservacionKpi)
+
+*Producido por el agente de DDD de la Ronda 4 de cierre de brechas, con inspección directa del repo real (`prisma/schema.prisma`, `src/infra/prisma/tenantClient.ts`, `src/infra/auth/registro.ts`, `src/engine/constantes.ts`).*
+
+#### A. Versionado nativo en BD — patrón único (aggregate + hijas inmutables)
+
+Aplica a `CuestionarioVersion`/`PreguntaVersion` (Incremento 2) y `DefinicionKpi` (Incremento 4):
+
+1. **Aggregate root**: `codigo` (identidad lógica estable) + `numero` (`Int`, incrementa por `codigo`) + `estado` (`EstadoVersionContenido`: `BORRADOR`/`PUBLICADA`/`RETIRADA`) + `publicadaEn`/`retiradaEn` + `curadorId` (FK a `UsuarioPlataforma.id`) + `@@unique([codigo, numero])`.
+2. **Filas hijas**: FK al padre, `codigo` propio estable + `@@unique([aggregateId, codigo])`, nunca `updatedAt`.
+3. **Inmutabilidad — dos capas:**
+   - **Aplicación:** un único módulo de escritura por aggregate (`src/domain/versionado/publicarCuestionario.ts`, `.../publicarKpi.ts`) es el único punto que transiciona `BORRADOR → PUBLICADA`; cualquier "corrección" sobre `PUBLICADA`/`RETIRADA` se rechaza ahí, creando `numero + 1` en su lugar.
+   - **BD (barata, agregar ya):** índice único parcial en el mismo `migration.sql`:
+     ```sql
+     CREATE UNIQUE INDEX uq_cuestionario_version_publicada
+       ON cuestionario_versiones (codigo) WHERE estado = 'PUBLICADA';
+     CREATE UNIQUE INDEX uq_definicion_kpi_publicada
+       ON definicion_kpis (codigo) WHERE estado = 'PUBLICADA';
+     ```
+   - Un trigger `BEFORE UPDATE` que bloquee cualquier `UPDATE` sobre fila `PUBLICADA` queda diferido — se agrega solo si hay un incidente real.
+4. **Consumo**: toda fila que "usó" una versión referencia la fila hija con `onDelete: Restrict` — `Respuesta.preguntaVersionId`, `ObservacionKpi.definicionKpiId`.
+
+`DefinicionKpi` aplica el mismo patrón sin filas hijas.
+
+#### B. `tenantTransaction()` — estándar oficial
+
+**Cambio previo en `src/infra/prisma/tenantClient.ts`:** exportar `TENANT_SCOPED_MODELS`, `injectTenantFilter`, `uncapitalize` (hoy privados). Nada más se toca.
+
+**Firma concreta — `src/infra/prisma/tenantTransaction.ts` (nuevo módulo):**
+
+```ts
+import { Prisma } from "@prisma/client";
+import { prisma } from "./client";
+import { TENANT_SCOPED_MODELS, injectTenantFilter } from "./tenantClient";
+
+type ScopedTx = any;
+
+function buildScopedTx(tx: any, empresaId: string): ScopedTx {
+  return new Proxy(tx, {
+    get(target, modelProp: string) {
+      const delegate = target[modelProp];
+      if (typeof delegate !== "object" || delegate === null) return delegate;
+      const model = modelProp.charAt(0).toUpperCase() + modelProp.slice(1);
+      if (!TENANT_SCOPED_MODELS.has(model)) return delegate;
+      return new Proxy(delegate, {
+        get(mTarget, operation: string) {
+          const fn = mTarget[operation];
+          if (typeof fn !== "function") return fn;
+          return (args: Record<string, unknown>) =>
+            fn.call(mTarget, injectTenantFilter(model, operation, args, empresaId));
+        },
+      });
+    },
+  });
+}
+
+export async function tenantTransaction<T>(
+  empresaId: string,
+  fn: (tx: ScopedTx) => Promise<T>,
+  options?: { maxWait?: number; timeout?: number },
+): Promise<T> {
+  if (!empresaId) throw new Error("tenantTransaction requiere un empresaId no vacio");
+  return prisma.$transaction(async (tx: any) => {
+    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
+    return fn(buildScopedTx(tx, empresaId));
+  }, options);
+}
+```
+
+**Regla de "cuándo usar cada uno" (para `docs/PATRONES.md`):**
+
+| Situación | Usar |
+|---|---|
+| Lectura, o escritura a un solo modelo tenant-scoped | `tenantClient(empresaId)` |
+| Operación que escribe en 2+ modelos que deben confirmarse o fallar juntos | `tenantTransaction(empresaId, fn)` |
+| Dentro del callback de `tenantTransaction()` | Usar solo el `tx` recibido — nunca instanciar `tenantClient()` adentro |
+| CSV masivo (Incremento 4) | `tenantTransaction()` por lote de ~500 filas, nunca el archivo completo |
+
+**Guarda concreta (H3), realista sin CI de tipos aún:** patrón de nombre obligatorio (`xxxAtomico`/`crearXxxCompleto`) para funciones que usan `tenantTransaction()`, de forma que un `grep -rn "tenantClient(" src/ | grep -v tenantClient.ts` (agregable al workflow de CI como paso de lint no bloqueante) pueda señalar cualquier función con más de una llamada a `tenantClient(` como candidata a revisión.
+
+#### C. H6 — Resolución definitiva: publicación de Market Signals
+
+**Gana el enum tri-estado (Arquitectura), no el `Boolean`.** El propio requisito del Incremento 7 exige que el job de recómputo pueda despublicar un segmento automáticamente — un `Boolean publicado` no distingue "nunca se publicó" de "se publicó y se retiró por caer bajo el umbral".
+
+```prisma
+enum EstadoPublicacionSegmento { PENDIENTE_REVISION  PUBLICADO  DESPUBLICADO }
+
+model SegmentoMercadoAgregado {
+  id String @id @default(cuid())
+  segmentoId String
+  segmento   SegmentoMercado @relation(fields: [segmentoId], references: [id], onDelete: Cascade)
+  periodoInicio DateTime
+  periodoFin    DateTime
+  participantesUnicos  Int
+  organizacionesUnicas Int
+  interesDeclaradoConteo Int
+  necesidadDefinidaConteo Int
+  horizonteDistribucion Json
+  autorizacionContactoConteo Int
+  cotizacionConteo Int
+  pilotoConteo Int
+  contratacionConteo Int
+  umbralAplicado Int   // 20 organizaciones — decisión fija de Alex
+  estado EstadoPublicacionSegmento @default(PENDIENTE_REVISION)
+  revisionReidentificacionAprobadaEn DateTime?   // gate humano: PENDIENTE_REVISION -> PUBLICADO
+  publicadoEn    DateTime?
+  despublicadoEn DateTime?
+  despublicadoMotivo String?   // "recomputo_bajo_umbral" | "retiro_consentimiento" | "revision_manual"
+  createdAt DateTime @default(now())
+  @@index([segmentoId])
+  @@index([estado])
+  @@map("segmentos_mercado_agregados")
+}
+```
+
+Transiciones únicas en un solo módulo de escritura: `PENDIENTE_REVISION → PUBLICADO` (requiere `revisionReidentificacionAprobadaEn` no nulo y `organizacionesUnicas >= umbralAplicado`), `PUBLICADO → DESPUBLICADO` (automático, job de recómputo). Nunca `DESPUBLICADO → PUBLICADO` directo — una republicación crea una fila nueva.
+
+#### D. H7 — Convención de nombres para los 7 enums `Estado*`
+
+**Regla:** `Estado<Dimensión>` — el nombre después de `Estado` identifica la pregunta que ese enum responde, nunca el modelo que lo contiene. Un enum se reutiliza entre modelos solo si responde exactamente la misma pregunta; si la pregunta cambia (aunque el modelo o un valor se repita), es un enum nuevo.
+
+| Enum | Pregunta que responde | Modelos/campos |
+|---|---|---|
+| `EstadoDato` | ¿Cómo se obtuvo el valor de este campo? | `Eslabon.estado`, `Conexion.estado`, `ObservacionKpi.estado` |
+| `EstadoEvidencia` | ¿Cuánta confianza tiene este hallazgo? | `ConexionCadena.estadoEvidencia`, `HallazgoExpres`/`HallazgoCadena.evidenceState` |
+| `EstadoCiclo` | ¿Está este ciclo abierto o cerrado? | `CicloPulso.estado` |
+| `EstadoVersionContenido` | ¿En qué punto de su ciclo editorial está esta versión? | `CuestionarioVersion.estado`, `DefinicionKpi.estado` |
+| `EstadoImportacion` | ¿En qué punto de su pipeline está este archivo? | `ImportacionCsv.estado` |
+| `EstadoAccion` | ¿En qué punto de su ciclo de vida operativo está esta acción? | `Accion.estado` |
+| `EstadoPreguntaSugerida` | ¿En qué punto de su triage está esta sugerencia? | `PreguntaSugeridaCuenta/Expres.estado` |
+| `EstadoPublicacionSegmento` *(nuevo, C)* | ¿Está este segmento publicado? | `SegmentoMercadoAgregado.estado` |
+
+Regla de PR: antes de crear un enum `Estado*` nuevo, buscar primero en esta tabla si ya existe uno que responda la misma pregunta.
+
+#### E. H8 — Tipos de dominio compartidos para `Hallazgo*`/`Consentimiento*`
+
+`src/domain/hallazgo/tipos.ts` + `builders.ts`, `src/domain/consentimiento/tipos.ts` + `builders.ts`: un `HallazgoBaseSchema`/`ConsentimientoBaseSchema` (Zod) único, con dos funciones constructoras finas por par (`crearHallazgoExpres`/`crearHallazgoCadena`, `crearConsentimientoExpres`/`crearConsentimientoCuenta`) que arman el `Prisma.*CreateInput` de cada tabla a partir del mismo tipo validado. Toda validación y regla de negocio compartida vive una sola vez en el schema Zod; ningún código de aplicación construye el `CreateInput` a mano fuera de estos builders.
+
+#### F. H4 — `ObservacionKpi`: restricción de idempotencia
+
+Dos restricciones, cubren dos escenarios de duplicado distintos:
+
+```prisma
+model ObservacionKpi {
+  // ...campos existentes...
+  importId       String?
+  importFilaHash String?   // sha256 de la fila normalizada — solo cuando fuente = "csv"
+
+  // Escenario 1: carga manual/pegada — una sola observación viva por KPI+período+fuente.
+  @@unique([cadenaId, definicionKpiId, periodoInicio, periodoFin, fuente], name: "uq_observacion_kpi_periodo")
+  // Escenario 2: reintento de job de importación CSV — misma fila del mismo importId
+  // nunca se inserta dos veces. NULLs no colisionan en Postgres, no interfiere con filas manuales.
+  @@unique([importId, importFilaHash], name: "uq_observacion_kpi_import_fila")
+}
+```
+
+`INSERT ... ON CONFLICT (importId, importFilaHash) DO NOTHING` hace el reintento de un lote fallido seguro sin transacción compensatoria de borrado.
+
+
+---
+
+### 18.4 Developer/tooling — cierre de brechas de CI (H2, H9, H10, H11, H13) y ajuste de ADR-0004 por presupuesto $0
+
+*Producido por el agente de developer/tooling de la Ronda 4 de cierre de brechas. Verificado corriendo `npm run lint`, `npm run typecheck` y `npm run test` sin `DATABASE_URL` en el entorno real del repo — los 56 tests unitarios pasan igual (`vitest.config.ts` ya excluye `*.integration.test.ts`). Estos archivos ya fueron aplicados al repositorio (ver commit correspondiente).*
+
+#### A. `.github/workflows/ci.yml` — aplicado al repo
+
+Workflow mínimo: `lint && typecheck && test` en cada push/PR a `main`. Fijado a Node 22 (no hay `.nvmrc` ni `engines` en `package.json`; coincide con la versión real de la Mac de desarrollo, `v22.23.2`, compatible con el requisito de Next 15.5, `^18.18 || ^19.8 || >=20`). `npm ci` dispara el postinstall de `@prisma/client` (`prisma generate`) automáticamente — los runners de GitHub Actions tienen salida a internet normal, a diferencia del proxy del entorno de este agente, así que esto no necesita ningún workaround ahí. Se dejó `npm run build` fuera del alcance mínimo (necesitaría secrets de producción que hoy no existen en GitHub) — paso natural siguiente, no parte de este cierre.
+
+#### B. Pre-commit hook (H10) — Husky, aplicado al repo
+
+**Husky en vez de un script en `.git/hooks/`**, porque `.git/hooks/` no se versiona con git — el incidente real que motiva H10 (commit `13018c9`) ocurrió justamente porque el proyecto ya se trabaja desde múltiples entornos (Mac + Windows); un hook no versionado tendría el mismo modo de falla que causó el incidente original, aplicado al hook en vez de a la migración. `package.json` gana `"prepare": "husky"` + `husky` como devDependency; `.husky/pre-commit` corre `npm run lint && npm run typecheck` (deliberadamente sin `test` en el hook, para no meter fricción en commits chicos — la red de seguridad completa corre en cada push vía el workflow de A).
+
+#### C. `docs/PATRONES.md` (H11) — aplicado al repo
+
+Documento nuevo con 7 secciones basadas en código real del proyecto: (1) snapshot-JSON de resultados inmutables (`ResultadoConexion.criticidadSnapshot` como ejemplo canónico, con la regla de aplicarlo a `Hallazgo`/`DatasetVersion`), (2) transacción de tenant conocido con `set_config` manual (`registrarEmpresaYAdmin`, `aceptarInvitacion`, `resultados.ts` como ejemplos reales), (3) tenant verdaderamente nulo sin `set_config`/RLS (`EvaluacionExpres`), (4) tabla de "`tenantClient()` vs. transacción manual — cuándo usar cada uno", incluyendo el riesgo ya documentado de que un `create` anidado de Prisma no pasa por `injectTenantFilter` en las tablas hijas, (5) convención de que toda tabla nueva se declara explícitamente en `rls.sql` — con RLS o con un comentario de exclusión explícita, nunca en silencio, (6) convención de nombres para enums `Estado*` (ver Sección 18.3.D), (7) el gap abierto de `Hallazgo*`/`Consentimiento*` (ver Sección 18.3.E, ya con solución diseñada aunque el código todavía no existe).
+
+#### D. Cobertura de tests (H13) — aplicado al repo
+
+`package.json` gana el script `test:coverage` (`vitest run --coverage`) y la devDependency `@vitest/coverage-v8` (fijada a `^3.0.0` para calzar con la versión de `vitest` ya instalada). `vitest.config.ts` gana un bloque `coverage` (`provider: "v8"`, reporters `text`+`html`, mismo alcance de include/exclude que `test`) **sin `thresholds`** — informativo, sin umbral bloqueante, tal como pedía el propio hallazgo H13. No se agregó a `ci.yml` (fuera del alcance mínimo de A) — paso natural siguiente.
+
+#### E. Granularidad de migraciones de Prisma (H9)
+
+**El costo real a minimizar es cuántas sesiones de Windows hacen falta, no cuántas migraciones existen.** Criterio:
+
+> **Una migración de Prisma = un Bloque de trabajo (A/B/C) de un Incremento, tal como ya los separa la Sección 14 — nunca una tabla suelta, nunca un Incremento completo.**
+
+Con dos excepciones: (1) **split hacia abajo** cuando el Bloque contiene una decisión todavía sin confirmar por Alex (ejemplo real: la parte de `EvaluacionExpres` del Bloque A del Incremento 2 espera a la sesión de Windows siguiente si su rediseño no está cerrado — nunca bloquear una migración lista detrás de una decisión pendiente); (2) **merge hacia arriba** cuando las tablas se crean atómicamente en la misma transacción (ejemplo: `Cadena`+`Nodo`+`ConexionCadena`+`Flujo` del Incremento 3 — si el código las trata como unidad atómica, el schema las trata como unidad de migración).
+
+#### F. Impacto de la cadencia diaria de Cron (Hobby, $0/mes) sobre el orden recomendado de ejecución
+
+**El orden de los 11 pasos no cambia** — la cola de jobs sigue siendo el paso 2, antes del motor v2 o las rutas públicas, por la misma razón de siempre (infraestructura sin ambigüedad de diseño de la que todo lo demás depende).
+
+**Ajuste interno al paso 2 (y a ADR-0004):** con Vercel Hobby confirmado por el presupuesto $0/mes, el Cron nativo queda en cadencia diaria — suficiente para la purga de `huellaOrigen` (ventana de 48-72h con margen de sobra), pero insuficiente por sí solo para el ping anti-autosuspend de Neon (recomendado cada 4-5 min) y para cualquier job con expectativa de turnaround corto (CSV del Incremento 4). **Resolución sin gastar presupuesto:** un segundo workflow de GitHub Actions con `on: schedule` (cron cada 10-15 min, $0, usa la misma infraestructura de CI ya agregada en A) que haga un `curl` autenticado contra `/api/internal/jobs/run`, dejando el Cron nativo de Vercel Hobby como respaldo redundante, no como único disparador. Esto resuelve tanto la purga como el ping anti-cold-start sin subir a Vercel Pro — se re-evalúa mes a mes, según ya confirmó Alex, cuando el volumen real de un job exija más que eso.
+
