@@ -104,3 +104,22 @@ CREATE POLICY tenant_isolation_recomendaciones_ejecutadas ON "recomendaciones_ej
 -- es el mismo caso de tenant nulo explicito de arriba — protege el propio
 -- flujo anonimo (RF15/RF17), asi que no tiene sentido aislarla por tenant.
 -- Nunca debe llevar empresaId ni politica de tenant.
+
+-- Incremento 2 del Bloque de evaluacion expres V2 (PLAN-DE-TRABAJO.md
+-- Seccion 18.2.B/18.2.C, migracion
+-- 20260916150000_incremento2_evaluacion_expres_v2): mismo caso de tenant
+-- nulo explicito de arriba. NUNCA agregar empresaId ni politica RLS a:
+--   "usuarios_plataforma", "cuestionario_versiones", "pregunta_versiones",
+--   "evaluaciones_expres_v2", "respuestas", "consentimientos_expres",
+--   "hallazgos_expres", "hallazgos_expres_traza"
+-- Se protegen por RF25 (rate limiting), por cascada desde
+-- evaluaciones_expres_v2, y por no compartir tabla con datos de cuentas
+-- registradas (RNF7).
+--
+-- "consentimientos_cuenta" es la EXCEPCION de este bloque: SI tiene
+-- empresaId propio y SI lleva politica RLS (misma que
+-- tenant_isolation_conexiones de arriba) — ya aplicada en la propia
+-- migracion 20260916150000_incremento2_evaluacion_expres_v2, no aqui,
+-- porque esta era la primera tabla tenant-scoped nueva desde el
+-- Incremento 1 y su politica va versionada junto con su CREATE TABLE
+-- (regla de docs/PATRONES.md).

@@ -100,6 +100,72 @@ enum DimensionDiagnostico {
   RIESGO
 }
 
+// Incremento 2 (Evaluacion expres V2, PLAN-DE-TRABAJO.md Seccion 18.1.A/18.3.A) —
+// identidad separada para los actores de plataforma (Curador metodologico,
+// Administrador de plataforma), fuera de RLS/TENANT_SCOPED_MODELS a
+// proposito (mismo criterio de "tenant nulo" que EvaluacionExpres): un
+// UsuarioPlataforma NUNCA tiene empresaId, ni se accede via tenantClient().
+// Ver src/infra/auth-plataforma/ para el flujo de sesion (JWT propio via
+// "jose", cookie y secreto distintos de NextAuth — nunca se amplia
+// next-auth.d.ts para acomodar este actor).
+enum RolUsuarioPlataforma {
+  CURADOR_METODOLOGICO
+  ADMINISTRADOR_PLATAFORMA
+}
+
+// Incremento 2 (Seccion 18.3.A) — patron de versionado nativo en BD:
+// aggregate (CuestionarioVersion) + filas hijas inmutables (PreguntaVersion).
+// Un Curador metodologico edita contenido sin deploy; una version PUBLICADA
+// nunca se edita (modulo unico de escritura + indice unico parcial en la
+// migracion, ver prisma/migrations). Corregir crea numero+1, nunca UPDATE.
+enum EstadoVersionContenido {
+  BORRADOR
+  PUBLICADA
+  RETIRADA
+}
+
+// RF21, motor v2 (src/engine/v2/) — estado categorico por dimension del
+// cuestionario condensado. NO es lo mismo que el campo existente
+// "indiceIntegracion" (float, motor v1, RF16): una es un estado categorico
+// por dimension del motor V2, la otra es un indice numerico agregado del
+// motor v1 — coexisten con nombres parecidos a proposito, nunca confundir.
+enum DimensionDiagnosticoV2 {
+  ALINEACION
+  COORDINACION
+  INTEGRACION
+  EVIDENCIA
+  RESILIENCIA
+}
+
+// RF22 (Seccion 18.2.C) — cuanta confianza tiene un hallazgo de la
+// evaluacion expres V2. NO es lo mismo que el enum ya existente EstadoDato
+// (que responde "como se obtuvo el valor de este campo") pese al valor
+// DECLARADO compartido — son dos taxonomias distintas, nunca reutilizar
+// una por la otra (ver docs/PATRONES.md).
+enum EstadoEvidencia {
+  DECLARADO
+  CONFIRMADO_POR_OTROS
+  VERIFICADO_CON_DATOS
+}
+
+// RF23/RF24 (Seccion 18.2.A) — las 4 finalidades de consentimiento de V2.
+// Solo DIAGNOSTICO e INVESTIGACION se piden activamente en este incremento
+// (ver requirements.md Seccion 13.8) — ESTADISTICAS_COMERCIALES y
+// CONTACTO_COMERCIAL quedan en el enum para Incremento 6/7, sin UI propia
+// todavia.
+enum FinalidadConsentimiento {
+  DIAGNOSTICO
+  INVESTIGACION
+  ESTADISTICAS_COMERCIALES
+  CONTACTO_COMERCIAL
+}
+
+enum MetodoRetiro {
+  NINGUNO
+  FORMULARIO_PUBLICO
+  SOLICITUD_SOPORTE
+}
+
 // RF1 — tenant.
 model Empresa {
   id        String   @id @default(cuid())
@@ -111,6 +177,7 @@ model Empresa {
   eslabones  Eslabon[]
   ciclos     CicloPulso[]
   conexiones Conexion[]
+  consentimientosCuenta ConsentimientoCuenta[]
 
   @@map("empresas")
 }
@@ -150,6 +217,7 @@ model Usuario {
   // de este archivo).
   metricasCuestionario       MetricaCuestionario[]
   recomendacionesEjecutadas  RecomendacionEjecutada[]
+  consentimientosCuenta      ConsentimientoCuenta[]
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -467,4 +535,273 @@ model LimiteTasa {
   @@unique([huellaOrigenHash, bucket, ventanaInicio])
   @@index([ventanaInicio])
   @@map("limite_tasa")
+}
+
+// ============================================================================
+// Incremento 2 — Evaluacion expres V2 (requirements.md Seccion 13, RF19-RF26;
+// PLAN-DE-TRABAJO.md Seccion 18). Todas las tablas de este bloque son
+// CREATE TABLE/CREATE TYPE puros — ninguna toca las tablas del Incremento 1.
+// ============================================================================
+
+// RF19 — actor de plataforma, identidad completamente separada de
+// Usuario/Empresa (Seccion 18.1.A). Nunca entra en TENANT_SCOPED_MODELS ni
+// en prisma/rls.sql — mismo regimen de tenant nulo que EvaluacionExpres.
+// MFA obligatorio desde el primer login para los 2 roles, sin excepcion
+// (Seccion 18.2.F: incluso CURADOR_METODOLOGICO tiene impacto amplio,
+// puede publicar una PreguntaVersion que afecta el motor de scoring de
+// toda la plataforma).
+model UsuarioPlataforma {
+  id            String               @id @default(cuid())
+  email         String               @unique
+  passwordHash  String
+  mfaSecret     String?
+  mfaHabilitado Boolean              @default(false)
+  rol           RolUsuarioPlataforma
+
+  // Mismo criterio de bloqueo temporal que Usuario (src/infra/auth/rateLimit.ts),
+  // pero implementado aparte (Seccion 18.2.F): este actor no tiene empresaId,
+  // asi que no puede pasar por tenantClient().
+  intentosFallidos Int       @default(0)
+  bloqueadoHasta   DateTime?
+
+  createdAt DateTime @default(now())
+
+  cuestionariosPublicados CuestionarioVersion[]
+
+  @@map("usuarios_plataforma")
+}
+
+// RF20 — aggregate root de version (patron de Seccion 18.3.A, compartido
+// con DefinicionKpi del Incremento 4): codigo (identidad logica estable) +
+// numero (incremental) + estado. Publicada es inmutable: el unico modulo
+// de escritura (src/domain/versionado/publicarCuestionario.ts) rechaza
+// cualquier edicion post-publicacion y crea numero+1 en su lugar; el
+// indice unico parcial de la migracion (WHERE estado = 'PUBLICADA') es el
+// backstop de base de datos.
+model CuestionarioVersion {
+  id          String                 @id @default(cuid())
+  codigo      String // "evaluacion-expres-v2"
+  numero      Int
+  estado      EstadoVersionContenido @default(BORRADOR)
+  publicadaEn DateTime?
+  retiradaEn  DateTime?
+  curadorId   String? // UsuarioPlataforma.id — sin relacion FK a proposito,
+  // mismo criterio minimalista que el resto de este bloque (ver Seccion 13)
+  curador     UsuarioPlataforma?     @relation(fields: [curadorId], references: [id])
+  notasCambio String?
+
+  preguntas          PreguntaVersion[]
+  evaluacionesExpres EvaluacionExpresV2[]
+
+  @@unique([codigo, numero])
+  @@map("cuestionario_versiones")
+}
+
+// RF20 — fila hija inmutable. "codigo" (Q1..Q7) es estable entre
+// versiones para permitir series historicas aunque el texto cambie.
+// onDelete: Restrict — una version con respuestas reales atadas nunca se
+// borra.
+model PreguntaVersion {
+  id                    String              @id @default(cuid())
+  cuestionarioVersionId String
+  cuestionarioVersion   CuestionarioVersion @relation(fields: [cuestionarioVersionId], references: [id], onDelete: Restrict)
+  codigo                String // "Q1".."Q7", estable entre versiones
+  orden                 Int
+  texto                 String
+  dimension             DimensionDiagnosticoV2
+  // Lista fija de opciones (valor, texto, orden) — sin tabla propia:
+  // contenido de solo lectura, mismo espiritu que los snapshot JSON de
+  // este mismo bloque.
+  opciones              Json
+  // Subpregunta contextual de Q5 (texto libre, no puntuable en el motor).
+  esNoPuntuable         Boolean             @default(false)
+
+  respuestas Respuesta[]
+
+  @@unique([cuestionarioVersionId, codigo])
+  @@map("pregunta_versiones")
+}
+
+// RF21 — evaluacion anonima V2, tabla nueva y paralela a EvaluacionExpres
+// (v1, RF11-RF18), que queda congelada sin cambios (requirements.md
+// Seccion 13.0). Tenant nulo explicito, mismo regimen que EvaluacionExpres
+// (Seccion 18.2.B): sin empresaId, sin politica RLS, protegida por
+// LimiteTasa + cascada + disciplina de nunca exponer una lectura directa
+// de sus hijas. Aggregate root de este sub-grafo — Respuesta/Consentimiento/
+// Hallazgo siempre se acceden anidados desde este id, nunca top-level.
+model EvaluacionExpresV2 {
+  id                    String              @id @default(cuid())
+  cuestionarioVersionId String
+  cuestionarioVersion   CuestionarioVersion @relation(fields: [cuestionarioVersionId], references: [id], onDelete: Restrict)
+
+  // Contexto previo no puntuable (requirements.md Seccion 13, §7.1).
+  pais             String    @default("PE")
+  region           String?
+  sector           String?
+  subsector        String?
+  rangoTamano      String?
+  rolParticipante  String?
+  productoServicio String // "una cadena concreta" — principio 2
+  periodoInicio    DateTime
+  periodoFin       DateTime
+  tipoOperacion    String
+
+  // Gate macro/detalle (RF21/RF22) — mismo mecanismo que EvaluacionExpres
+  // v1: el resultado completo se calcula UNA sola vez en /complete y se
+  // persiste de inmediato; el endpoint de detalle solo revela mas campos
+  // del mismo registro, nunca recalcula.
+  detalleDesbloqueado   Boolean   @default(false)
+  detalleDesbloqueadoEn DateTime?
+  correo                String?
+  nombreCompleto        String?
+  empresaNombre         String?
+  telefono              String?
+
+  // RF25/RF26 + retencion (src/infra/retencion.ts, extendido a esta tabla):
+  // huella de origen solo para limitar abuso, purgada a las 48-72h.
+  huellaOrigen          String
+  huellaOrigenPurgadaEn DateTime?
+
+  createdAt DateTime @default(now())
+
+  respuestas      Respuesta[]
+  consentimientos ConsentimientoExpres[]
+  hallazgos       HallazgoExpres[]
+
+  @@index([huellaOrigen])
+  @@index([createdAt])
+  @@index([cuestionarioVersionId])
+  @@map("evaluaciones_expres_v2")
+}
+
+// RF21 — respuesta a UNA pregunta de una version concreta. Entidad hija de
+// EvaluacionExpresV2 (Seccion 18.2.B: "Respuesta es entidad hija, no su
+// propio aggregate") — se accede siempre por evaluacionExpresV2Id, nunca
+// se lista de forma independiente (evitaria el gate de detalle). "noSabe"
+// nunca es cero, mismo principio que RespuestaCruda (RF6) del motor v1.
+model Respuesta {
+  id                   String             @id @default(cuid())
+  evaluacionExpresV2Id String
+  evaluacionExpresV2   EvaluacionExpresV2 @relation(fields: [evaluacionExpresV2Id], references: [id], onDelete: Cascade)
+  preguntaVersionId    String
+  preguntaVersion      PreguntaVersion    @relation(fields: [preguntaVersionId], references: [id], onDelete: Restrict)
+
+  opcionSeleccionada String?
+  noSabe             Boolean @default(false)
+  contextoLibre      String? // subpregunta no puntuable de Q5
+
+  createdAt DateTime @default(now())
+
+  @@unique([evaluacionExpresV2Id, preguntaVersionId])
+  @@map("respuestas")
+}
+
+// RF23/RF24 (Seccion 18.2.A) — consentimiento append-only del flujo
+// anonimo. Tenant nulo, mismo regimen que EvaluacionExpresV2: SIN RLS.
+// Append-only garantizado a nivel de permisos de Postgres, no solo de
+// disciplina de aplicacion — ver REVOKE UPDATE, DELETE en la migracion.
+// Retirar consentimiento es una fila NUEVA (aceptado=false, retiradoEn),
+// nunca un UPDATE sobre la original. "textoSnapshot" es el texto legal
+// COMPLETO mostrado en ese momento (no un puntero a una version futura
+// que podria cambiar) — RF23 exige reproducir el texto exacto.
+model ConsentimientoExpres {
+  id                   String             @id @default(cuid())
+  evaluacionExpresV2Id String
+  evaluacionExpresV2   EvaluacionExpresV2 @relation(fields: [evaluacionExpresV2Id], references: [id], onDelete: Cascade)
+
+  finalidad     FinalidadConsentimiento
+  aceptado      Boolean
+  textoVersion  String
+  textoSnapshot String // texto legal completo mostrado, nunca solo un puntero
+  jurisdiccion  String       @default("PE")
+  vigenteDesde  DateTime     @default(now())
+  metodoRetiro  MetodoRetiro @default(NINGUNO)
+  retiradoEn    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([evaluacionExpresV2Id, finalidad])
+  @@map("consentimientos_expres")
+}
+
+// RF23/RF24 — misma finalidad de consentimiento pero para una cuenta
+// registrada (Usuario/Empresa). A diferencia de ConsentimientoExpres, esta
+// tabla SI tiene empresaId propio y entra en TENANT_SCOPED_MODELS +
+// prisma/rls.sql (primera tabla tenant-scoped nueva desde el Incremento 1
+// — Seccion 18.3.B la usa como caso de prueba de la regla "RLS en la
+// misma migracion"). Ningun flujo de este incremento la muestra/solicita
+// todavia (requirements.md Seccion 13.8) — se crea ahora porque es
+// transversal, sin UI propia hasta un incremento posterior.
+model ConsentimientoCuenta {
+  id        String  @id @default(cuid())
+  empresaId String
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  usuarioId String
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  finalidad     FinalidadConsentimiento
+  aceptado      Boolean
+  textoVersion  String
+  textoSnapshot String
+  jurisdiccion  String       @default("PE")
+  vigenteDesde  DateTime     @default(now())
+  metodoRetiro  MetodoRetiro @default(NINGUNO)
+  retiradoEn    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([empresaId, usuarioId, finalidad])
+  @@map("consentimientos_cuenta")
+}
+
+// RF22/RNF10 (Seccion 18.2.C) — hallazgo de la evaluacion expres V2. Solo
+// variables NO identificables en "contextoSnapshot" — nunca un id de fila
+// de Respuesta/EvaluacionExpresV2 aqui. La trazabilidad operacional (para
+// que el propio visitante vea su resultado detallado) vive en
+// HallazgoExpresTraza, una tabla SEPARADA con permisos propios — la
+// separacion es estructural (dos tablas), no solo una lista de columnas
+// a evitar. Investigacion (Incremento 6) nunca tiene, ni por JOIN
+// accidental, acceso a la tabla de traza.
+model HallazgoExpres {
+  id                   String             @id @default(cuid())
+  evaluacionExpresV2Id String
+  evaluacionExpresV2   EvaluacionExpresV2 @relation(fields: [evaluacionExpresV2Id], references: [id], onDelete: Cascade)
+
+  dimension             DimensionDiagnosticoV2
+  estadoCategoria       String // uno de los 5 estados por dimension (catalogo cerrado en src/engine/v2)
+  enunciado             String
+  evidenceState         EstadoEvidencia
+  coberturaConfianza    Float
+  evidenciaFaltante     String?
+  siguienteVerificacion String?
+  ruleVersion           String // "v2-preliminary"
+
+  // UNICO campo que el pipeline de Investigacion (Incremento 6) lee para
+  // construir un DatasetVersion — solo variables no identificables:
+  // { dimension, sector, subsector, rangoTamano, rolParticipante, pais,
+  //   preguntaCodigos, ruleVersion }. Nunca un id de Respuesta aqui.
+  contextoSnapshot Json
+
+  createdAt DateTime @default(now())
+
+  traza HallazgoExpresTraza?
+
+  @@index([evaluacionExpresV2Id])
+  @@map("hallazgos_expres")
+}
+
+// RF22/RNF10 — trazabilidad operacional 1:1 de un HallazgoExpres, en tabla
+// propia con permisos propios (nunca la misma tabla que HallazgoExpres).
+// Investigacion (Incremento 6) NUNCA hace JOIN contra esta tabla — su
+// funcion SECURITY DEFINER de agregacion (Seccion 18.2.C) directamente no
+// tiene GRANT hacia "hallazgos_expres_traza".
+model HallazgoExpresTraza {
+  id               String         @id @default(cuid())
+  hallazgoExpresId String         @unique
+  hallazgoExpres   HallazgoExpres @relation(fields: [hallazgoExpresId], references: [id], onDelete: Cascade)
+  respuestaIds     String[]
+
+  createdAt DateTime @default(now())
+
+  @@map("hallazgos_expres_traza")
 }

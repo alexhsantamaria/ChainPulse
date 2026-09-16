@@ -25,12 +25,20 @@ import { prisma } from "./client";
 // EvaluacionExpres y sus hijas NO pasan por aqui: no tienen empresaId
 // (adenda de ADR-0001) y se consultan con `prisma` directo.
 
-const TENANT_SCOPED_MODELS = new Set([
+// Exportado (Incremento 2, PLAN-DE-TRABAJO.md Seccion 18.3.B): lo reusa
+// src/infra/prisma/tenantTransaction.ts para inyectar el mismo filtro de
+// tenant dentro de una transaccion manual con set_config, sin duplicar
+// esta logica. "ConsentimientoCuenta" es la primera tabla tenant-scoped
+// nueva desde el Incremento 1 (Seccion 18.2.A) — toda tabla nueva con
+// empresaId propio se agrega aqui en la misma migracion que la crea,
+// nunca despues (regla de docs/PATRONES.md, Seccion 18.1.C).
+export const TENANT_SCOPED_MODELS = new Set([
   "Empresa",
   "Usuario",
   "Eslabon",
   "Conexion",
   "CicloPulso",
+  "ConsentimientoCuenta",
 ]);
 
 export function tenantClient(empresaId: string) {
@@ -63,13 +71,17 @@ export function tenantClient(empresaId: string) {
   });
 }
 
-function uncapitalize(model: string): string {
+// Exportado (Seccion 18.3.B) por el mismo motivo que TENANT_SCOPED_MODELS
+// de arriba: tenantTransaction.ts lo reusa para invocar el modelo
+// correcto sobre el `tx` de Prisma.
+export function uncapitalize(model: string): string {
   return model.charAt(0).toLowerCase() + model.slice(1);
 }
 
 // Empresa se filtra por "id"; el resto de los modelos tenant-scoped tiene
 // una columna "empresaId" propia.
-function injectTenantFilter(
+// Exportado (Seccion 18.3.B) — mismo motivo que arriba.
+export function injectTenantFilter(
   model: string,
   operation: string,
   args: Record<string, unknown> | undefined,
