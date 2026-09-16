@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancela una ejecucion en curso si llega un push nuevo a la misma rama/PR.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint, typecheck y tests unitarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          # No hay .nvmrc ni "engines" en package.json (verificado 2026-09-16).
+          # Se fija a la version que usa Alex en su Mac de desarrollo
+          # (node -v -> v22.23.2) para que CI y desarrollo local no diverjan.
+          # Next.js 15.5 solo exige Node ^18.18 || ^19.8 || >=20, asi que 22
+          # es compatible.
+          node-version: '22'
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+        # `npm ci` corre el postinstall de @prisma/client, que ejecuta
+        # `prisma generate` automaticamente -- necesario para que
+        # `tsc --noEmit` resuelva los tipos de @prisma/client. Los runners
+        # de GitHub Actions tienen salida a internet normal (a diferencia
+        # del proxy de red del entorno de desarrollo con IA usado en este
+        # proyecto), asi que esto no necesita ningun workaround aca.
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests unitarios (sin red, sin Neon real)
+        run: npm run test
+        # No necesita DATABASE_URL -- vitest.config.ts excluye
+        # *.integration.test.ts. test:integration (necesita Neon real, solo
+        # corre en Windows) queda fuera de este workflow a proposito -- ver
+        # PLAN-DE-TRABAJO.md, hallazgo H12 y la seccion "Gaps de entorno".
+
