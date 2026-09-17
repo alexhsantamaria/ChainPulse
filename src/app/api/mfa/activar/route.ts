@@ -18,7 +18,13 @@ import { logError } from "@/infra/log";
 
 export async function POST(request: Request) {
   const session = await auth();
-  if (!session?.user?.empresaId) {
+  if (!session?.user?.empresaId || !session.user.email) {
+    // El chequeo de "email" (ademas de "empresaId") es lo que le falta al
+    // comentario de arriba (R5-9): sin el, TypeScript infiere
+    // session.user.email como string | null | undefined mas abajo (mismo
+    // tipo que expone next-auth) y el "where: { email }" de Prisma no lo
+    // acepta -- ver el mismo patron ya usado en
+    // src/app/activar-mfa/page.tsx.
     return NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 });
   }
 

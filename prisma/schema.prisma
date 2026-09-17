@@ -770,7 +770,7 @@ model ConsentimientoExpres {
   // Agregar createdAt al final del indice compuesto deja que Postgres
   // resuelva el ORDER BY con el indice (evita un sort aparte) sin
   // necesitar un segundo indice solo para eso.
-  @@index([evaluacionExpresV2Id, finalidad, createdAt])
+  @@index([evaluacionExpresV2Id, finalidad, createdAt], map: "consentimientos_expres_evaluacionExpresV2Id_finalidad_createdAt")
   @@map("consentimientos_expres")
 }
 
@@ -803,7 +803,7 @@ model ConsentimientoCuenta {
   // R5-18 -- mismo motivo que ConsentimientoExpres de arriba: createdAt al
   // final del indice para resolver "el mas reciente por finalidad" sin un
   // sort aparte.
-  @@index([empresaId, usuarioId, finalidad, createdAt])
+  @@index([empresaId, usuarioId, finalidad, createdAt], map: "consentimientos_cuenta_empresaId_usuarioId_finalidad_createdAt_")
   @@map("consentimientos_cuenta")
 }
 
