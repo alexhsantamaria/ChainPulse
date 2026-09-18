@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/infra/prisma/client";
+import * as Sentry from "@sentry/nextjs";
 import { logError } from "@/infra/log";
 import { extraerHuellaOrigenCruda } from "@/infra/public/huellaOrigen";
 import { hashHuellaOrigen, registrarIntento, LIMITE_DESBLOQUEO_DETALLE } from "@/infra/rateLimit/limiteTasa";
@@ -104,6 +105,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     return NextResponse.json({ ok: true, yaDesbloqueado: false, detalleDesbloqueado: true });
   } catch (err) {
+    Sentry.captureException(err);
     logError("api/public/evaluations/[id]/unlock POST", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }

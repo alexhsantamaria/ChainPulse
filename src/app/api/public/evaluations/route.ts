@@ -5,6 +5,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/infra/prisma/client";
+import * as Sentry from "@sentry/nextjs";
 import { logError } from "@/infra/log";
 import { extraerHuellaOrigenCruda } from "@/infra/public/huellaOrigen";
 import { hashHuellaOrigen, registrarIntento, LIMITE_INICIO_EVALUACION } from "@/infra/rateLimit/limiteTasa";
@@ -102,6 +103,7 @@ export async function POST(request: Request) {
       })),
     });
   } catch (err) {
+    Sentry.captureException(err);
     logError("api/public/evaluations POST", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }

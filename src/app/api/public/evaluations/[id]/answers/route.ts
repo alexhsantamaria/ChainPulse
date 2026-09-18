@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/infra/prisma/client";
+import * as Sentry from "@sentry/nextjs";
 import { logError } from "@/infra/log";
 import { parsearOpciones, resolverOrdenPorValor } from "@/infra/public/opciones";
 
@@ -76,6 +77,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     });
     return NextResponse.json({ ok: true, codigoPregunta: pregunta.codigo });
   } catch (err) {
+    Sentry.captureException(err);
     logError("api/public/evaluations/[id]/answers POST", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }

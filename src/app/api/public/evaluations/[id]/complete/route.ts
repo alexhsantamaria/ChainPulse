@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { calcularDiagnosticoV2 } from "@/engine/v2";
 import { prisma } from "@/infra/prisma/client";
+import * as Sentry from "@sentry/nextjs";
 import { logError } from "@/infra/log";
 import { construirRespuestasV2 } from "@/infra/public/construirRespuestasV2";
 import { persistirHallazgos } from "@/infra/public/persistirHallazgos";
@@ -72,6 +73,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       hallazgos: hallazgosCreados.map(formatearHallazgoMacro),
     });
   } catch (err) {
+    Sentry.captureException(err);
     logError("api/public/evaluations/[id]/complete POST", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
   }
