@@ -71,6 +71,17 @@ Probado en Windows de punta a punta con datos reales: se marcó como ejecutada l
 - [`docs/ADR/0003-autenticacion.md`](./docs/ADR/0003-autenticacion.md) — decisión de mecanismo de autenticación para RF1/RF4: Auth.js (NextAuth), hash Argon2id, MFA para administradores, sourced en los apuntes del módulo de Seguridad. Aceptado.
 - [`SEGURIDAD-credenciales.md`](./SEGURIDAD-credenciales.md) — checklist de credenciales expuestas durante la configuración del entorno y pendientes de rotar (no contiene secretos reales).
 
+## Entorno de desarrollo — dónde correr qué
+
+Dos máquinas, un solo repo (GitHub como único punto de sincronización — nunca compartir carpeta entre ellas):
+
+- **Mac, vía sesión de Claude (device bridge):** `/Users/alx/Documents/BigDevelopment/Proyectos/ChainPulse`. Se usa para escribir código, `typecheck`, `lint` y `npm run test` (pruebas unitarias, sin red hacia Neon). `binaries.prisma.sh` está bloqueado en este entorno (403), así que `prisma generate`/`migrate` no corren aquí.
+- **Windows, validación manual de Alex — `C:\Users\alx\Documents\BigDevelopment\Proyectos\ChainPulse`.** Es la **única** carpeta de Windows a usar (no `C:\Mac\Home\Documents\BigDevelopment\Proyectos\ChainPulse`, la carpeta compartida de Parallels — da problemas de permisos y oculta el `.env`; ver `claude/lecciones-aprendidas.md` para el incidente completo). Ahí vive el `.env` real, con las credenciales de Neon.
+
+**Toda operación que necesite el `.env` real o una conexión real a la base de datos se corre siempre desde esa carpeta de Windows, nunca desde el Mac ni desde una sesión de Claude.** Incluye, sin limitarse a: `npm run prisma:generate`, `npm run prisma:migrate`, `npm run prisma:seed`, cualquier script `npm run seed:*` (por ejemplo `seed:cuestionario-v2`), `npm run test:integration`, y `npm run dev`/`npm run build` contra Neon real.
+
+Windows es ARM64: el Node por defecto no sirve para los binarios nativos de Prisma — hay un Node 22 x64 portátil instalado en `C:\Users\alx\Tools\node22-x64`, ya agregado al `$PROFILE` de PowerShell (cualquier ventana nueva lo activa sola, sin pasos manuales).
+
 ## Cómo levantar el proyecto
 
 ```bash
