@@ -80,3 +80,53 @@ export interface ResultadoIndiceIntegracion {
   conexionesAceptables: number;
   puntosUnicosFalla: number;
 }
+
+// --- Motor v2 (Evaluacion Expres v2, RF19-RF26, V2 Sec. 7-8) ---
+// Nombres distintos a los tipos v1 (DimensionDiagnostico/EstadoDato) a
+// proposito -- son taxonomias distintas que coexisten, nunca se combinan
+// (ver nota en prisma/schema.prisma junto a DimensionDiagnosticoV2 y
+// EstadoEvidencia).
+
+export type DimensionDiagnosticoV2 =
+  | "ALINEACION"
+  | "COORDINACION"
+  | "INTEGRACION"
+  | "EVIDENCIA"
+  | "RESILIENCIA";
+
+export type EstadoEvidenciaV2 = "DECLARADO" | "CONFIRMADO_POR_OTROS" | "VERIFICADO_CON_DATOS";
+
+// Una respuesta de la evaluacion expres v2, ya resuelta contra la
+// PreguntaVersion que la origino -- infra/ hace el join entre Respuesta y
+// PreguntaVersion (codigo, dimension, esNoPuntuable, orden de la opcion
+// elegida dentro de PreguntaVersion.opciones) antes de llamar al motor.
+// El motor v2 (igual que el v1, ADR-0002) nunca importa @prisma/client.
+export interface RespuestaPreguntaV2 {
+  /** "Q1".."Q7", estable entre versiones del cuestionario (RF20). */
+  codigoPregunta: string;
+  /** null cuando esNoPuntuable=true (p. ej. la subpregunta de fuente principal de Q5). */
+  dimension: DimensionDiagnosticoV2 | null;
+  esNoPuntuable: boolean;
+  /** Posicion ordinal (0-based) de la opcion elegida, tal como fue publicada en PreguntaVersion.opciones[].orden. */
+  indiceOpcion: number;
+  /** Flag explicito (no se infiere del indice): "no lo sé" nunca se trata como el peor valor sustantivo, principio "no sé no es cero". */
+  noSabe: boolean;
+}
+
+// RF21/RF22 (V2 Sec. 8.2) — contrato de salida del motor v2. Persistido
+// 1:1 en HallazgoExpres (ver prisma/schema.prisma), con sourceQuestionIds
+// yendo al contextoSnapshot no identificable y NUNCA a HallazgoExpresTraza
+// (esa tabla solo guarda ids reales de Respuesta, con permisos propios).
+export interface DiagnosticFinding {
+  dimension: DimensionDiagnosticoV2;
+  /** Uno de los 5 estados categoricos cerrados de esa dimension (catalogo unico en engine/v2/constantes.ts). */
+  status: string;
+  statement: string;
+  sourceQuestionIds: string[];
+  evidenceState: EstadoEvidenciaV2;
+  /** 0-1: cobertura de respuestas/evidencia, no probabilidad estadistica (V2 Sec. 8.2, nota bajo el contrato). */
+  confidenceCoverage: number;
+  missingEvidence: string[];
+  nextCheck: string;
+  ruleVersion: string;
+}
