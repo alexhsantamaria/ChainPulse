@@ -15,6 +15,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
+    "seed:cuestionario-v2": "tsx prisma/seedCuestionarioV2.ts",
     "jobs:bootstrap": "tsx scripts/bootstrapPgBoss.ts",
     "test:coverage": "vitest run --coverage",
     "prepare": "husky",
