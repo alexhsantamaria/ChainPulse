@@ -14,7 +14,7 @@
 // equivalente a una migracion, no una escritura de la app en runtime.
 // Idempotente: upsert con `update: {}` en cada nivel (mismo patron que
 // prisma/seed.ts) -- volver a correrlo no duplica ni pisa datos.
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
 const seedDatabaseUrl = process.env.SEED_DATABASE_URL;
@@ -205,7 +205,7 @@ async function main() {
         orden: pregunta.orden,
         texto: pregunta.texto,
         dimension: pregunta.dimension,
-        opciones: pregunta.opciones,
+        opciones: pregunta.opciones as unknown as Prisma.InputJsonValue,
         esNoPuntuable: pregunta.esNoPuntuable ?? false,
       },
     });

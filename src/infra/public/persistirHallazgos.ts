@@ -61,7 +61,7 @@ export async function persistirHallazgos(
         evidenciaFaltante: finding.missingEvidence.length > 0 ? finding.missingEvidence.join(" | ") : null,
         siguienteVerificacion: finding.nextCheck,
         ruleVersion: finding.ruleVersion,
-        contextoSnapshot: construirContextoSnapshot(finding, contexto),
+        contextoSnapshot: construirContextoSnapshot(finding, contexto) as unknown as Prisma.InputJsonValue,
       },
     });
 
