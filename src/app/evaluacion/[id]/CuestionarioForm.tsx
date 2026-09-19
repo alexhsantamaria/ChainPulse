@@ -161,7 +161,16 @@ export default function CuestionarioForm({ evaluacionId }: { evaluacionId: strin
 
   function elegirOpcionPrincipal(valor: string) {
     if (bloqueadoRef.current) return;
-    bloqueadoRef.current = true;
+    // Solo bloquea si este click va a hacer avanzar el paso (pregunta sin
+    // subpregunta). Si hay subpregunta (Q5), nos quedamos en el mismo
+    // `indice` esperando esa segunda respuesta -- `indice` nunca cambia,
+    // asi que el useEffect que libera `bloqueadoRef` nunca dispara, y
+    // dejar el guard activo aca congelaba la subpregunta (bug reportado
+    // por Alex el 2026-09-19: "demora en seleccionar" la subpregunta de
+    // fuente principal -- en realidad no respondia nunca al tap).
+    if (!pasoActual.sub) {
+      bloqueadoRef.current = true;
+    }
     setError(null);
 
     // Optimista: guarda local y avanza de inmediato, sin esperar la red.
