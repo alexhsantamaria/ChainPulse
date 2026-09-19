@@ -5,6 +5,19 @@
 // es idempotente por diseño -- volver atras y cambiar una respuesta no
 // crea filas duplicadas).
 //
+// Guardado OPTIMISTA (2026-09-19, feedback de Alex tras la primera prueba
+// en Windows: cada toque se sentia lento porque esperaba 2-3 consultas a
+// Neon antes de avanzar). Ahora cada tap avanza de inmediato -- la
+// respuesta se guarda local (sessionStorage) al toque y el POST a
+// .../answers se dispara en segundo plano, sin bloquear la UI. Antes de
+// llamar a POST .../complete en el ultimo paso se espera (Promise.allSettled)
+// a que TODOS los guardados en segundo plano hayan terminado, para que el
+// servidor vea el set completo de respuestas; si alguno realmente fallo,
+// /complete responde PREGUNTAS_INCOMPLETAS y el flujo ya sabe volver a esa
+// pregunta puntual (ver mas abajo) -- la correctitud no se sacrifica, solo
+// se deja de bloquear la UI en el camino feliz (la inmensa mayoria de los
+// casos).
+//
 // La subpregunta no puntuable de Q5 ("fuente principal") se agrupa en el
 // mismo paso que su pregunta principal en vez de contar como un paso
 // aparte, para que el contador siga siendo "n de 7" aunque el API
@@ -21,7 +34,7 @@
 // puedan desalinear).
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { completarEvaluacion, enviarRespuesta } from "@/lib/evaluacionExpres/api";
@@ -71,6 +84,20 @@ export default function CuestionarioForm({ evaluacionId }: { evaluacionId: strin
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Guardia sincrona (ref, no state) contra un doble-tap sobre la MISMA
+  // pregunta mientras el guardado optimista avanza el paso -- un `useState`
+  // no sirve aca porque su actualizacion no es sincrona dentro del mismo
+  // evento de click. Se libera cuando cambia `indice` (nueva pregunta).
+  const bloqueadoRef = useRef(false);
+  useEffect(() => {
+    bloqueadoRef.current = false;
+  }, [indice]);
+
+  // Guardados en segundo plano todavia sin resolver -- se esperan todos
+  // (Promise.allSettled) antes de pedir POST .../complete en el ultimo
+  // paso, para que el servidor vea el set completo de respuestas.
+  const pendientesRef = useRef<Promise<unknown>[]>([]);
+
   useEffect(() => {
     const guardado = leerProgreso(evaluacionId);
     setProgreso(guardado);
@@ -92,9 +119,9 @@ export default function CuestionarioForm({ evaluacionId }: { evaluacionId: strin
     return <EstadoCarga />;
   }
 
-  // TS no propaga el narrowing de `paso` (ya garantizado no-undefined
-  // por los guards de arriba) hacia las funciones anidadas de abajo --
-  // este alias const si conserva el tipo estrecho dentro de sus cierres.
+  // TS no propaga el narrowing de `paso` (ya garantizado no-undefined por
+  // los guards de arriba) hacia las funciones anidadas de abajo -- este
+  // alias const si conserva el tipo estrecho dentro de sus cierres.
   const pasoActual = paso;
 
   const respuestas = progreso.respuestas;
@@ -107,6 +134,11 @@ export default function CuestionarioForm({ evaluacionId }: { evaluacionId: strin
       return;
     }
     setEnviando(true);
+    // Espera a que todo guardado en segundo plano haya terminado (exito o
+    // error) antes de pedir el calculo -- sin esto, la ultima respuesta
+    // podria seguir en vuelo cuando el servidor ya esta armando el
+    // diagnostico.
+    await Promise.allSettled(pendientesRef.current);
     const resultado = await completarEvaluacion(evaluacionId);
     setEnviando(false);
     if (!resultado.ok) {
@@ -117,7 +149,7 @@ export default function CuestionarioForm({ evaluacionId }: { evaluacionId: strin
         );
         if (indiceFaltante >= 0) {
           setIndice(indiceFaltante);
-          setError("Faltan respuestas antes de continuar. Revisa esta pregunta.");
+          setError("Una respuesta no llegó a guardarse. Vuelve a seleccionarla para continuar.");
           return;
         }
       }
@@ -127,48 +159,56 @@ export default function CuestionarioForm({ evaluacionId }: { evaluacionId: strin
     router.push(`/evaluacion/${evaluacionId}/resultado`);
   }
 
-  async function elegirOpcionPrincipal(valor: string) {
-    if (enviando) return;
+  function elegirOpcionPrincipal(valor: string) {
+    if (bloqueadoRef.current) return;
+    bloqueadoRef.current = true;
     setError(null);
-    setEnviando(true);
-    const resultado = await enviarRespuesta(evaluacionId, {
-      codigoPregunta: pasoActual.principal.codigo,
-      opcionValor: valor,
-    });
-    setEnviando(false);
-    if (!resultado.ok) {
-      setError(mensajeError(resultado.error));
-      return;
-    }
+
+    // Optimista: guarda local y avanza de inmediato, sin esperar la red.
     guardarRespuestaLocal(evaluacionId, pasoActual.principal.codigo, { opcionValor: valor });
     setProgreso((anterior) =>
       anterior
         ? { ...anterior, respuestas: { ...anterior.respuestas, [pasoActual.principal.codigo]: { opcionValor: valor } } }
         : anterior,
     );
+
+    const guardado = enviarRespuesta(evaluacionId, { codigoPregunta: pasoActual.principal.codigo, opcionValor: valor }).then(
+      (resultado) => {
+        if (!resultado.ok) {
+          setError(mensajeError(resultado.error));
+        }
+      },
+    );
+    pendientesRef.current.push(guardado);
+
     if (!pasoActual.sub) {
-      await avanzar();
+      void avanzar();
     }
   }
 
-  async function elegirOpcionSub(opcion: OpcionPreguntaPublica) {
+  function elegirOpcionSub(opcion: OpcionPreguntaPublica) {
     const sub = pasoActual.sub;
-    if (enviando || !sub) return;
+    if (bloqueadoRef.current || !sub) return;
+    bloqueadoRef.current = true;
     setError(null);
-    setEnviando(true);
-    const resultado = await enviarRespuesta(evaluacionId, { codigoPregunta: sub.codigo, contextoLibre: opcion.texto });
-    setEnviando(false);
-    if (!resultado.ok) {
-      setError(mensajeError(resultado.error));
-      return;
-    }
+
     guardarRespuestaLocal(evaluacionId, sub.codigo, { contextoLibre: opcion.texto });
     setProgreso((anterior) =>
       anterior
         ? { ...anterior, respuestas: { ...anterior.respuestas, [sub.codigo]: { contextoLibre: opcion.texto } } }
         : anterior,
     );
-    await avanzar();
+
+    const guardado = enviarRespuesta(evaluacionId, { codigoPregunta: sub.codigo, contextoLibre: opcion.texto }).then(
+      (resultado) => {
+        if (!resultado.ok) {
+          setError(mensajeError(resultado.error));
+        }
+      },
+    );
+    pendientesRef.current.push(guardado);
+
+    void avanzar();
   }
 
   function retroceder() {
@@ -232,7 +272,7 @@ export default function CuestionarioForm({ evaluacionId }: { evaluacionId: strin
           Atrás
         </button>
         <p className="text-right text-xs text-slate-400">
-          Esto refleja tu percepción individual, no un dato verificado.
+          {enviando ? "Calculando tu resultado..." : "Esto refleja tu percepción individual, no un dato verificado."}
         </p>
       </div>
     </main>
