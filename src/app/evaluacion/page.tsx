@@ -5,7 +5,9 @@
 // para respetar el minimalismo de UX (cada campo de mas reduce quien
 // termina). Pais queda fijo en Peru (unico pais aprobado, ver
 // MVP-DEFINITIVO.md Seccion 13 decision #5) -- el backend ya lo asume por
-// defecto si no se envia, asi que ni se muestra.
+// defecto si no se envia, asi que ni se muestra. RF18: aviso breve de
+// minimizacion junto a los campos de texto libre del contexto opcional --
+// guia, nunca bloquea el envio.
 "use client";
 
 import { useState, type FormEvent } from "react";
@@ -22,6 +24,14 @@ const TIPOS_OPERACION = [
   { valor: "otra", texto: "Otra" },
 ];
 
+const RANGOS_TAMANO = [
+  { valor: "1-10", texto: "1 a 10 personas" },
+  { valor: "11-50", texto: "11 a 50 personas" },
+  { valor: "51-200", texto: "51 a 200 personas" },
+  { valor: "201-500", texto: "201 a 500 personas" },
+  { valor: "500+", texto: "Más de 500 personas" },
+];
+
 export default function EvaluacionInicioPage() {
   const router = useRouter();
   const [productoServicio, setProductoServicio] = useState("");
@@ -30,6 +40,7 @@ export default function EvaluacionInicioPage() {
   const [sector, setSector] = useState("");
   const [subsector, setSubsector] = useState("");
   const [rolParticipante, setRolParticipante] = useState("");
+  const [rangoTamano, setRangoTamano] = useState("");
   const [mostrarContexto, setMostrarContexto] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
@@ -45,6 +56,7 @@ export default function EvaluacionInicioPage() {
       region: region || undefined,
       sector: sector || undefined,
       subsector: subsector || undefined,
+      rangoTamano: rangoTamano || undefined,
       rolParticipante: rolParticipante || undefined,
     });
 
@@ -110,6 +122,10 @@ export default function EvaluacionInicioPage() {
 
         {mostrarContexto && (
           <div className="flex flex-col gap-4 rounded border border-slate-200 p-4">
+            <p className="text-xs text-slate-400">
+              No es necesario escribir nombres reales de proveedores o clientes — si necesitas mencionar a
+              alguno, usa un alias genérico como &quot;Proveedor A&quot; o &quot;Cliente B&quot;.
+            </p>
             <label className="flex flex-col gap-1 text-sm">
               Región
               <input
@@ -146,6 +162,21 @@ export default function EvaluacionInicioPage() {
                 onChange={(e) => setRolParticipante(e.target.value)}
                 className="rounded border border-slate-300 px-3 py-2"
               />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              Tamaño de la empresa
+              <select
+                value={rangoTamano}
+                onChange={(e) => setRangoTamano(e.target.value)}
+                className="rounded border border-slate-300 bg-white px-3 py-2"
+              >
+                <option value="">Prefiero no decirlo</option>
+                {RANGOS_TAMANO.map((opcion) => (
+                  <option key={opcion.valor} value={opcion.valor}>
+                    {opcion.texto}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
         )}
