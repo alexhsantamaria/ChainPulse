@@ -1,8 +1,11 @@
 // Pagina — mapa visual de una Cadena (RF34, requirements.md Seccion
 // 14.3). Server Component: resuelve nodos/conexiones/flujos ya filtrados
-// por tenant (RNF1/RNF13) y se los pasa como props al canvas cliente --
-// mismo patron que page.tsx de ciclos/[id]/responder le pasa
-// "asignaciones" al form (PLAN-DE-TRABAJO.md, Bloque B).
+// por tenant (RNF1/RNF13) y se los pasa como props iniciales al canvas
+// cliente, que a partir de ahi administra su propio estado -- crear un
+// nodo o una conexion pasa por las rutas propias del canvas
+// (/api/cadenas/:id/nodos, /api/cadenas/:id/conexiones), nunca por esta
+// pagina (mismo patron de "Server Component solo resuelve datos
+// iniciales" que ciclos/[id]/responder le pasa "asignaciones" al form).
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/auth";
@@ -40,15 +43,7 @@ export default async function CadenaMapaPage({ params }: { params: Promise<{ id:
         </p>
       </div>
 
-      <MapaCadenaCanvas nodos={cadena.nodos} conexiones={cadena.conexiones} />
-
-      {cadena.nodos.length === 0 && (
-        <p className="text-sm text-slate-500">
-          Este mapa todavía no tiene nodos. La creación de nodos y conexiones directamente sobre
-          el mapa (RF34) llega en el siguiente paso del Bloque B — por ahora el mapa muestra lo
-          que ya exista.
-        </p>
-      )}
+      <MapaCadenaCanvas cadenaId={cadena.id} nodosIniciales={cadena.nodos} conexionesIniciales={cadena.conexiones} />
     </main>
   );
 }
