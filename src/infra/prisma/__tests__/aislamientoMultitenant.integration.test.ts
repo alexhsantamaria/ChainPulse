@@ -185,10 +185,21 @@ async function crearFixtureMapa(empresaId: string) {
     }),
   );
 
+  // resultado.nodoIds es string[] -- bajo noUncheckedIndexedAccess
+  // (tsconfig.json) indexarlo da string|undefined, pero TenantFixture
+  // exige string. El fixture de arriba siempre pide exactamente 2 nodos,
+  // asi que esto nunca deberia fallar en la practica -- el guard existe
+  // para que un cambio futuro del fixture (por ejemplo, menos nodos) de
+  // un error claro en vez de un undefined silencioso mas adelante.
+  const [nodoOrigenId, nodoDestinoId] = resultado.nodoIds;
+  if (!nodoOrigenId || !nodoDestinoId) {
+    throw new Error("crearFixtureMapa: crearCadenaCompleta() no devolvio los 2 nodoIds esperados");
+  }
+
   return {
     cadenaId: resultado.cadenaId,
-    nodoOrigenId: resultado.nodoIds[0],
-    nodoDestinoId: resultado.nodoIds[1],
+    nodoOrigenId,
+    nodoDestinoId,
     conexionCadenaId: conexionCadena.id as string,
     hallazgoCadenaId: hallazgoCadena.id as string,
   };
