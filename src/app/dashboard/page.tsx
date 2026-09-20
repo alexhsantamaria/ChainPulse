@@ -63,6 +63,15 @@ export default async function DashboardPage() {
             Abrir un ciclo, responder el cuestionario o ver los resultados calculados (RF5-RF7) →
           </p>
         </Link>
+        <Link
+          href="/dashboard/cadenas"
+          className="rounded border border-slate-200 p-4 hover:border-slate-400 sm:col-span-2"
+        >
+          <p className="text-sm text-slate-500">Cadenas (mapa)</p>
+          <p className="mt-2 text-sm text-slate-600">
+            Declarar una cadena y ver su mapa de nodos y conexiones (RF27-RF29) →
+          </p>
+        </Link>
         {session.user.rol === "ADMINISTRADOR" && (
           <Link
             href="/dashboard/metricas"

@@ -27,6 +27,7 @@
     "@prisma/adapter-pg": "^6.19.3",
     "@prisma/client": "^6.5.0",
     "@sentry/nextjs": "^10.75.0",
+    "@xyflow/react": "^12.11.6",
     "jose": "^6.2.12",
     "next": "^15.5.0",
     "next-auth": "^5.0.0-beta.32",
