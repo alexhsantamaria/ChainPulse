@@ -177,6 +177,47 @@ enum MetodoRetiro {
   SOLICITUD_SOPORTE
 }
 
+// Incremento 3 (Mapa y profundidad, requirements.md Seccion 14) --
+// catalogo de Nodo, mas amplio que Eslabon: puede ser tambien una persona
+// decisora o un sistema, no solo un area/proceso (Seccion 5 de
+// MVP-DEFINITIVO.md).
+enum TipoNodo {
+  ORGANIZACION
+  AREA
+  INSTALACION
+  PROCESO
+  PERSONA_DECISORA
+  SISTEMA
+}
+
+// RF29 -- una ConexionCadena soporta multiples flujos simultaneos, cada
+// uno tipificado con este enum (V2 Seccion 9.1).
+enum TipoFlujoV2 {
+  PRODUCTO_SERVICIO
+  INFORMACION
+  DINERO
+  DECISION
+  DEVOLUCION
+}
+
+// RF38 -- las seis dimensiones de comparacion multi-rol de V2 Seccion 10.
+enum DimensionComparacionCadena {
+  PRIORIDAD_ELEGIDA
+  CONOCIMIENTO_ENTRADAS_SALIDAS
+  MOMENTO_INFORMACION
+  FUENTE_DATOS
+  NODO_CRITICO
+  ALTERNATIVA_DISPONIBLE
+}
+
+// RF38 -- los 4 estados posibles del resultado de una comparacion.
+enum ResultadoComparacion {
+  ACUERDO
+  ACUERDO_PARCIAL
+  DIFERENCIA
+  SIN_RESPUESTA_SUFICIENTE
+}
+
 // RF1 — tenant.
 model Empresa {
   id        String   @id @default(cuid())
@@ -189,6 +230,10 @@ model Empresa {
   ciclos     CicloPulso[]
   conexiones Conexion[]
   consentimientosCuenta ConsentimientoCuenta[]
+  cadenas Cadena[]
+  nodos Nodo[]
+  conexionesCadena ConexionCadena[]
+  hallazgosCadena HallazgoCadena[]
 
   @@map("empresas")
 }
@@ -253,6 +298,8 @@ model Eslabon {
   conexionesOrigen  Conexion[] @relation("conexion_origen")
   conexionesDestino Conexion[] @relation("conexion_destino")
   responsables      Usuario[]
+  // Incremento 3 (RF28) -- puente opcional desde Nodo, sin fusion conceptual.
+  nodosCadena       Nodo[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -878,4 +925,171 @@ model HallazgoExpresTraza {
   createdAt DateTime @default(now())
 
   @@map("hallazgos_expres_traza")
+}
+
+// Incremento 3 -- Mapa y profundidad (requirements.md Seccion 14,
+// RF27-RF39; MVP-DEFINITIVO.md Seccion 6.2). Cadena/Nodo/ConexionCadena/
+// Flujo son entidades NUEVAS Y ADITIVAS (Seccion 5 de MVP-DEFINITIVO.md)
+// -- no reemplazan Empresa/Eslabon/Conexion del flujo de cuenta completa
+// v1, que sigue operando sin cambios. Tablas tenant-scoped con empresaId
+// propio denormalizado (mismo criterio que Eslabon/Conexion) -- ver
+// PATRONES.md Seccion 5: cada una entra en TENANT_SCOPED_MODELS
+// (tenantClient.ts) y lleva su propia politica RLS, en la MISMA
+// migracion que las crea.
+
+// RF27 -- alcance de un producto/servicio y un periodo concretos
+// (principio 2, Seccion 2 de requirements.md). Nunca "la empresa en general".
+model Cadena {
+  id        String  @id @default(cuid())
+  empresaId String
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  nombre           String
+  productoServicio String
+  periodoInicio    DateTime
+  periodoFin       DateTime
+  tipoOperacion    String // manufactura|distribucion|comercio|servicios|otra
+
+  nodos      Nodo[]
+  conexiones ConexionCadena[]
+  hallazgos  HallazgoCadena[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([empresaId])
+  @@map("cadenas")
+}
+
+// RF28 -- nodo del mapa: catalogo mas amplio que Eslabon (TipoNodo). El
+// puente opcional a Eslabon (eslabonRefId) NUNCA fuerza fusion de datos
+// ni migracion historica (Seccion 14.0 de requirements.md).
+model Nodo {
+  id        String  @id @default(cuid())
+  empresaId String
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cadenaId  String
+  cadena    Cadena  @relation(fields: [cadenaId], references: [id], onDelete: Cascade)
+
+  nombre String
+  tipo   TipoNodo
+
+  // RF28/Seccion 14.0 -- puente opcional, sin fusion conceptual con Eslabon.
+  eslabonRefId String?
+  eslabonRef   Eslabon? @relation(fields: [eslabonRefId], references: [id], onDelete: SetNull)
+
+  conexionesOrigen  ConexionCadena[] @relation("conexion_cadena_origen")
+  conexionesDestino ConexionCadena[] @relation("conexion_cadena_destino")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([empresaId])
+  @@index([cadenaId])
+  @@map("nodos")
+}
+
+// RF29-RF33 -- relacion dirigida entre dos Nodo de la MISMA Cadena.
+// Entidad nueva y distinta de la Conexion ya construida (RF2/RF3, flujo
+// de cuenta completa v1) -- no la extiende ni la reemplaza (Seccion 14.0).
+model ConexionCadena {
+  id        String  @id @default(cuid())
+  empresaId String
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cadenaId  String
+  cadena    Cadena  @relation(fields: [cadenaId], references: [id], onDelete: Cascade)
+
+  origenNodoId  String
+  origenNodo    Nodo @relation("conexion_cadena_origen", fields: [origenNodoId], references: [id])
+  destinoNodoId String
+  destinoNodo   Nodo @relation("conexion_cadena_destino", fields: [destinoNodoId], references: [id])
+
+  flujos    FlujoConexionCadena[]
+  hallazgos HallazgoCadena[]
+
+  // RF30 -- requerimiento recibido, cada indicador independiente de si
+  // aplica a esta conexion (nunca combinados en un unico indicador).
+  requerimientoCantidad       Boolean @default(false)
+  requerimientoFecha          Boolean @default(false)
+  requerimientoEspecificacion Boolean @default(false)
+  requerimientoAprobacion     Boolean @default(false)
+  requerimientoPago           Boolean @default(false)
+
+  // RF30 -- coincidencia con lo requerido; null = "no se sabe", nunca un
+  // tercer valor booleano forzado.
+  coincidePrioridad Boolean?
+  coincideCantidad  Boolean?
+  coincideFecha     Boolean?
+
+  // RF31 -- misma escala categorica Corto/Medio/Largo ya definida en RF3.
+  oportunidadInformacion DuracionCategorica?
+  responsableDecision    String?
+
+  // RF32 -- los mismos cinco campos de criticidad que ya exige RF3 para
+  // una Conexion (impactoFalla/tieneAlternativa/tiempoTolerable/
+  // tiempoRecuperacion), mas "alternativaProbada", que RF32 agrega y RF3
+  // no tiene. "impactoFalla" reutiliza NivelImpacto: misma pregunta ("que
+  // tan severo es el impacto si esto falla"), solo cambia el nombre del
+  // campo por contexto (PATRONES.md Seccion 6).
+  impactoFalla       NivelImpacto?
+  tieneAlternativa   Boolean?
+  alternativaProbada Boolean?
+  tiempoTolerable    DuracionCategorica?
+  tiempoRecuperacion DuracionCategorica?
+
+  // RF33 -- reutiliza EstadoEvidencia (RF22/Incremento 2), NUNCA
+  // EstadoDato (responde una pregunta distinta, ver PATRONES.md Seccion 6).
+  estadoEvidencia EstadoEvidencia @default(DECLARADO)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([origenNodoId, destinoNodoId])
+  @@index([empresaId])
+  @@index([cadenaId])
+  @@map("conexiones_cadena")
+}
+
+// RF29 -- tabla hija SIN empresaId propio (mismo patron que
+// RespuestaCruda, PATRONES.md): una ConexionCadena soporta multiples
+// flujos simultaneos, cada uno una fila propia en vez de un array repetido.
+model FlujoConexionCadena {
+  id               String         @id @default(cuid())
+  conexionCadenaId String
+  conexionCadena   ConexionCadena @relation(fields: [conexionCadenaId], references: [id], onDelete: Cascade)
+  tipo             TipoFlujoV2
+
+  createdAt DateTime @default(now())
+
+  @@unique([conexionCadenaId, tipo])
+  @@map("flujos_conexion_cadena")
+}
+
+// RF38/RF39 -- resultado de una comparacion multi-rol. Una diferencia se
+// registra como hallazgo, nunca como culpa ni determinacion automatica de
+// quien tiene razon (Seccion 14.5). "contextoSnapshot" sigue el patron de
+// snapshot-JSON de PATRONES.md Seccion 1: solo variables no
+// identificables, nunca un id de respuesta individual.
+model HallazgoCadena {
+  id        String  @id @default(cuid())
+  empresaId String
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cadenaId  String
+  cadena    Cadena  @relation(fields: [cadenaId], references: [id], onDelete: Cascade)
+
+  // Opcional: una comparacion puede ser de cadena completa (p. ej. "nodo
+  // critico") o de una conexion especifica (p. ej. "prioridad elegida").
+  conexionCadenaId String?
+  conexionCadena   ConexionCadena? @relation(fields: [conexionCadenaId], references: [id], onDelete: SetNull)
+
+  dimension DimensionComparacionCadena
+  resultado ResultadoComparacion
+
+  contextoSnapshot Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([empresaId])
+  @@index([cadenaId])
+  @@map("hallazgos_cadena")
 }

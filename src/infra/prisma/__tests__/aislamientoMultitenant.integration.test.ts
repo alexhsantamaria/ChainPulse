@@ -2,8 +2,9 @@
 // punta contra la base Neon real, con dos tenants sinteticos de forma
 // realista (shape de las dos empresas piloto: usuario administrador,
 // eslabones, una conexion completa, un ciclo cerrado con respuesta y
-// resultados). Verifica las DOS capas independientes que exige
-// ADR-0001 ("cinturon y tirantes"):
+// resultados, y — desde el Incremento 3 — una Cadena con sus Nodos,
+// ConexionCadena/Flujos y un HallazgoCadena). Verifica las DOS capas
+// independientes que exige ADR-0001 ("cinturon y tirantes"):
 //   1. tenantClient() (src/infra/prisma/tenantClient.ts) -- filtro de
 //      tenant a nivel de aplicacion.
 //   2. RLS de Postgres (prisma/rls.sql) -- incluso si el codigo de
@@ -27,6 +28,7 @@ import { prisma } from "../client";
 import { tenantClient } from "../tenantClient";
 import { hashPassword } from "@/infra/auth/password";
 import { RULE_VERSION } from "@/engine/constantes";
+import { crearCadenaCompleta } from "../../mapa/crearCadenaCompleta";
 
 // Neon "duerme" la base cuando esta inactiva un rato -- la primera
 // conexion de la corrida puede tardar bastante mas que el default de
@@ -42,6 +44,12 @@ interface TenantFixture {
   conexionId: string;
   cicloPulsoId: string;
   resultadoConexionId: string;
+  // Incremento 3 (Mapa y profundidad) -- ver crearFixtureMapa() abajo.
+  cadenaId: string;
+  nodoOrigenId: string;
+  nodoDestinoId: string;
+  conexionCadenaId: string;
+  hallazgoCadenaId: string;
 }
 
 async function crearFixtureTenant(nombreEmpresa: string): Promise<TenantFixture> {
@@ -51,7 +59,7 @@ async function crearFixtureTenant(nombreEmpresa: string): Promise<TenantFixture>
   const passwordHash = await hashPassword(`rnf1-${randomUUID()}`);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-  return prisma.$transaction(async (tx: any) => {
+  const base = await prisma.$transaction(async (tx: any) => {
     await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
 
     // El id de la empresa se elige aca, no con el @default(cuid()) del
@@ -130,6 +138,55 @@ async function crearFixtureTenant(nombreEmpresa: string): Promise<TenantFixture>
       resultadoConexionId: resultadoConexion.id as string,
     };
   }, TX_OPTIONS);
+
+  const mapa = await crearFixtureMapa(empresaId);
+
+  return { ...base, ...mapa };
+}
+
+// Incremento 3 (Mapa y profundidad) -- poblado en una transaccion aparte
+// (no anidada dentro de la de arriba: crearCadenaCompleta() abre la suya
+// propia via tenantTransaction(), y Prisma no soporta transacciones
+// interactivas anidadas). Dogfooding deliberado: usar la propia funcion
+// que se quiere probar aislada, en vez de crear la Cadena/Nodo a mano,
+// ejercita tambien su camino feliz como efecto colateral de este fixture.
+async function crearFixtureMapa(empresaId: string) {
+  const resultado = await crearCadenaCompleta(empresaId, {
+    nombre: "Cadena de prueba (RNF1)",
+    productoServicio: "Producto de prueba (RNF1)",
+    periodoInicio: new Date("2026-01-01"),
+    periodoFin: new Date("2026-03-31"),
+    tipoOperacion: "manufactura",
+    nodos: [
+      { nombre: "Nodo origen (RNF1)", tipo: "AREA" },
+      { nombre: "Nodo destino (RNF1)", tipo: "AREA" },
+    ],
+    conexiones: [{ origenIndex: 0, destinoIndex: 1, flujos: ["INFORMACION"] }],
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+  const conexionCadena = await bajoTenant(empresaId, (tx: any) =>
+    tx.conexionCadena.findFirstOrThrow({ where: { cadenaId: resultado.cadenaId } }),
+  );
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+  const hallazgoCadena = await bajoTenant(empresaId, (tx: any) =>
+    tx.hallazgoCadena.create({
+      data: {
+        cadenaId: resultado.cadenaId,
+        dimension: "NODO_CRITICO",
+        resultado: "DIFERENCIA",
+      },
+    }),
+  );
+
+  return {
+    cadenaId: resultado.cadenaId,
+    nodoOrigenId: resultado.nodoIds[0],
+    nodoDestinoId: resultado.nodoIds[1],
+    conexionCadenaId: conexionCadena.id as string,
+    hallazgoCadenaId: hallazgoCadena.id as string,
+  };
 }
 
 async function borrarFixtureTenant(empresaId: string): Promise<void> {
@@ -146,11 +203,22 @@ async function borrarFixtureTenant(empresaId: string): Promise<void> {
     // que Postgres resuelve los dos caminos de cascade. RLS ya acota este
     // delete al tenant activo, sin necesidad de un where explicito.
     await tx.respuestaCruda.deleteMany({});
+    // Mismo hallazgo, misma causa, tabla nueva del Incremento 3:
+    // conexiones_cadena -> nodos es ON DELETE RESTRICT (migracion
+    // 20260920040000), pero tanto "nodos" como "conexiones_cadena"
+    // cascadean de forma independiente desde "empresas" (cada una tiene
+    // su propio empresaId). Si Postgres intentara borrar nodos antes que
+    // conexiones_cadena dentro del mismo cascade de "borrar Empresa", la
+    // restriccion bloquearia el borrado -- se borra a mano primero, igual
+    // que respuestaCruda arriba. flujos_conexion_cadena y
+    // hallazgos_cadena no necesitan borrado manual: cascadean sin
+    // RESTRICT de por medio (CASCADE y SET NULL respectivamente).
+    await tx.conexionCadena.deleteMany({});
     await tx.empresa.delete({ where: { id: empresaId } });
   }, TX_OPTIONS);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mismo criterio que tenantTransaction.ts: tipos exactos pendientes de `prisma generate` con red real.
 async function bajoTenant(empresaId: string, fn: (tx: any) => Promise<any>): Promise<any> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
   return prisma.$transaction(async (tx: any) => {
@@ -223,6 +291,42 @@ describe("RNF1 — aislamiento multi-tenant (integración contra Neon real)", ()
       expect(ids).toContain(tenantA.cicloPulsoId);
       expect(ids).not.toContain(tenantB.cicloPulsoId);
     });
+
+    it("findMany de Cadena bajo el tenant A nunca incluye la cadena del tenant B", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const cadenas = await (tenantClient(tenantA.empresaId) as any).cadena.findMany();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const ids = cadenas.map((c: any) => c.id as string);
+      expect(ids).toContain(tenantA.cadenaId);
+      expect(ids).not.toContain(tenantB.cadenaId);
+    });
+
+    it("findMany de Nodo bajo el tenant A nunca incluye un nodo del tenant B", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const nodos = await (tenantClient(tenantA.empresaId) as any).nodo.findMany();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const ids = nodos.map((n: any) => n.id as string);
+      expect(ids).toContain(tenantA.nodoOrigenId);
+      expect(ids).not.toContain(tenantB.nodoOrigenId);
+    });
+
+    it("findMany de ConexionCadena bajo el tenant A nunca incluye una conexión del tenant B", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const conexiones = await (tenantClient(tenantA.empresaId) as any).conexionCadena.findMany();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const ids = conexiones.map((c: any) => c.id as string);
+      expect(ids).toContain(tenantA.conexionCadenaId);
+      expect(ids).not.toContain(tenantB.conexionCadenaId);
+    });
+
+    it("findMany de HallazgoCadena bajo el tenant A nunca incluye un hallazgo del tenant B", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const hallazgos = await (tenantClient(tenantA.empresaId) as any).hallazgoCadena.findMany();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const ids = hallazgos.map((h: any) => h.id as string);
+      expect(ids).toContain(tenantA.hallazgoCadenaId);
+      expect(ids).not.toContain(tenantB.hallazgoCadenaId);
+    });
   });
 
   describe("capa 2 — RLS bloquea aunque el código de aplicación se olvide del filtro", () => {
@@ -265,6 +369,38 @@ describe("RNF1 — aislamiento multi-tenant (integración contra Neon real)", ()
         tx.resultadoCiclo.findUnique({ where: { cicloPulsoId: tenantB.cicloPulsoId } }),
       );
       expect(resultado).toBeNull();
+    });
+
+    it("pedir explícitamente el id de un Nodo de otro tenant devuelve null bajo RLS", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const nodo = await bajoTenant(tenantA.empresaId, (tx: any) =>
+        tx.nodo.findUnique({ where: { id: tenantB.nodoOrigenId } }),
+      );
+      expect(nodo).toBeNull();
+    });
+
+    it("pedir explícitamente el id de una ConexionCadena de otro tenant devuelve null bajo RLS", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const conexionCadena = await bajoTenant(tenantA.empresaId, (tx: any) =>
+        tx.conexionCadena.findUnique({ where: { id: tenantB.conexionCadenaId } }),
+      );
+      expect(conexionCadena).toBeNull();
+    });
+
+    it("FlujoConexionCadena (sin empresaId propio) respeta el aislamiento vía la ConexionCadena padre", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const flujos = await bajoTenant(tenantA.empresaId, (tx: any) =>
+        tx.flujoConexionCadena.findMany({ where: { conexionCadenaId: tenantB.conexionCadenaId } }),
+      );
+      expect(flujos).toHaveLength(0);
+    });
+
+    it("HallazgoCadena de otro tenant no es visible bajo RLS", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const hallazgo = await bajoTenant(tenantA.empresaId, (tx: any) =>
+        tx.hallazgoCadena.findUnique({ where: { id: tenantB.hallazgoCadenaId } }),
+      );
+      expect(hallazgo).toBeNull();
     });
 
     it("sin ningún tenant fijado, RLS falla cerrado: no devuelve ninguna fila de ningún tenant", async () => {

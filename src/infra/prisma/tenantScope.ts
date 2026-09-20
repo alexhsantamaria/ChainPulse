@@ -37,6 +37,14 @@
 // nueva desde el Incremento 1 (Seccion 18.2.A) — toda tabla nueva con
 // empresaId propio se agrega aqui en la misma migracion que la crea,
 // nunca despues (regla de docs/PATRONES.md, Seccion 18.1.C).
+// Incremento 3 (Mapa y profundidad, requirements.md Seccion 14) --
+// Cadena/Nodo/ConexionCadena/HallazgoCadena tienen empresaId propio
+// denormalizado (mismo criterio que Eslabon/Conexion/ConsentimientoCuenta,
+// PATRONES.md Seccion 5) y entran aqui en la misma migracion que las crea
+// (20260920040000_incremento3_mapa_bloque_a). FlujoConexionCadena NO entra
+// -- es una tabla hija sin empresaId propio, mismo patron que
+// RespuestaCruda: se protege via el filtro ya aplicado a su padre
+// (ConexionCadena) mas la politica RLS por subconsulta de la migracion.
 export const TENANT_SCOPED_MODELS = new Set([
   "Empresa",
   "Usuario",
@@ -44,6 +52,10 @@ export const TENANT_SCOPED_MODELS = new Set([
   "Conexion",
   "CicloPulso",
   "ConsentimientoCuenta",
+  "Cadena",
+  "Nodo",
+  "ConexionCadena",
+  "HallazgoCadena",
 ]);
 
 export function uncapitalize(model: string): string {
