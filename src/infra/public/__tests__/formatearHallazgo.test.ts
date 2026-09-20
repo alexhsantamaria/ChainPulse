@@ -9,7 +9,7 @@ const HALLAZGO = {
   enunciado: "Compras, ventas y logistica concilian datos manualmente.",
   estadoEvidencia: "DECLARADO" as const,
   coberturaConfianza: 0.5,
-  evidenciaFaltante: "falta A | falta B",
+  evidenciaFaltante: ["falta A", "falta B"],
   siguienteVerificacion: "Confirmar con el area de TI que fuente es la de referencia.",
 };
 
@@ -33,8 +33,8 @@ describe("formatearHallazgoDetalle", () => {
     expect(detalle.nextCheck).toBe(HALLAZGO.siguienteVerificacion);
   });
 
-  it("missingEvidence es un array vacio cuando evidenciaFaltante es null", () => {
-    const detalle = formatearHallazgoDetalle({ ...HALLAZGO, evidenciaFaltante: null });
+  it("missingEvidence es un array vacio cuando evidenciaFaltante es un array vacio", () => {
+    const detalle = formatearHallazgoDetalle({ ...HALLAZGO, evidenciaFaltante: [] });
     expect(detalle.missingEvidence).toEqual([]);
   });
 

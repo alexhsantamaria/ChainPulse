@@ -16,7 +16,7 @@ function hallazgo(id: string, dimension: DimensionDiagnosticoV2, estadoCategoria
     enunciado: `enunciado-${id}`,
     estadoEvidencia: "DECLARADO",
     coberturaConfianza: 1,
-    evidenciaFaltante: null,
+    evidenciaFaltante: [],
     siguienteVerificacion: null,
     ruleVersion: "v2-preliminary",
   };
@@ -61,13 +61,13 @@ describe("ordenarHallazgosPersistidos", () => {
     expect(new Set(ordenado.map((h) => h.id))).toEqual(new Set(["h-a", "h-c"]));
   });
 
-  it("reconstruye missingEvidence dividiendo evidenciaFaltante por ' | ' solo para el calculo interno, sin mutar el hallazgo original", () => {
+  it("conserva el array evidenciaFaltante del hallazgo original sin reconstruirlo", () => {
     const hallazgos = [
       hallazgo("h-1", "EVIDENCIA", "incompleta"),
-      { ...hallazgo("h-2", "RESILIENCIA", "inexistente"), evidenciaFaltante: "falta A | falta B" },
+      { ...hallazgo("h-2", "RESILIENCIA", "inexistente"), evidenciaFaltante: ["falta A", "falta B"] },
     ];
     const ordenado = ordenarHallazgosPersistidos(hallazgos, 0);
     const h2 = ordenado.find((h) => h.id === "h-2");
-    expect(h2?.evidenciaFaltante).toBe("falta A | falta B"); // se conserva el string original, sin dividir
+    expect(h2?.evidenciaFaltante).toEqual(["falta A", "falta B"]); // se conserva el array original
   });
 });

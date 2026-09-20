@@ -3,12 +3,11 @@
 // esto corre UNA sola vez, desde POST .../complete -- nunca se vuelve a
 // llamar para la misma evaluacion, ver la ruta).
 //
-// Desajuste conocido de tipos (documentado en el Proyecto,
-// chainpulse/pendientes-tecnicos-incremento2.md, decision confirmada por
-// Alex 2026-09-18): HallazgoExpres.evidenciaFaltante es String? en el
-// schema, pero DiagnosticFinding.missingEvidence es string[]. Workaround
-// sin migracion: se unen con " | "; cadena vacia -> null. Pendiente real:
-// migrar el campo a String[] en Windows y quitar este join.
+// HallazgoExpres.evidenciaFaltante es String[] (migrado 2026-09-20, ver
+// prisma/migrations/20260920000000_evidencia_faltante_array/) -- coincide
+// 1:1 con DiagnosticFinding.missingEvidence, sin workaround de join/split
+// (el que existia antes, documentado en el Proyecto,
+// chainpulse/pendientes-tecnicos-incremento2.md, quedo resuelto).
 import type { Prisma } from "@prisma/client";
 import type { DiagnosticFinding } from "@/domain/types";
 
@@ -58,7 +57,7 @@ export async function persistirHallazgos(
         enunciado: finding.statement,
         estadoEvidencia: finding.evidenceState,
         coberturaConfianza: finding.confidenceCoverage,
-        evidenciaFaltante: finding.missingEvidence.length > 0 ? finding.missingEvidence.join(" | ") : null,
+        evidenciaFaltante: finding.missingEvidence,
         siguienteVerificacion: finding.nextCheck,
         ruleVersion: finding.ruleVersion,
         contextoSnapshot: construirContextoSnapshot(finding, contexto) as unknown as Prisma.InputJsonValue,

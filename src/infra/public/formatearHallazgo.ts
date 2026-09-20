@@ -10,7 +10,7 @@ interface HallazgoParaFormatear {
   enunciado: string;
   estadoEvidencia: EstadoEvidenciaV2;
   coberturaConfianza: number;
-  evidenciaFaltante: string | null;
+  evidenciaFaltante: string[];
   siguienteVerificacion: string | null;
 }
 
@@ -36,7 +36,7 @@ export function formatearHallazgoDetalle(h: HallazgoParaFormatear): HallazgoDeta
     ...formatearHallazgoMacro(h),
     evidenceState: h.estadoEvidencia,
     confidenceCoverage: h.coberturaConfianza,
-    missingEvidence: h.evidenciaFaltante ? h.evidenciaFaltante.split(" | ") : [],
+    missingEvidence: h.evidenciaFaltante,
     nextCheck: h.siguienteVerificacion,
   };
 }

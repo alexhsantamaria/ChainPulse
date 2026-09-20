@@ -14,7 +14,7 @@ export interface HallazgoPersistidoMinimo {
   enunciado: string;
   estadoEvidencia: EstadoEvidenciaV2;
   coberturaConfianza: number;
-  evidenciaFaltante: string | null;
+  evidenciaFaltante: string[];
   siguienteVerificacion: string | null;
   ruleVersion: string;
 }
@@ -30,7 +30,7 @@ export function ordenarHallazgosPersistidos<T extends HallazgoPersistidoMinimo>(
     sourceQuestionIds: [],
     evidenceState: h.estadoEvidencia,
     confidenceCoverage: h.coberturaConfianza,
-    missingEvidence: h.evidenciaFaltante ? h.evidenciaFaltante.split(" | ") : [],
+    missingEvidence: h.evidenciaFaltante,
     nextCheck: h.siguienteVerificacion ?? "",
     ruleVersion: h.ruleVersion,
   }));

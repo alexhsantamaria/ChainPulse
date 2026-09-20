@@ -846,7 +846,7 @@ model HallazgoExpres {
   enunciado             String
   estadoEvidencia       EstadoEvidencia
   coberturaConfianza    Float
-  evidenciaFaltante     String?
+  evidenciaFaltante     String[]
   siguienteVerificacion String?
   ruleVersion           String // "v2-preliminary"
 
