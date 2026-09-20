@@ -28,8 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Llamar al endpoint
+      - name: Llamar al endpoint (DIAGNOSTICO TEMPORAL -- revertir tras usar)
         run: |
-          curl -sf -X GET \
+          curl -s -o response.json -w "HTTP_STATUS:%{http_code}\n" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "${{ secrets.APP_BASE_URL }}/api/internal/jobs/run"
+          echo "--- cuerpo de la respuesta ---"
+          cat response.json
