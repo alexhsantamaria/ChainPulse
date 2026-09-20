@@ -173,6 +173,11 @@ async function crearFixtureMapa(empresaId: string) {
   const hallazgoCadena = await bajoTenant(empresaId, (tx: any) =>
     tx.hallazgoCadena.create({
       data: {
+        // A diferencia de crearCadenaCompleta() (tenantTransaction(), con
+        // inyeccion automatica), este create pasa por el tx crudo de
+        // bajoTenant() -- empresaId hay que pasarlo a mano, HallazgoCadena
+        // SI tiene empresaId propio y esta en TENANT_SCOPED_MODELS.
+        empresaId,
         cadenaId: resultado.cadenaId,
         dimension: "NODO_CRITICO",
         resultado: "DIFERENCIA",

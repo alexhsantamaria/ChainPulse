@@ -32,6 +32,24 @@ import { afterEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../../prisma/client";
 import { tenantClient } from "../../prisma/tenantClient";
+
+const TX_OPTIONS_LOCAL = { maxWait: 15000, timeout: 20000 };
+
+// FlujoConexionCadena NO esta en TENANT_SCOPED_MODELS (tabla hija sin
+// empresaId propio, mismo patron que RespuestaCruda) -- tenantClient()
+// la deja pasar SIN abrir transaccion ni fijar app.tenant_id, así que
+// consultarla vía tenantClient() corre sin tenant fijado y la política
+// RLS por subconsulta la bloquea entera (falla cerrado). Se consulta acá
+// bajo un set_config manual, mismo patrón bajoTenant() de
+// aislamientoMultitenant.integration.test.ts.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+async function bajoTenant(empresaId: string, fn: (tx: any) => Promise<any>): Promise<any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+  return prisma.$transaction(async (tx: any) => {
+    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
+    return fn(tx);
+  }, TX_OPTIONS_LOCAL);
+}
 import {
   crearCadenaCompleta,
   type CadenaEntrada,
@@ -129,10 +147,14 @@ describe("crearCadenaCompleta (integración contra Neon real)", () => {
     expect(conexion.origenNodoId).toBe(resultado.nodoIds[0]);
     expect(conexion.destinoNodoId).toBe(resultado.nodoIds[1]);
 
-    // FlujoConexionCadena no está en TENANT_SCOPED_MODELS (tabla hija sin
-    // empresaId propio, mismo patrón que RespuestaCruda) -- se consulta
-    // sin pasar por tenantClient(), filtrada solo por la FK ya conocida.
-    const flujos = await cliente.flujoConexionCadena.findMany({ where: { conexionCadenaId: conexion.id } });
+    // Ver el comentario de bajoTenant() más arriba: FlujoConexionCadena no
+    // pasa por tenantClient() (no está en TENANT_SCOPED_MODELS), así que
+    // se consulta bajo un set_config manual, filtrada por la FK ya
+    // conocida.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+    const flujos = await bajoTenant(empresaId, (tx: any) =>
+      tx.flujoConexionCadena.findMany({ where: { conexionCadenaId: conexion.id } }),
+    );
     expect(flujos).toHaveLength(2);
   }, 30000);
 
