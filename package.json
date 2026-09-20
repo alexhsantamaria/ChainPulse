@@ -17,6 +17,7 @@
     "prisma:seed": "prisma db seed",
     "seed:cuestionario-v2": "tsx prisma/seedCuestionarioV2.ts",
     "jobs:bootstrap": "tsx scripts/bootstrapPgBoss.ts",
+    "limpiar:tenants-prueba": "tsx scripts/limpiarTenantsPrueba.ts",
     "test:coverage": "vitest run --coverage",
     "prepare": "husky",
     "postinstall": "prisma generate"
