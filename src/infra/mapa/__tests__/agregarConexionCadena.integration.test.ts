@@ -147,6 +147,40 @@ describe("agregarConexionCadenaAtomico (integración contra Neon real)", () => {
     expect(await cliente.conexionCadena.findMany({ where: { cadenaId } })).toHaveLength(0);
   }, 30000);
 
+  // Cierra la Seccion C del checklist de la revision externa 2026-09-22
+  // ("bloqueo de referencias cruzadas entre cadenas/empresas"): el caso de
+  // arriba ("otra Cadena") ya prueba el cruce dentro del MISMO tenant --
+  // este prueba el cruce entre DOS tenants distintos, el caso mas grave
+  // (RNF1/RNF13). Implicito por composicion de otras pruebas ya existentes
+  // (capa 1 de aislamientoMultitenant.integration.test.ts: un Nodo de otro
+  // tenant no se encuentra por id; mas el caso de "otra Cadena" de arriba:
+  // nodo no encontrado -> ConexionCadenaNodoInvalidoError), pero sin una
+  // prueba end-to-end propia ese cruce nunca se ejercitaba directo.
+  it("rechaza un nodo que pertenece a OTRA EMPRESA (tenant), sin crear nada", async () => {
+    const empresaId = await crearEmpresaDePrueba();
+    empresasCreadas.push(empresaId);
+    const { cadenaId, nodoIds } = await crearCadenaConDosNodos(empresaId);
+
+    const otraEmpresaId = await crearEmpresaDePrueba();
+    empresasCreadas.push(otraEmpresaId);
+    const otraEmpresa = await crearCadenaConDosNodos(otraEmpresaId);
+
+    await expect(
+      agregarConexionCadenaAtomico(empresaId, {
+        cadenaId,
+        origenNodoId: nodoIds[0],
+        // Nodo real, pero de otra EMPRESA -- ni siquiera de otra Cadena de
+        // la misma empresa (ese caso ya esta arriba).
+        destinoNodoId: otraEmpresa.nodoIds[0],
+        flujos: ["INFORMACION"],
+      }),
+    ).rejects.toBeInstanceOf(ConexionCadenaNodoInvalidoError);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+    const cliente = tenantClient(empresaId) as any;
+    expect(await cliente.conexionCadena.findMany({ where: { cadenaId } })).toHaveLength(0);
+  }, 30000);
+
   it("rechaza una segunda conexion entre el mismo par de nodos (P2002) sin dejar flujos huerfanos", async () => {
     const empresaId = await crearEmpresaDePrueba();
     empresasCreadas.push(empresaId);
