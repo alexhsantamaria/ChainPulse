@@ -4,8 +4,13 @@
    conexion de React Flow (mapa de Cadenas, RF34) eran chicos para
    arrastrar con precision. Solo hay un mapa de React Flow en el
    proyecto (src/app/dashboard/cadenas/[id]/MapaCadenaCanvas.tsx), asi
-   que no hace falta acotar el selector a una clase propia. */
+   que no hace falta acotar el selector a una clase propia. Agrandado de
+   nuevo (2026-09-23, ver tambien connectionRadius en MapaCadenaCanvas.tsx)
+   -- con 4 puntos por nodo (arriba/abajo/izquierda/derecha) agarrar el
+   de un costado con precision es mas dificil que antes, cuando solo
+   habia uno arriba y uno abajo. */
 .react-flow__handle {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
+  cursor: crosshair;
 }

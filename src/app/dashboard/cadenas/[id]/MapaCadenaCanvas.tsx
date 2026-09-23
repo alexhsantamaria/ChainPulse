@@ -365,6 +365,13 @@ export default function MapaCadenaCanvas({
           edges={aristasFlow}
           nodeTypes={TIPOS_NODO_REACT_FLOW}
           connectionMode={ConnectionMode.Loose}
+          // Default de la libreria es 20px -- muy poco para acertarle a
+          // un punto de conexion de 12px sin hacer zoom (confirmado
+          // leyendo @xyflow/system: la seleccion del handle de destino
+          // es puramente por distancia al soltar el mouse, sin ningun
+          // sesgo hacia un lado -- Alex solo lograba conectar por arriba
+          // porque ahi es donde el mouse quedaba mas cerca del punto).
+          connectionRadius={40}
           onConnect={onConnect}
           onNodeDragStop={onNodeDragStop}
           fitView
