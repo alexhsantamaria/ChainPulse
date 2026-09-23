@@ -108,7 +108,13 @@ function NodoCadenaVisual({ data }: NodeProps) {
       <Handle type="source" position={Position.Right} id="right" />
       <Handle type="source" position={Position.Bottom} id="bottom" />
       <Handle type="source" position={Position.Left} id="left" />
-      {String(data.label ?? "")}
+      {/* El nodo "default" de React Flow centra el texto solo -- al pasar a
+          un tipo de nodo custom hay que declararlo a mano. El padding
+          horizontal ademas separa el texto de los puntos de conexion
+          izquierdo/derecho: sin el, el texto queda pegado justo donde
+          viven esos dos puntos y termina "robandose" el click en vez de
+          arrastrar la conexion (bug real que reporto Alex, 2026-09-23). */}
+      <div style={{ textAlign: "center", padding: "0 8px" }}>{String(data.label ?? "")}</div>
     </>
   );
 }
