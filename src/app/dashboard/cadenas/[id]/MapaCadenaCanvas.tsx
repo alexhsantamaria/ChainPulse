@@ -22,9 +22,23 @@
 // punto pueda iniciar o recibir una conexion sin importar el tipo
 // declarado -- el usuario arrastra desde el punto que le quede mas
 // comodo segun como acomodo los nodos, nunca solo desde abajo.
+//
+// Borrar/editar una conexion existente: Alex probo conectar nodos y
+// pregunto como se borra o cambia una conexion ya creada, porque no habia
+// ninguna forma de alterar una linea ya guardada (2026-09-23). Un click
+// sobre una arista (`onEdgeClick`) abre el mismo panel de checkboxes que
+// se usa al crear una conexion nueva, precargado con los flujos actuales
+// -- "Guardar cambios" hace PATCH, "Eliminar conexion" (o la tecla Supr/
+// Backspace mientras el panel esta abierto) pide confirmacion con
+// `window.confirm` y hace DELETE. Se eligio un listener de teclado propio
+// en vez de la maquinaria nativa de seleccion de React Flow
+// (`onEdgesChange`/`edge.selected`) para no tener que sincronizar ese
+// estado contra `aristasFlow` (recalculado en cada render via useMemo) --
+// mas simple: la tecla actua sobre `conexionEditando`, que ya es la unica
+// fuente de verdad de "que conexion esta con el panel abierto".
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -291,6 +305,121 @@ export default function MapaCadenaCanvas({
     setFlujosElegidos([]);
   }
 
+  // Edicion/borrado de una conexion existente -- se abre al hacer click
+  // sobre una arista ya guardada (onEdgeClick de React Flow), distinto de
+  // `pendiente` (conexion nueva, se abre al arrastrar). Mismo panel de
+  // checkboxes que crear, precargado con los flujos actuales de la
+  // conexion clickeada.
+  const [conexionEditando, setConexionEditando] = useState<ConexionProp | null>(null);
+  const [flujosEdicion, setFlujosEdicion] = useState<TipoFlujoV2[]>([]);
+  const [cargandoEdicion, setCargandoEdicion] = useState(false);
+  const [errorEdicion, setErrorEdicion] = useState<string | null>(null);
+
+  const onEdgeClick = useCallback(
+    (_evento: unknown, arista: Edge) => {
+      const conexion = conexiones.find((c) => c.id === arista.id);
+      if (!conexion) return;
+      setErrorEdicion(null);
+      setFlujosEdicion(conexion.flujos.map((f) => f.tipo));
+      setConexionEditando(conexion);
+    },
+    [conexiones],
+  );
+
+  // Click en el fondo del canvas (no sobre un nodo/arista) cierra el panel
+  // de edicion sin guardar, mismo criterio que "Cancelar".
+  const onPaneClick = useCallback(() => {
+    setConexionEditando(null);
+    setFlujosEdicion([]);
+  }, []);
+
+  function alternarFlujoEdicion(tipo: TipoFlujoV2) {
+    setFlujosEdicion((previos) =>
+      previos.includes(tipo) ? previos.filter((t) => t !== tipo) : [...previos, tipo],
+    );
+  }
+
+  async function guardarEdicionFlujos() {
+    if (!conexionEditando || flujosEdicion.length === 0) return;
+    setErrorEdicion(null);
+    setCargandoEdicion(true);
+    const resultado = await fetchJsonSeguro(`/api/cadenas/${cadenaId}/conexiones/${conexionEditando.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ flujos: flujosEdicion }),
+    });
+    setCargandoEdicion(false);
+
+    if (!resultado.ok) {
+      setErrorEdicion(
+        resultado.error === "ERROR_RED"
+          ? "No se pudo conectar. Revisá tu conexión e intentá de nuevo."
+          : "No se pudo guardar el cambio. Intentá de nuevo.",
+      );
+      return;
+    }
+
+    const conexionId = conexionEditando.id;
+    setConexiones((previas) =>
+      previas.map((c) => (c.id === conexionId ? { ...c, flujos: flujosEdicion.map((tipo) => ({ tipo })) } : c)),
+    );
+    setConexionEditando(null);
+    setFlujosEdicion([]);
+  }
+
+  // Borrado de una conexion -- accion irreversible (RF34 extension, ver
+  // comentario de cabecera), siempre pasa por `window.confirm` antes de
+  // mandar el DELETE, ya sea desde el boton del panel o desde Supr/
+  // Backspace (listener de abajo).
+  const eliminarConexion = useCallback(
+    async (conexionId: string) => {
+      setErrorEdicion(null);
+      setCargandoEdicion(true);
+      const resultado = await fetchJsonSeguro(`/api/cadenas/${cadenaId}/conexiones/${conexionId}`, {
+        method: "DELETE",
+      });
+      setCargandoEdicion(false);
+
+      if (!resultado.ok) {
+        setErrorEdicion("No se pudo borrar la conexión. Intentá de nuevo.");
+        return;
+      }
+
+      setConexiones((previas) => previas.filter((c) => c.id !== conexionId));
+      setConexionEditando(null);
+      setFlujosEdicion([]);
+    },
+    [cadenaId],
+  );
+
+  // useCallback (no una funcion suelta) para que el useEffect de abajo
+  // pueda declararla como dependencia real -- exhaustive-deps la marcaba
+  // como referencia inestable cuando era una funcion normal.
+  const confirmarYEliminarConexion = useCallback(
+    (conexionId: string) => {
+      if (window.confirm("¿Eliminar esta conexión? Esta acción no se puede deshacer.")) {
+        void eliminarConexion(conexionId);
+      }
+    },
+    [eliminarConexion],
+  );
+
+  // Supr/Backspace borra la conexion seleccionada -- solo mientras el
+  // panel de edicion esta abierto (conexionEditando != null), para no
+  // interceptar esas teclas en ningun otro momento (ej. mientras se
+  // escribe en el input de "+ Nodo").
+  useEffect(() => {
+    if (!conexionEditando) return;
+    const conexionId = conexionEditando.id;
+    function alPresionarTecla(evento: KeyboardEvent) {
+      if (evento.key !== "Delete" && evento.key !== "Backspace") return;
+      evento.preventDefault();
+      confirmarYEliminarConexion(conexionId);
+    }
+    window.addEventListener("keydown", alPresionarTecla);
+    return () => window.removeEventListener("keydown", alPresionarTecla);
+  }, [conexionEditando, confirmarYEliminarConexion]);
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
@@ -374,6 +503,8 @@ export default function MapaCadenaCanvas({
           connectionRadius={40}
           onConnect={onConnect}
           onNodeDragStop={onNodeDragStop}
+          onEdgeClick={onEdgeClick}
+          onPaneClick={onPaneClick}
           fitView
           proOptions={{ hideAttribution: true }}
         >
@@ -418,6 +549,59 @@ export default function MapaCadenaCanvas({
               Cancelar
             </button>
           </div>
+        </div>
+      )}
+
+      {conexionEditando && (
+        <div className="flex flex-col gap-2 rounded border border-slate-200 bg-slate-50 p-3">
+          <p className="text-sm font-medium">
+            Editar conexión -- ¿qué fluye por acá? (elegí uno o más, o eliminá la conexión)
+          </p>
+          <div className="flex flex-wrap gap-3">
+            {TIPOS_FLUJO.map((tipo) => (
+              <label key={tipo} className="flex items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={flujosEdicion.includes(tipo)}
+                  onChange={() => alternarFlujoEdicion(tipo)}
+                />
+                {ETIQUETA_FLUJO[tipo]}
+              </label>
+            ))}
+          </div>
+          {errorEdicion && <p className="text-sm text-red-600">{errorEdicion}</p>}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={cargandoEdicion || flujosEdicion.length === 0}
+              onClick={guardarEdicionFlujos}
+              className="rounded bg-slate-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              {cargandoEdicion ? "Guardando..." : "Guardar cambios"}
+            </button>
+            <button
+              type="button"
+              disabled={cargandoEdicion}
+              onClick={() => confirmarYEliminarConexion(conexionEditando.id)}
+              className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700 disabled:opacity-50"
+            >
+              Eliminar conexión
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConexionEditando(null);
+                setFlujosEdicion([]);
+              }}
+              className="rounded border border-slate-300 px-3 py-1.5 text-sm"
+            >
+              Cancelar
+            </button>
+          </div>
+          <p className="text-xs text-slate-400">
+            Tip: con este panel abierto también podés presionar Supr o Backspace para eliminar la
+            conexión.
+          </p>
         </div>
       )}
     </div>
