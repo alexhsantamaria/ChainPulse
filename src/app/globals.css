@@ -1,1 +1,11 @@
 @import "tailwindcss";
+
+/* Punto D de la revision externa del 2026-09-22 -- los puntos de
+   conexion de React Flow (mapa de Cadenas, RF34) eran chicos para
+   arrastrar con precision. Solo hay un mapa de React Flow en el
+   proyecto (src/app/dashboard/cadenas/[id]/MapaCadenaCanvas.tsx), asi
+   que no hace falta acotar el selector a una clase propia. */
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+}

@@ -13,7 +13,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ReactFlow, Background, Controls, type Node, type Edge, type Connection } from "@xyflow/react";
+import { ReactFlow, Background, Controls, MarkerType, type Node, type Edge, type Connection } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { fetchJsonSeguro } from "@/infra/http/fetchJsonSeguro";
 import type { RespuestaApiBase } from "@/infra/http/fetchJsonSeguro";
@@ -99,6 +99,11 @@ function construirAristas(conexiones: ConexionProp[]): Edge[] {
     label: conexion.flujos.map((f) => ETIQUETA_FLUJO[f.tipo]).join(", "),
     labelStyle: { fontSize: 10 },
     animated: false,
+    // Punto D del documento de revision -- sin flecha no se distingue
+    // origen de destino a simple vista, sobre todo con el layout en
+    // grilla (no siempre queda claro que fila "sigue" a cual).
+    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+    style: { strokeWidth: 1.5 },
   }));
 }
 
