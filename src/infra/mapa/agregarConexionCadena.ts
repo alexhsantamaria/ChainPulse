@@ -21,6 +21,12 @@ export interface ConexionCadenaEntrada {
   // RF29 -- al menos un flujo es obligatorio, mismo criterio que
   // crearCadenaCompleta.ts.
   flujos: TipoFlujoV2[];
+  // Punto de conexion (Handle de React Flow) por el que se arrastro cada
+  // extremo -- opcional/nullable, ver el comentario de cabecera de la
+  // migracion 20260923070000_conexion_cadena_handle_lados. `undefined` se
+  // trata igual que `null` (ningun handle informado).
+  origenHandleId?: string | null;
+  destinoHandleId?: string | null;
 }
 
 export interface ConexionCadenaAgregadaResultado {
@@ -91,6 +97,8 @@ export async function agregarConexionCadenaAtomico(
           cadenaId: entrada.cadenaId,
           origenNodoId: entrada.origenNodoId,
           destinoNodoId: entrada.destinoNodoId,
+          origenHandleId: entrada.origenHandleId ?? null,
+          destinoHandleId: entrada.destinoHandleId ?? null,
         },
       });
 

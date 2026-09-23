@@ -23,6 +23,21 @@
 // declarado -- el usuario arrastra desde el punto que le quede mas
 // comodo segun como acomodo los nodos, nunca solo desde abajo.
 //
+// Por que la linea igual se dibujaba siempre arriba (2026-09-23, segundo
+// reporte de Alex despues de subir connectionRadius a 40): el arrastre
+// funcionaba, pero `construirAristas()` no guardaba por cual de los 4
+// Handle se habia conectado cada extremo -- un Edge de React Flow sin
+// `sourceHandle`/`targetHandle` explicitos usa "el primer handle
+// declarado" del nodo (confirmado leyendo `getHandle$1()` en
+// @xyflow/system), que en NodoCadenaVisual es "top" porque se declara
+// primero. La conexion en si quedaba bien guardada (origen/destino
+// correctos), solo el lado visual estaba mal. Fix real: se captura
+// `sourceHandle`/`targetHandle` de `onConnect` y se persisten en
+// ConexionCadena (`origenHandleId`/`destinoHandleId`, migracion
+// 20260923070000_conexion_cadena_handle_lados, nullable -- conexiones
+// creadas antes de este fix quedan en null y caen al viejo
+// comportamiento hasta que se recreen).
+//
 // Borrar/editar una conexion existente: Alex probo conectar nodos y
 // pregunto como se borra o cambia una conexion ya creada, porque no habia
 // ninguna forma de alterar una linea ya guardada (2026-09-23). Un click
@@ -72,6 +87,10 @@ interface ConexionProp {
   origenNodoId: string;
   destinoNodoId: string;
   flujos: { tipo: TipoFlujoV2 }[];
+  // "top"/"right"/"bottom"/"left" -- ver el comentario de cabecera sobre
+  // por que esto hace falta (React Flow, sin esto, dibuja siempre arriba).
+  origenHandleId: string | null;
+  destinoHandleId: string | null;
 }
 
 interface RespuestaNodoApi extends RespuestaApiBase {
@@ -167,6 +186,10 @@ function construirAristas(conexiones: ConexionProp[]): Edge[] {
     id: conexion.id,
     source: conexion.origenNodoId,
     target: conexion.destinoNodoId,
+    // undefined (no null) para conexiones viejas sin esto guardado -- ver
+    // el comentario de cabecera del archivo.
+    sourceHandle: conexion.origenHandleId ?? undefined,
+    targetHandle: conexion.destinoHandleId ?? undefined,
     label: conexion.flujos.map((f) => ETIQUETA_FLUJO[f.tipo]).join(", "),
     labelStyle: { fontSize: 10 },
     animated: false,
@@ -227,8 +250,16 @@ export default function MapaCadenaCanvas({
   }
 
   // Panel de flujos -- se abre cuando el usuario arrastra de un nodo a
-  // otro (onConnect de React Flow), antes de guardar nada.
-  const [pendiente, setPendiente] = useState<{ origenNodoId: string; destinoNodoId: string } | null>(null);
+  // otro (onConnect de React Flow), antes de guardar nada. Guarda tambien
+  // por cual Handle de cada nodo se arrastro (sourceHandle/targetHandle
+  // de React Flow) -- sin esto el mapa vuelve a dibujar todo arriba, ver
+  // el comentario de cabecera del archivo.
+  const [pendiente, setPendiente] = useState<{
+    origenNodoId: string;
+    destinoNodoId: string;
+    origenHandleId: string | null;
+    destinoHandleId: string | null;
+  } | null>(null);
   const [flujosElegidos, setFlujosElegidos] = useState<TipoFlujoV2[]>([]);
   const [cargandoConexion, setCargandoConexion] = useState(false);
   const [errorConexion, setErrorConexion] = useState<string | null>(null);
@@ -238,7 +269,12 @@ export default function MapaCadenaCanvas({
       if (!conexion.source || !conexion.target || conexion.source === conexion.target) return;
       setErrorConexion(null);
       setFlujosElegidos([]);
-      setPendiente({ origenNodoId: conexion.source, destinoNodoId: conexion.target });
+      setPendiente({
+        origenNodoId: conexion.source,
+        destinoNodoId: conexion.target,
+        origenHandleId: conexion.sourceHandle ?? null,
+        destinoHandleId: conexion.targetHandle ?? null,
+      });
     },
     [],
   );
@@ -277,6 +313,8 @@ export default function MapaCadenaCanvas({
         origenNodoId: pendiente.origenNodoId,
         destinoNodoId: pendiente.destinoNodoId,
         flujos: flujosElegidos,
+        origenHandleId: pendiente.origenHandleId,
+        destinoHandleId: pendiente.destinoHandleId,
       }),
     });
     setCargandoConexion(false);
@@ -299,6 +337,8 @@ export default function MapaCadenaCanvas({
         origenNodoId: pendiente.origenNodoId,
         destinoNodoId: pendiente.destinoNodoId,
         flujos: flujosElegidos.map((tipo) => ({ tipo })),
+        origenHandleId: pendiente.origenHandleId,
+        destinoHandleId: pendiente.destinoHandleId,
       },
     ]);
     setPendiente(null);

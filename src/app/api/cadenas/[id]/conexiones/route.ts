@@ -19,11 +19,18 @@ import { logError } from "@/infra/log";
 // Bloque B (ADR-0003).
 const TIPOS_FLUJO = ["PRODUCTO_SERVICIO", "INFORMACION", "DINERO", "DECISION", "DEVOLUCION"] as const;
 
+// Ids de los 4 Handle de NodoCadenaVisual (MapaCadenaCanvas.tsx) -- ver el
+// comentario de cabecera de la migracion
+// 20260923070000_conexion_cadena_handle_lados.
+const LADOS_HANDLE = ["top", "right", "bottom", "left"] as const;
+
 const conexionCadenaSchema = z
   .object({
     origenNodoId: z.string().min(1),
     destinoNodoId: z.string().min(1),
     flujos: z.array(z.enum(TIPOS_FLUJO)).min(1),
+    origenHandleId: z.enum(LADOS_HANDLE).nullish(),
+    destinoHandleId: z.enum(LADOS_HANDLE).nullish(),
   })
   .refine((datos) => datos.origenNodoId !== datos.destinoNodoId, {
     message: "origenNodoId y destinoNodoId no pueden ser el mismo nodo",
@@ -55,6 +62,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       origenNodoId: parsed.data.origenNodoId,
       destinoNodoId: parsed.data.destinoNodoId,
       flujos: parsed.data.flujos,
+      origenHandleId: parsed.data.origenHandleId,
+      destinoHandleId: parsed.data.destinoHandleId,
     });
     return NextResponse.json({ ok: true, conexionCadenaId: resultado.conexionCadenaId });
   } catch (err) {
