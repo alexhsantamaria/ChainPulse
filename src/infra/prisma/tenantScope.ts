@@ -45,6 +45,24 @@
 // -- es una tabla hija sin empresaId propio, mismo patron que
 // RespuestaCruda: se protege via el filtro ya aplicado a su padre
 // (ConexionCadena) mas la politica RLS por subconsulta de la migracion.
+// A2 (revision externa 2026-09-22) -- Neon "duerme" la base tras un rato
+// inactiva, y la primera conexion real tras ese sueño puede tardar mas
+// que el default de Prisma para arrancar una transaccion (maxWait
+// 2000ms/timeout 5000ms) -- exactamente el "Transaction API error:
+// Unable to start a transaction in the given time" que reproduce
+// dashboard/page.tsx en Windows contra Neon real (2026-09-23). Las
+// pruebas de integracion (aislamientoMultitenant.integration.test.ts,
+// agregarConexionCadena.integration.test.ts, etc.) ya venian usando este
+// mismo margen ampliado desde antes -- este archivo es la version
+// compartida para que el codigo de PRODUCCION (tenantClient.ts,
+// tenantTransaction.ts) use el mismo margen ya probado, en vez de quedar
+// en los defaults de Prisma que nunca alcanzaron para Neon real. No
+// "arregla" el cold-start de Neon (nada del lado de la app puede
+// evitarlo) -- le da a Prisma tiempo suficiente para esperarlo en vez de
+// fallar con un error al usuario en el primer request tras un rato sin
+// actividad.
+export const TX_OPTIONS_NEON = { maxWait: 15000, timeout: 20000 };
+
 export const TENANT_SCOPED_MODELS = new Set([
   "Empresa",
   "Usuario",

@@ -27,7 +27,7 @@
 // encuentre mas de una llamada en la misma funcion sea candidato a
 // revision.
 import { prisma } from "./client";
-import { TENANT_SCOPED_MODELS, injectTenantFilter } from "./tenantClient";
+import { TENANT_SCOPED_MODELS, TX_OPTIONS_NEON, injectTenantFilter } from "./tenantClient";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mismo criterio que tenantClient.ts: tipos exactos pendientes de `prisma generate` con red real.
 type ScopedTx = any;
@@ -67,7 +67,14 @@ function buildScopedTx(tx: any, empresaId: string): ScopedTx {
 export async function tenantTransaction<T>(
   empresaId: string,
   fn: (tx: ScopedTx) => Promise<T>,
-  options?: { maxWait?: number; timeout?: number },
+  // A2 (ver comentario de TX_OPTIONS_NEON en tenantScope.ts) -- default a
+  // TX_OPTIONS_NEON, no a los defaults de Prisma: ningun llamador de
+  // produccion (agregarConexionCadena.ts, crearCadenaCompleta.ts, etc.)
+  // pasaba `options` hasta ahora, asi que todos corrian con maxWait
+  // 2000ms/timeout 5000ms -- muy poco frente a un cold-start real de
+  // Neon. El parametro sigue existiendo para el caso (hoy sin uso) de que
+  // un llamador puntual necesite un margen distinto.
+  options: { maxWait?: number; timeout?: number } = TX_OPTIONS_NEON,
 ): Promise<T> {
   if (!empresaId) {
     // Mismo criterio de "fallar cerrado" que tenantClient().

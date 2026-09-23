@@ -1,7 +1,7 @@
 // Infraestructura — extension de Prisma que inyecta el filtro de tenant en cada consulta (RNF1, capa 1).
 import { Prisma } from "@prisma/client";
 import { prisma } from "./client";
-import { TENANT_SCOPED_MODELS, injectTenantFilter, uncapitalize } from "./tenantScope";
+import { TENANT_SCOPED_MODELS, TX_OPTIONS_NEON, injectTenantFilter, uncapitalize } from "./tenantScope";
 
 // RNF1, capa 1 (middleware de Prisma) — ADR-0001.
 //
@@ -22,7 +22,7 @@ import { TENANT_SCOPED_MODELS, injectTenantFilter, uncapitalize } from "./tenant
 // cargar el modulo -- ver el comentario de cabecera de tenantScope.ts.
 // Se re-exportan aqui sin cambios para no romper a quien ya las importa
 // desde este archivo (tenantTransaction.ts, etc.).
-export { TENANT_SCOPED_MODELS, injectTenantFilter, uncapitalize };
+export { TENANT_SCOPED_MODELS, TX_OPTIONS_NEON, injectTenantFilter, uncapitalize };
 
 export function tenantClient(empresaId: string) {
   if (!empresaId) {
@@ -40,6 +40,12 @@ export function tenantClient(empresaId: string) {
             return query(args);
           }
 
+          // A2 (ver comentario de TX_OPTIONS_NEON en tenantScope.ts) --
+          // sin el segundo argumento, cualquier findMany/update/etc. via
+          // tenantClient() (la ruta mas usada de toda la app) usa los
+          // defaults de Prisma y falla con "Unable to start a
+          // transaction in the given time" apenas Neon tarda en
+          // despertar.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ver nota de arriba
           return prisma.$transaction(async (tx: any) => {
             await tx.$executeRaw`SELECT set_config('app.tenant_id', ${empresaId}, true)`;
@@ -47,7 +53,7 @@ export function tenantClient(empresaId: string) {
             const scopedArgs = injectTenantFilter(model, operation, args, empresaId);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ver nota de arriba
             return (tx as any)[uncapitalize(model)][operation](scopedArgs);
-          });
+          }, TX_OPTIONS_NEON);
         },
       },
     },
