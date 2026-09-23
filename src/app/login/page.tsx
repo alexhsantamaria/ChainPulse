@@ -1,7 +1,7 @@
 // Pagina — formulario de inicio de sesion (ADR-0003, RF1/RF4).
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
@@ -12,6 +12,15 @@ export default function LoginPage() {
   const [codigoMfa, setCodigoMfa] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
+  // A3 -- ActivarMfaForm.tsx cierra la sesion y redirige aca con este
+  // parametro despues de activar MFA (para que el proximo login traiga
+  // un JWT al dia, ver el comentario de esa pagina). Se lee con
+  // window.location en vez de useSearchParams() para no forzar un
+  // Suspense boundary en esta pagina solo por un mensaje de confirmacion.
+  const [mfaActivado, setMfaActivado] = useState(false);
+  useEffect(() => {
+    setMfaActivado(new URLSearchParams(window.location.search).get("mfaActivado") === "1");
+  }, []);
 
   async function handleSubmit(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
@@ -38,6 +47,11 @@ export default function LoginPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-6 px-4">
       <h1 className="text-center text-2xl font-semibold">Iniciar sesión</h1>
+      {mfaActivado && (
+        <p className="rounded border border-green-200 bg-green-50 px-3 py-2 text-center text-sm text-green-700">
+          Verificación en dos pasos activada. Iniciá sesión de nuevo con tu código.
+        </p>
+      )}
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <label className="flex flex-col gap-1 text-sm">
           Email

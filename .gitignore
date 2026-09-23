@@ -1,6 +1,10 @@
 node_modules
 .next
+# .env y cualquier variante local/backup (.env.backup, .env.local, etc.) --
+# .env.example se desprotege explicito abajo, es el unico que se versiona.
 .env
+.env.*
+!.env.example
 *.tsbuildinfo
 next-env.d.ts
 dist

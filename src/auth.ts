@@ -71,6 +71,11 @@ async function autorizar(credentials: Partial<Record<string, unknown>> | undefin
     empresaId: usuario.empresaId,
     rol: usuario.rol,
     eslabonId: usuario.eslabonId,
+    // A3 -- viaja en el JWT para que el middleware (Edge, sin acceso a la
+    // base) pueda bloquear /dashboard mientras el administrador no haya
+    // completado la activacion de MFA, sin depender de que el cliente
+    // efectivamente siga el redirect de /registro a /activar-mfa.
+    mfaHabilitado: usuario.mfaHabilitado,
   };
 }
 

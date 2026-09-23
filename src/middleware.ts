@@ -27,6 +27,21 @@ export default auth((req) => {
     const loginUrl = new URL("/login", req.nextUrl.origin);
     return NextResponse.redirect(loginUrl);
   }
+
+  // A3 -- MFA es obligatorio para ADMINISTRADOR desde el Incremento 1
+  // (prisma/schema.prisma, comentario de Usuario.mfaHabilitado), pero
+  // hasta ahora el paso a /activar-mfa despues de /registro era solo un
+  // redirect del lado del cliente (registro/page.tsx): nada del lado del
+  // servidor impedia navegar directo a /dashboard con una cuenta que
+  // nunca completo la activacion. Se cierra aca, en la primera capa de
+  // proteccion, mismo criterio que el resto de este archivo. No aplica a
+  // RESPONSABLE (MFA no es obligatorio para ese rol) ni a la propia
+  // pagina /activar-mfa (evita el loop de redirect).
+  const { rol, mfaHabilitado } = req.auth.user;
+  if (rol === "ADMINISTRADOR" && !mfaHabilitado && req.nextUrl.pathname !== "/activar-mfa") {
+    const activarMfaUrl = new URL("/activar-mfa", req.nextUrl.origin);
+    return NextResponse.redirect(activarMfaUrl);
+  }
 });
 
 export const config = {

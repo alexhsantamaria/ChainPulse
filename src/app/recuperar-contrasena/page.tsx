@@ -7,18 +7,41 @@ export default function RecuperarContrasenaPage() {
   const [email, setEmail] = useState("");
   const [enviado, setEnviado] = useState(false);
   const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
+    setError(null);
     setCargando(true);
-    await fetch("/api/recuperar-contrasena", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
-    });
+
+    let respuesta: Response;
+    try {
+      respuesta = await fetch("/api/recuperar-contrasena", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+    } catch {
+      // Fallo de red real -- nunca hubo respuesta del servidor. Distinto
+      // del caso "cuenta inexistente" (que SI responde ok, sin enumerar
+      // cuentas): esto es un problema de conexion, se puede reintentar.
+      setCargando(false);
+      setError("No se pudo conectar. Revisá tu conexión e intentá de nuevo.");
+      return;
+    }
     setCargando(false);
-    // Siempre el mismo mensaje, exista o no la cuenta (ADR-0003, sin
-    // enumeracion) -- la respuesta del servidor tampoco lo distingue.
+
+    if (!respuesta.ok) {
+      // Error real del servidor (500, etc.) -- no mostrar el mensaje de
+      // "revisá tu correo" como si se hubiera enviado, para no ocultar un
+      // fallo real detrás del mismo texto que usa el caso "sin enumeracion".
+      setError("Hubo un problema al procesar el pedido. Intentá de nuevo en un momento.");
+      return;
+    }
+
+    // Mismo mensaje siempre que la respuesta sea 2xx, exista o no la
+    // cuenta (ADR-0003, sin enumeracion) -- la respuesta del servidor
+    // tampoco lo distingue.
     setEnviado(true);
   }
 
@@ -54,6 +77,7 @@ export default function RecuperarContrasenaPage() {
             className="rounded border border-slate-300 px-3 py-2"
           />
         </label>
+        {error && <p className="text-sm text-red-600">{error}</p>}
         <button
           type="submit"
           disabled={cargando}

@@ -52,6 +52,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const nodo = await client.nodo.create({
       data: {
+        // empresaId explicito, del lado del servidor (sesion autenticada,
+        // nunca del payload) -- injectTenantFilter() lo sobrescribe igual
+        // en runtime, pero sin pasarlo acá el tipo generado real de
+        // Prisma (Windows) exige empresaId como campo no opcional en el
+        // create -- mismo patron ya usado en conexiones/route.ts.
+        empresaId: sesion.empresaId,
         cadenaId,
         nombre: parsed.data.nombre,
         tipo: parsed.data.tipo,

@@ -30,6 +30,13 @@ export const authConfig = {
         token.empresaId = user.empresaId;
         token.rol = user.rol;
         token.eslabonId = user.eslabonId ?? null;
+        // A3 -- ver el comentario de autorizar() en auth.ts. Se fija solo
+        // en el login (igual que el resto de estos campos): activar MFA
+        // exige volver a iniciar sesion para que el JWT quede al dia (ver
+        // ActivarMfaForm.tsx), en vez de mantener un mecanismo de refresco
+        // de sesion en caliente que este proyecto no tiene en ningun otro
+        // lado.
+        token.mfaHabilitado = user.mfaHabilitado;
       }
       return token;
     },
@@ -38,6 +45,7 @@ export const authConfig = {
       session.user.empresaId = token.empresaId;
       session.user.rol = token.rol;
       session.user.eslabonId = token.eslabonId;
+      session.user.mfaHabilitado = token.mfaHabilitado;
       return session;
     },
   },

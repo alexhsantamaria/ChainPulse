@@ -96,7 +96,7 @@ npm run test:integration    # vitest run --config vitest.integration.config.ts �
 npm run dev                 # Next.js en http://localhost:3000
 ```
 
-`prisma/schema.prisma` usa una base PostgreSQL real en Neon (`DATABASE_URL` en `.env`, no versionado). Para migraciones nuevas, cambiar temporalmente `DATABASE_URL` al rol `neondb_owner` (dueño de las tablas); para desarrollo normal, usar el rol restringido `chainpulse_app` (sujeto a las políticas RLS de `prisma/rls.sql`, ya aplicadas en la base). `npm run test:integration` crea y borra sus propios dos tenants de prueba en cada corrida (nunca toca las cuentas de prueba existentes) para verificar RLS con datos reales — ver el `## Estado` de RNF1 más abajo.
+`prisma/schema.prisma` usa una base PostgreSQL real en Neon. En desarrollo normal, `DATABASE_URL` (en `.env`, no versionado) usa el rol restringido `chainpulse_app` (sujeto a las políticas RLS de `prisma/rls.sql`, ya aplicadas en la base) y nunca hace falta tocarlo a mano. Para migraciones (`prisma migrate dev`/`deploy`), Prisma usa automáticamente `directUrl` (`SEED_DATABASE_URL`, rol `neondb_owner`) en vez de `DATABASE_URL` — no hay que cambiar ninguna variable a mano para migrar (ver el comentario de `directUrl` en `prisma/schema.prisma`; cambiar `DATABASE_URL` a mano fue un error real de una sesión anterior, ver `claude/lecciones-aprendidas.md`). `npm run test:integration` crea y borra sus propios dos tenants de prueba en cada corrida (nunca toca las cuentas de prueba existentes) para verificar RLS con datos reales — ver el `## Estado` de RNF1 más abajo.
 
 ## Próximo paso
 

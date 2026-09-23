@@ -19,6 +19,7 @@ declare module "next-auth" {
       empresaId: string;
       rol: RolUsuario;
       eslabonId: string | null;
+      mfaHabilitado: boolean;
     } & DefaultSession["user"];
   }
 
@@ -26,6 +27,7 @@ declare module "next-auth" {
     empresaId: string;
     rol: RolUsuario;
     eslabonId?: string | null;
+    mfaHabilitado: boolean;
   }
 }
 
@@ -36,6 +38,7 @@ declare module "@auth/core/types" {
       empresaId: string;
       rol: RolUsuario;
       eslabonId: string | null;
+      mfaHabilitado: boolean;
     } & DefaultSession["user"];
   }
 
@@ -43,6 +46,7 @@ declare module "@auth/core/types" {
     empresaId: string;
     rol: RolUsuario;
     eslabonId?: string | null;
+    mfaHabilitado: boolean;
   }
 }
 
@@ -51,6 +55,7 @@ declare module "next-auth/jwt" {
     empresaId: string;
     rol: RolUsuario;
     eslabonId: string | null;
+    mfaHabilitado: boolean;
   }
 }
 
@@ -59,5 +64,6 @@ declare module "@auth/core/jwt" {
     empresaId: string;
     rol: RolUsuario;
     eslabonId: string | null;
+    mfaHabilitado: boolean;
   }
 }

@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { signOut } from "next-auth/react";
 
 export default function ActivarMfaForm({
   qrDataUrl,
@@ -11,7 +11,6 @@ export default function ActivarMfaForm({
   qrDataUrl: string;
   secreto: string;
 }) {
-  const router = useRouter();
   const [codigo, setCodigo] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
@@ -34,7 +33,14 @@ export default function ActivarMfaForm({
       return;
     }
 
-    router.push("/");
+    // A3 -- el JWT de la sesion actual todavia tiene mfaHabilitado=false
+    // (se fija solo al hacer login, ver auth.config.ts); si solo
+    // redirigieramos a "/", el middleware seguiria viendo el token viejo
+    // y mandaria de nuevo para aca en loop. Cerrar sesion y pedir un
+    // login nuevo es lo mas simple para que el JWT quede al dia, sin
+    // agregar un mecanismo de refresco de sesion en caliente que este
+    // proyecto no usa en ningun otro lado.
+    await signOut({ callbackUrl: "/login?mfaActivado=1" });
   }
 
   return (
