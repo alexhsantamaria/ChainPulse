@@ -19,11 +19,10 @@ export default function HomePage() {
       >
         Comenzar evaluación gratuita
       </Link>
-      <p className="text-xs text-slate-400">
-        Sin crear cuenta. Ver <code className="rounded bg-slate-100 px-1.5 py-0.5">requirements.md</code>{" "}
-        (Secciones 9-12) y <code className="rounded bg-slate-100 px-1.5 py-0.5">docs/ADR</code> para el
-        alcance aprobado.
-      </p>
+      <p className="text-xs text-slate-400">Sin crear cuenta.</p>
+      <Link href="/login" className="text-sm text-slate-500 underline">
+        ¿Ya tenés una cuenta? Iniciar sesión
+      </Link>
     </main>
   );
 }

@@ -16,7 +16,15 @@ export default async function CadenasPage() {
 
   const cadenas = await tenantClient(session.user.empresaId).cadena.findMany({
     orderBy: { createdAt: "asc" },
+    // Punto D de la revision externa del 2026-09-22: dos cadenas con el
+    // mismo nombre/producto eran indistinguibles en esta lista -- se
+    // agrega periodo, tipo de operacion y cantidad de nodos para poder
+    // diferenciarlas sin tener que abrir cada mapa.
+    include: { _count: { select: { nodos: true } } },
   });
+
+  const formatearFecha = (fecha: Date) =>
+    fecha.toLocaleDateString("es-PE", { year: "numeric", month: "short" });
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-12">
@@ -27,7 +35,7 @@ export default async function CadenasPage() {
         <h1 className="mt-2 text-2xl font-semibold">Cadenas (mapa)</h1>
         <p className="text-sm text-slate-600">
           Cada Cadena delimita un producto o servicio concreto y un periodo — dentro de ella se
-          declara el mapa de nodos y conexiones (RF27).
+          declara el mapa de nodos y conexiones.
         </p>
       </div>
 
@@ -38,7 +46,11 @@ export default async function CadenasPage() {
             <li key={cadena.id} className="flex items-center justify-between px-4 py-3">
               <div>
                 <p className="font-medium">{cadena.nombre}</p>
-                <p className="text-xs text-slate-500">{cadena.productoServicio}</p>
+                <p className="text-xs text-slate-500">
+                  {cadena.productoServicio} · {cadena.tipoOperacion} ·{" "}
+                  {formatearFecha(cadena.periodoInicio)}–{formatearFecha(cadena.periodoFin)} ·{" "}
+                  {cadena._count.nodos} {cadena._count.nodos === 1 ? "nodo" : "nodos"}
+                </p>
               </div>
               <Link
                 href={`/dashboard/cadenas/${cadena.id}`}
