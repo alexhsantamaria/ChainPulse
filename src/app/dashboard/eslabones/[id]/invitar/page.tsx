@@ -33,7 +33,7 @@ export default async function InvitarResponsablePage({
         <h1 className="mt-2 text-2xl font-semibold">Invitar responsable</h1>
         <p className="text-sm text-slate-600">
           Para el eslabón <strong>{eslabon.nombre}</strong>. Va a recibir un correo con un enlace
-          para crear su cuenta, con acceso limitado a este eslabón (RF4).
+          para crear su cuenta, con acceso limitado a este eslabón.
         </p>
       </div>
       <InvitarResponsableForm eslabonId={eslabon.id} />

@@ -60,7 +60,7 @@ export default async function DashboardPage() {
         >
           <p className="text-sm text-slate-500">Ciclos de pulso</p>
           <p className="mt-2 text-sm text-slate-600">
-            Abrir un ciclo, responder el cuestionario o ver los resultados calculados (RF5-RF7) →
+            Abrir un ciclo, responder el cuestionario o ver los resultados calculados →
           </p>
         </Link>
         <Link
@@ -69,7 +69,7 @@ export default async function DashboardPage() {
         >
           <p className="text-sm text-slate-500">Cadenas (mapa)</p>
           <p className="mt-2 text-sm text-slate-600">
-            Declarar una cadena y ver su mapa de nodos y conexiones (RF27-RF29) →
+            Declarar una cadena y ver su mapa de nodos y conexiones →
           </p>
         </Link>
         {session.user.rol === "ADMINISTRADOR" && (

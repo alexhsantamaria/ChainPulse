@@ -246,7 +246,7 @@ export default function ConexionForm({
       <p className="text-xs text-slate-500">
         Podés dejar estos datos sin confirmar y completarlos después — mientras falte alguno, la
         conexión queda marcada como incompleta y no entra en el cálculo del eslabón más débil ni
-        del índice de integración (RF3).
+        del índice de integración.
       </p>
 
       {error && <p className="text-sm text-red-600">{error}</p>}

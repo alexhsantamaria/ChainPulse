@@ -53,7 +53,7 @@ export default async function CiclosPage() {
         <h1 className="mt-2 text-2xl font-semibold">Ciclos de pulso</h1>
         <p className="text-sm text-slate-600">
           Cada ciclo envía el cuestionario a los responsables de las conexiones completas y calcula
-          salud, criticidad y riesgo reales al cerrarse (RF5-RF7).
+          salud, criticidad y riesgo reales al cerrarse.
         </p>
       </div>
 
@@ -61,7 +61,7 @@ export default async function CiclosPage() {
 
       {tendenciaIndice.length > 1 && (
         <div className="rounded border border-slate-200 p-4">
-          <p className="text-sm text-slate-500">Tendencia del índice de integración (RF16)</p>
+          <p className="text-sm text-slate-500">Tendencia del índice de integración</p>
           <p className="mt-1 text-lg font-medium">{tendenciaIndice.map((v) => v.toFixed(0)).join(" → ")}</p>
         </div>
       )}

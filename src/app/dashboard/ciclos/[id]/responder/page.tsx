@@ -39,7 +39,7 @@ export default async function ResponderCicloPage({ params }: { params: Promise<{
         </Link>
         <h1 className="mt-2 text-2xl font-semibold">Cuestionario del ciclo</h1>
         <p className="text-sm text-slate-600">
-          Para cada conexión, indicá qué tan bien está funcionando hoy (RF6). 1 = muy mal, 5 = muy bien.
+          Para cada conexión, indicá qué tan bien está funcionando hoy. 1 = muy mal, 5 = muy bien.
         </p>
       </div>
 

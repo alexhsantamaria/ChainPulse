@@ -43,7 +43,7 @@ export default async function ResultadosCicloPage({ params }: { params: Promise<
 
       {datos.resultadoCiclo && (
         <div className="rounded border border-slate-200 p-4">
-          <p className="text-sm text-slate-500">Índice de integración (RF16)</p>
+          <p className="text-sm text-slate-500">Índice de integración</p>
           <p className="text-3xl font-semibold">{datos.resultadoCiclo.indiceIntegracion.toFixed(0)}</p>
         </div>
       )}

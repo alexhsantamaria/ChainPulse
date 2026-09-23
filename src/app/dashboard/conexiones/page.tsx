@@ -29,7 +29,7 @@ export default async function ConexionesPage() {
         <h1 className="mt-2 text-2xl font-semibold">Conexiones entre eslabones</h1>
         <p className="text-sm text-slate-600">
           Cada dependencia declarada entre dos eslabones, con su grado de dependencia y sus datos
-          de criticidad (RF3).
+          de criticidad.
         </p>
       </div>
 
