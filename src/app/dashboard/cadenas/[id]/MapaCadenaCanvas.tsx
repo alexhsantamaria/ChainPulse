@@ -11,10 +11,33 @@
 // arrastro nunca (posX/posY null, todo nodo previo a esta migracion y
 // cualquier nodo recien creado) cae a un layout en grilla recalculado en
 // el cliente, mismo criterio que antes.
+//
+// Puntos de conexion en los 4 lados (NodoCadenaVisual, tipo de nodo
+// "nodoCadena"): el nodo "default" de React Flow solo trae un punto
+// arriba (target) y uno abajo (source), lo que fuerza un flujo
+// puramente vertical -- Alex probo el mapa (2026-09-23) y encontro que
+// eso no alcanza para cadenas que se arman mejor de lado a lado. Se
+// agregan 4 Handle (arriba/abajo/izquierda/derecha), todos "source", con
+// `connectionMode="loose"` en el ReactFlow padre para que cualquier
+// punto pueda iniciar o recibir una conexion sin importar el tipo
+// declarado -- el usuario arrastra desde el punto que le quede mas
+// comodo segun como acomodo los nodos, nunca solo desde abajo.
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ReactFlow, Background, Controls, MarkerType, type Node, type Edge, type Connection } from "@xyflow/react";
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  MarkerType,
+  Handle,
+  Position,
+  ConnectionMode,
+  type Node,
+  type Edge,
+  type Connection,
+  type NodeProps,
+} from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { fetchJsonSeguro } from "@/infra/http/fetchJsonSeguro";
 import type { RespuestaApiBase } from "@/infra/http/fetchJsonSeguro";
@@ -74,6 +97,24 @@ const COLUMNAS = 4;
 const ANCHO_COLUMNA = 220;
 const ALTO_FILA = 130;
 
+// Nodo con un punto de conexion en cada lado (ver comentario de cabecera).
+// Declarado fuera del componente -- un objeto nuevo en cada render de
+// MapaCadenaCanvas dispara el warning de React Flow de "nodeTypes changed"
+// y fuerza un remount innecesario de todos los nodos.
+function NodoCadenaVisual({ data }: NodeProps) {
+  return (
+    <>
+      <Handle type="source" position={Position.Top} id="top" />
+      <Handle type="source" position={Position.Right} id="right" />
+      <Handle type="source" position={Position.Bottom} id="bottom" />
+      <Handle type="source" position={Position.Left} id="left" />
+      {String(data.label ?? "")}
+    </>
+  );
+}
+
+const TIPOS_NODO_REACT_FLOW = { nodoCadena: NodoCadenaVisual };
+
 function construirNodos(nodos: NodoProp[]): Node[] {
   return nodos.map((nodo, indice) => {
     const estilo = ESTILO_TIPO[nodo.tipo];
@@ -85,6 +126,7 @@ function construirNodos(nodos: NodoProp[]): Node[] {
         : { x: (indice % COLUMNAS) * ANCHO_COLUMNA, y: Math.floor(indice / COLUMNAS) * ALTO_FILA };
     return {
       id: nodo.id,
+      type: "nodoCadena",
       position: posicion,
       data: { label: `${nodo.nombre}\n${estilo.etiqueta}` },
       style: {
@@ -315,6 +357,8 @@ export default function MapaCadenaCanvas({
         <ReactFlow
           nodes={nodosFlow}
           edges={aristasFlow}
+          nodeTypes={TIPOS_NODO_REACT_FLOW}
+          connectionMode={ConnectionMode.Loose}
           onConnect={onConnect}
           onNodeDragStop={onNodeDragStop}
           fitView
