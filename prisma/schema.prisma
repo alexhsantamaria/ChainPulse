@@ -978,6 +978,15 @@ model Nodo {
   eslabonRefId String?
   eslabonRef   Eslabon? @relation(fields: [eslabonRefId], references: [id], onDelete: SetNull)
 
+  // Posicion elegida por el usuario al arrastrar el nodo sobre el canvas
+  // del mapa (RF34, extension post-lanzamiento -- PLAN-DE-TRABAJO.md las
+  // dejo pendientes a proposito hasta que existiera la edicion interactiva).
+  // Nulas para todo nodo que todavia no se arrastro nunca (los ya
+  // existentes, y cualquier nodo recien creado): MapaCadenaCanvas.tsx cae
+  // a un layout en grilla calculado en el cliente cuando faltan.
+  posX Float?
+  posY Float?
+
   conexionesOrigen  ConexionCadena[] @relation("conexion_cadena_origen")
   conexionesDestino ConexionCadena[] @relation("conexion_cadena_destino")
 

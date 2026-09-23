@@ -4,12 +4,13 @@
 // ver el comentario de cabecera de NuevaCadenaForm.tsx sobre por que
 // RF34 excluye eso), y arrastrar de un nodo a otro dispara `onConnect`
 // de React Flow, que abre un segundo panel chico para elegir los flujos
-// de esa conexion antes de guardarla. Las posiciones no se persisten
-// todavia -- el schema no tiene columnas de posicion en Nodo
-// (PLAN-DE-TRABAJO.md, Bloque A no las incluyo) -- se recalcula un
-// layout simple en grilla en cada carga/alta; una vez que exista arrastre
-// de nodos con memoria hace falta agregar esa columna para persistir la
-// posicion elegida.
+// de esa conexion antes de guardarla. La posicion de cada nodo se
+// persiste al soltar el arrastre (`onNodeDragStop` -> PATCH
+// /api/cadenas/:id/nodos/:nodoId, migracion
+// 20260923050000_nodo_posicion_canvas) -- un nodo que todavia no se
+// arrastro nunca (posX/posY null, todo nodo previo a esta migracion y
+// cualquier nodo recien creado) cae a un layout en grilla recalculado en
+// el cliente, mismo criterio que antes.
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
@@ -25,6 +26,8 @@ interface NodoProp {
   id: string;
   nombre: string;
   tipo: TipoNodo;
+  posX: number | null;
+  posY: number | null;
 }
 
 interface ConexionProp {
@@ -35,7 +38,7 @@ interface ConexionProp {
 }
 
 interface RespuestaNodoApi extends RespuestaApiBase {
-  nodo?: { id: string; nombre: string; tipo: TipoNodo };
+  nodo?: { id: string; nombre: string; tipo: TipoNodo; posX: number | null; posY: number | null };
 }
 
 interface RespuestaConexionApi extends RespuestaApiBase {
@@ -74,9 +77,15 @@ const ALTO_FILA = 130;
 function construirNodos(nodos: NodoProp[]): Node[] {
   return nodos.map((nodo, indice) => {
     const estilo = ESTILO_TIPO[nodo.tipo];
+    // Posicion elegida por el usuario si ya arrastro este nodo alguna
+    // vez; si no, layout en grilla recalculado (comportamiento previo).
+    const posicion =
+      nodo.posX !== null && nodo.posY !== null
+        ? { x: nodo.posX, y: nodo.posY }
+        : { x: (indice % COLUMNAS) * ANCHO_COLUMNA, y: Math.floor(indice / COLUMNAS) * ALTO_FILA };
     return {
       id: nodo.id,
-      position: { x: (indice % COLUMNAS) * ANCHO_COLUMNA, y: Math.floor(indice / COLUMNAS) * ALTO_FILA },
+      position: posicion,
       data: { label: `${nodo.nombre}\n${estilo.etiqueta}` },
       style: {
         background: estilo.fondo,
@@ -171,6 +180,23 @@ export default function MapaCadenaCanvas({
     },
     [],
   );
+
+  // Persiste la posicion al soltar el arrastre -- no en cada frame
+  // intermedio (onNodesChange dispararia una escritura por pixel). Falla
+  // silenciosa aceptada a proposito: si el PATCH no llega, el nodo vuelve
+  // al layout en grilla en la proxima carga (misma degradacion, sin
+  // bloquear al usuario con un error por soltar un nodo).
+  const onNodeDragStop = useCallback((_evento: unknown, nodoArrastrado: Node) => {
+    const { x, y } = nodoArrastrado.position;
+    setNodos((previos) =>
+      previos.map((nodo) => (nodo.id === nodoArrastrado.id ? { ...nodo, posX: x, posY: y } : nodo)),
+    );
+    void fetchJsonSeguro(`/api/cadenas/${cadenaId}/nodos/${nodoArrastrado.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ posX: x, posY: y }),
+    });
+  }, [cadenaId]);
 
   function alternarFlujo(tipo: TipoFlujoV2) {
     setFlujosElegidos((previos) =>
@@ -290,6 +316,7 @@ export default function MapaCadenaCanvas({
           nodes={nodosFlow}
           edges={aristasFlow}
           onConnect={onConnect}
+          onNodeDragStop={onNodeDragStop}
           fitView
           proOptions={{ hideAttribution: true }}
         >
