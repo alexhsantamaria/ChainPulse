@@ -4,13 +4,14 @@
 // Bloque A.
 //
 // STOCKOUT y COBERTURA: descripcion/formula/reglasExclusion actualizadas
-// 2026-09-24 segun la revision de Alex (segunda ronda, mas precisa que la
-// primera) -- ver src/engine/kpis/stockout.ts y cobertura.ts para el
-// detalle completo de las reglas y su razonamiento. Estas dos definiciones
-// siguen siendo "codigo" v1 (numero 1): el cambio corrige la
-// descripcion/formula/reglas del catalogo funcional para que coincidan
-// exactamente con el motor de calculo antes de su primera publicacion real
-// contra datos -- no es una revision posterior a una version ya en uso.
+// 2026-09-24 segun las TRES rondas de revision de Alex (cada ronda mas
+// precisa que la anterior) -- ver src/engine/kpis/stockout.ts y
+// cobertura.ts para el detalle completo de las reglas y su razonamiento.
+// Estas dos definiciones siguen siendo "codigo" v1 (numero 1): el cambio
+// corrige la descripcion/formula/reglas del catalogo funcional para que
+// coincidan exactamente con el motor de calculo antes de su primera
+// publicacion real contra datos -- no es una revision posterior a una
+// version ya en uso.
 //
 // Bootstrap deliberado: igual que seedCuestionarioV2.ts, RF19 (Curador
 // Metodologico) todavia no tiene UI de publicacion, asi que este script
@@ -76,16 +77,19 @@ const DEFINICIONES: DefinicionKpiSeed[] = [
     codigo: "STOCKOUT",
     nombre: "Porcentaje de observaciones sin stock",
     descripcion:
-      "Proporción de observaciones válidas (SKU + ubicación + fecha de corte) con stock disponible igual o " +
-      "inferior a cero, sobre el total de observaciones válidas evaluadas en el periodo. No mide días sin stock " +
-      "ni demanda no atendida -- describe la muestra registrada. Limitación que debe mostrarse: es una tasa de " +
-      "observaciones, no un promedio de tasas por SKU -- un SKU observado más veces en el periodo pesa más en " +
-      "el resultado.",
+      "Proporción de observaciones válidas (SKU + ubicación + fecha de corte, calculada según la zona horaria " +
+      "de la cadena) con stock disponible igual o inferior a cero, sobre el total de observaciones válidas " +
+      "evaluadas en el periodo. Un saldo negativo cuenta como observación sin stock y además se señala como " +
+      "anomalía para revisión. No mide días sin stock ni demanda no atendida -- describe la muestra registrada. " +
+      "Limitación que debe mostrarse: es una tasa de observaciones, no un promedio de tasas por SKU -- un SKU " +
+      "observado más veces en el periodo pesa más en el resultado.",
     formula: "100 × (observaciones válidas con stock disponible ≤ 0) / (observaciones válidas evaluadas)",
     unidad: "%",
     periodoDefecto: "mensual",
     reglasExclusion: {
-      observacionUnica: "SKU + ubicación + fecha de corte (día calendario; la hora, si existe, se ignora).",
+      observacionUnica:
+        "SKU + ubicación + fecha de corte (día calendario según la zona horaria de la cadena, no UTC; la hora, " +
+        "si existe, se ignora dentro de ese día).",
       tratamientoDuplicados:
         "Si dos o más filas de la misma observación coinciden exactamente, se colapsan a una sola (redundancia " +
         "de captura). Si difieren (mismo SKU/ubicación/fecha con valores distintos), es un conflicto real: se " +
@@ -93,13 +97,20 @@ const DEFINICIONES: DefinicionKpiSeed[] = [
       datosFaltantes:
         "Un stock faltante o no numérico se excluye y se informa; nunca se convierte en 0 (ni 'con stock' ni " +
         "'sin stock').",
+      valoresNegativos:
+        "Un saldo negativo cuenta como observación sin stock (entra al numerador, igual que un saldo cero) y " +
+        "además se señala aparte como anomalía para revisión -- no se excluye, no es lo mismo que un dato " +
+        "faltante.",
+      campoInventario:
+        "El stock disponible debe venir de un campo declarado explícitamente como tal; no se sustituye en " +
+        "silencio por otro campo ni se le aplican descuentos (reservas, etc.) sin una regla documentada aparte.",
       productosInactivos: "Las observaciones de productos marcados como inactivos se excluyen del cálculo.",
       sinObservacionesValidas: "Si no hay observaciones válidas en el periodo, el resultado es 'Sin datos suficientes'.",
       relleno: "No se completan fechas sin registro -- esta métrica no es una serie temporal continua.",
       limitacionPeso:
         "Es una tasa de observaciones, no un promedio de tasas por SKU: un SKU observado más veces pesa más.",
       version: "kpis-v1",
-      cerradoPor: "Alex, 2026-09-24 (segunda revisión, sustituye la primera)",
+      cerradoPor: "Alex, 2026-09-24 (tercera revisión, incorpora las tres rondas)",
       estadoValidacion: "Regla propuesta para el MVP, no validada aún con datos reales.",
     },
   },
@@ -107,15 +118,24 @@ const DEFINICIONES: DefinicionKpiSeed[] = [
     codigo: "COBERTURA",
     nombre: "Cobertura de inventario",
     descripcion:
-      "Días de inventario disponible frente al consumo diario esperado, calculado siempre por SKU y ubicación " +
-      "-- nunca como agregado entre SKU. La agregación de cobertura entre SKU distintos queda fuera de esta " +
-      "definición hasta acordar su metodología (unidades comparables, agrupación y ponderación); no debe " +
-      "leerse ni mostrarse un promedio o suma entre SKU heterogéneos.",
-    formula: "inventario disponible a la fecha de corte / consumo diario esperado, por SKU y ubicación",
+      "Días de inventario disponible frente al consumo diario esperado, calculado siempre por SKU, ubicación y " +
+      "fecha de corte (día calendario según la zona horaria de la cadena) -- nunca como agregado entre SKU ni " +
+      "sumando inventarios de fechas distintas. El campo de inventario disponible debe venir declarado " +
+      "explícitamente como tal por el origen del dato, sin sustituciones silenciosas. La agregación de cobertura " +
+      "entre SKU distintos queda fuera de esta definición hasta acordar su metodología (unidades comparables, " +
+      "agrupación y ponderación); no debe leerse ni mostrarse un promedio o suma entre SKU heterogéneos.",
+    formula: "inventario disponible a la fecha de corte / consumo diario esperado, por SKU, ubicación y fecha de corte",
     unidad: "días",
     periodoDefecto: "mensual",
     reglasExclusion: {
-      granularidad: "Cálculo por SKU + ubicación únicamente. No existe agregado general en esta implementación.",
+      granularidad:
+        "Cálculo por SKU + ubicación + fecha de corte (día calendario según la zona horaria de la cadena, no " +
+        "UTC) únicamente. No existe agregado general en esta implementación; tampoco se suman inventarios de " +
+        "fechas de corte distintas.",
+      campoInventario:
+        "`inventarioDisponible` debe ser un campo declarado explícitamente como tal por el origen del dato -- " +
+        "nunca se sustituye en silencio por 'inventario físico' ni se le descuentan reservas sin una regla " +
+        "documentada y aplicada antes del ingreso a este cálculo.",
       unidades:
         "Inventario y consumo deben declarar la misma unidad; si no coinciden (o no se declaran), la fila queda " +
         "en 'Unidades incompatibles' sin resultado numérico.",
@@ -124,13 +144,14 @@ const DEFINICIONES: DefinicionKpiSeed[] = [
       datosFaltantes: "Inventario o consumo faltante produce 'Datos incompletos'.",
       valoresNegativos: "Inventario o consumo negativo se señala para revisión; nunca se convierte silenciosamente.",
       tratamientoDuplicados:
-        "Filas duplicadas (mismo SKU/ubicación) que coinciden exactamente se colapsan a una sola. Si difieren, " +
-        "se marcan todas como duplicado en conflicto y se excluyen del cálculo -- mismo criterio que Stockout.",
+        "Filas duplicadas (mismo SKU/ubicación/fecha de corte) que coinciden exactamente se colapsan a una sola. " +
+        "Si difieren, se marcan todas como duplicado en conflicto y se excluyen del cálculo -- mismo criterio " +
+        "que Stockout.",
       agregacionEntreSku:
         "Fuera de alcance hasta acordar metodología (unidades comparables, agrupación, ponderación). No sumar " +
         "inventarios ni consumos de SKU distintos, ni presentar Σinventario/Σconsumo como cobertura general.",
       version: "kpis-v1",
-      cerradoPor: "Alex, 2026-09-24 (segunda revisión, sustituye la primera)",
+      cerradoPor: "Alex, 2026-09-24 (tercera revisión, incorpora las tres rondas)",
       estadoValidacion: "Regla propuesta para el MVP, no validada aún con datos reales.",
     },
   },

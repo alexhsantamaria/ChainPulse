@@ -1,7 +1,8 @@
 // Pruebas -- los 3 agregadores genericos compartidos por las 10 funciones
-// de calculo de KPIs.
+// de calculo de KPIs, mas el helper de fecha de corte por zona horaria
+// usado por Stockout y Cobertura.
 import { describe, expect, it } from "vitest";
-import { calcularDesviacionEstandar, calcularPromedio, calcularRatio } from "../compartido";
+import { calcularDesviacionEstandar, calcularPromedio, calcularRatio, diaEnZona } from "../compartido";
 
 describe("calcularRatio", () => {
   it("suma numerador/denominador fila a fila y calcula la fraccion", () => {
@@ -82,5 +83,24 @@ describe("calcularDesviacionEstandar", () => {
     const r = calcularDesviacionEstandar([], (v: number) => v, "motivo");
     expect(r.valor).toBeNull();
     expect(r.filasEvaluadas).toBe(0);
+  });
+});
+
+describe("diaEnZona", () => {
+  it("calcula el dia calendario en la zona horaria indicada, no en UTC", () => {
+    // 2026-01-01T02:00:00Z son las 21:00 del 2025-12-31 en Lima (UTC-5).
+    expect(diaEnZona(new Date("2026-01-01T02:00:00Z"), "America/Lima")).toBe("2025-12-31");
+    expect(diaEnZona(new Date("2026-01-01T02:00:00Z"), "UTC")).toBe("2026-01-01");
+  });
+
+  it("dos horas del mismo dia calendario en la zona indicada devuelven el mismo dia", () => {
+    const a = diaEnZona(new Date("2026-01-01T14:00:00Z"), "America/Lima"); // 09:00 Lima
+    const b = diaEnZona(new Date("2026-01-01T23:00:00Z"), "America/Lima"); // 18:00 Lima
+    expect(a).toBe(b);
+    expect(a).toBe("2026-01-01");
+  });
+
+  it("formato siempre AAAA-MM-DD", () => {
+    expect(diaEnZona(new Date("2026-03-05T12:00:00Z"), "America/Lima")).toBe("2026-03-05");
   });
 });

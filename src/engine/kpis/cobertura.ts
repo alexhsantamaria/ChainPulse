@@ -1,17 +1,20 @@
 // Motor de KPIs -- Cobertura de inventario. Reglas CERRADAS por Alex el
-// 2026-09-24 (segunda revision, mas precisa que la primera -- esta es la
-// version vigente) "para evitar interpretaciones ambiguas". Son reglas
-// propuestas para el MVP, NO resultados validados con datos reales.
+// 2026-09-24 en TRES rondas de revision (cada ronda mas precisa que la
+// anterior -- esta es la version vigente, incorpora las tres) "para
+// evitar interpretaciones ambiguas". Son reglas propuestas para el MVP,
+// NO resultados validados con datos reales.
 //
 // Formula por fila: inventario disponible a la fecha de corte / consumo
-// diario esperado (dias de cobertura). SIEMPRE por SKU + ubicacion -- NO
-// existe en esta implementacion ningun agregado entre SKU (ni siquiera
-// opcional/etiquetado): "La agregacion de cobertura entre SKU queda fuera
-// de esta implementacion hasta acordar su metodologia" (Alex, 2026-09-24).
-// Un caller que quiera comparar SKU debe iterar `porSku`, nunca sumar
-// `coberturaDias` ni promediarlos aqui.
+// diario esperado (dias de cobertura). SIEMPRE por SKU + ubicacion +
+// fecha de corte -- NO existe en esta implementacion ningun agregado
+// entre SKU (ni siquiera opcional/etiquetado): "la agregacion de
+// cobertura entre SKU queda fuera de esta implementacion hasta acordar su
+// metodologia" (Alex, 2026-09-24). Un caller que quiera comparar SKU debe
+// iterar `porSku`, nunca sumar `coberturaDias` ni promediarlos aqui.
+// Tampoco se suman inventarios de distintas fechas -- cada fila es una
+// foto puntual, nunca se mezcla con otra fecha de corte.
 //
-// Reglas (Alex, 2026-09-24):
+// Reglas (Alex, 2026-09-24, rondas 1-2):
 // 1. Inventario y consumo deben usar la MISMA UNIDAD. El consumo debe
 //    estar expresado por dia (su periodo de referencia lo determina el
 //    caller, igual que con Stockout -- esta funcion no lo conoce).
@@ -27,16 +30,33 @@
 // 6. Unidades incompatibles entre inventarioDisponible y consumoDiario
 //    esperado para la misma fila -> UNIDADES_INCOMPATIBLES, sin resultado
 //    numerico.
-// 7. Duplicados (misma SKU+ubicacion): si coinciden exactamente, se
-//    colapsan a una sola fila (redundancia de captura); si difieren, TODAS
-//    las filas del grupo se señalan como DUPLICADO y quedan excluidas del
-//    calculo -- mismo criterio que Stockout (ver stockout.ts), nunca se
-//    elige una "ganadora" en silencio.
+// 7. Duplicados (misma SKU+ubicacion+fecha de corte): si coinciden
+//    exactamente, se colapsan a una sola fila (redundancia de captura);
+//    si difieren, TODAS las filas del grupo se señalan como DUPLICADO y
+//    quedan excluidas del calculo -- mismo criterio que Stockout (ver
+//    stockout.ts), nunca se elige una "ganadora" en silencio.
+//
+// Reglas (Alex, 2026-09-24, ronda 3 -- precisiones adicionales):
+// 8. La fecha de corte usa el dia calendario segun una ZONA HORARIA
+//    explicita (parametro `zonaHoraria`), no UTC -- misma regla y mismo
+//    helper compartido (`diaEnZona`) que Stockout. Forma parte de la
+//    clave de identidad de la fila (junto con SKU+ubicacion): dos filas
+//    del mismo SKU+ubicacion en fechas de corte distintas NO son
+//    duplicados entre si, son observaciones independientes -- nunca se
+//    suman ni se comparan como si fueran la misma foto.
+// 9. `inventarioDisponible` debe ser un campo declarado explicitamente
+//    como tal por el origen del dato -- esta funcion no lo sustituye en
+//    silencio por "inventario fisico" ni le descuenta reservas. Si en
+//    algun momento hace falta esa conversion (inventario fisico menos
+//    reservas, por ejemplo), debe ser una regla documentada y aplicada
+//    ANTES de que la fila llegue aca (en Bloque B/ingesta), nunca dentro
+//    de este calculo.
 //
 // Ejemplo (Alex, 2026-09-24) -- SKU A: 100 unid inventario, 10 unid/dia
 // consumo -> 10 dias. SKU B: 0 unid inventario, 5 unid/dia consumo -> 0
 // dias. Deben mostrarse AMBOS resultados por separado; nunca un resumen
 // como "6,67 dias", porque ocultaria que B no tiene inventario.
+import { diaEnZona } from "./compartido";
 import type { ResultadoCalculoKpi as ResultadoCalculoKpiGenerico } from "./constantes";
 import { RULE_VERSION_KPIS } from "./constantes";
 
@@ -44,10 +64,12 @@ export interface FilaCobertura {
   sku: string;
   ubicacion: string;
   // Fecha de corte de la observacion -- una fila = una foto del inventario
-  // y el consumo esperado a esa fecha (dia calendario).
+  // y el consumo esperado a esa fecha. El dia calendario se calcula con
+  // la zona horaria que recibe calcularCobertura, no en UTC (regla 8).
   fecha: Date;
-  // Nullable: un valor faltante es "Datos incompletos", nunca se trata
-  // como cero.
+  // Campo explicito de inventario disponible -- nunca "inventario fisico"
+  // sustituido en silencio, ver regla 9. Nullable: un valor faltante es
+  // "Datos incompletos", nunca se trata como cero.
   inventarioDisponible: number | null;
   consumoDiarioEsperado: number | null;
   // Requeridas para validar la regla 1 (misma unidad). No se asume nada
@@ -73,8 +95,8 @@ export interface CoberturaPorSku extends FilaCobertura {
 }
 
 export interface ResultadoCobertura {
-  // SIEMPRE por SKU + ubicacion. No existe campo de agregado en este
-  // resultado -- ver el comentario de cabecera.
+  // SIEMPRE por SKU + ubicacion + fecha de corte. No existe campo de
+  // agregado en este resultado -- ver el comentario de cabecera.
   porSku: CoberturaPorSku[];
   advertencias: string[];
   ruleVersion: string;
@@ -107,8 +129,8 @@ function evaluarFila(fila: FilaCobertura): CoberturaPorSku {
   };
 }
 
-function claveFila(fila: FilaCobertura): string {
-  return `${fila.sku}|${fila.ubicacion}`;
+function claveFila(fila: FilaCobertura, zonaHoraria: string): string {
+  return `${fila.sku}|${fila.ubicacion}|${diaEnZona(fila.fecha, zonaHoraria)}`;
 }
 
 function mismaFila(a: FilaCobertura, b: FilaCobertura): boolean {
@@ -120,10 +142,15 @@ function mismaFila(a: FilaCobertura, b: FilaCobertura): boolean {
   );
 }
 
-export function calcularCobertura(filas: readonly FilaCobertura[]): ResultadoCobertura {
+/**
+ * @param zonaHoraria Zona horaria IANA (ej. "America/Lima") usada para
+ * calcular el dia calendario de `fecha` en cada fila -- regla 8. El
+ * caller la resuelve; esta funcion no asume ningun valor por defecto.
+ */
+export function calcularCobertura(filas: readonly FilaCobertura[], zonaHoraria: string): ResultadoCobertura {
   const porClave = new Map<string, FilaCobertura[]>();
   for (const fila of filas) {
-    const clave = claveFila(fila);
+    const clave = claveFila(fila, zonaHoraria);
     const grupo = porClave.get(clave);
     if (grupo) grupo.push(fila);
     else porClave.set(clave, [fila]);
@@ -182,12 +209,12 @@ export function calcularCobertura(filas: readonly FilaCobertura[]): ResultadoCob
   }
   if (duplicadosColapsados > 0) {
     advertencias.push(
-      `${duplicadosColapsados} observacion(es) duplicada(s) con el mismo valor (mismo SKU/ubicacion) -- colapsadas a una sola.`,
+      `${duplicadosColapsados} observacion(es) duplicada(s) con el mismo valor (mismo SKU/ubicacion/fecha de corte) -- colapsadas a una sola.`,
     );
   }
   if (duplicadosConflicto > 0) {
     advertencias.push(
-      `${duplicadosConflicto} observacion(es) en conflicto (mismo SKU/ubicacion, valores distintos) -- señaladas para resolver a mano, excluidas del calculo.`,
+      `${duplicadosConflicto} observacion(es) en conflicto (mismo SKU/ubicacion/fecha de corte, valores distintos) -- señaladas para resolver a mano, excluidas del calculo.`,
     );
   }
   if (porSku.length === 0) {

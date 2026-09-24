@@ -12,7 +12,28 @@
 //     promedio).
 // Todas son funciones puras: reciben solo filas ya tipadas (nunca Prisma
 // ni infra), mismo criterio de pureza que el resto de src/engine/ (ADR-0002).
+//
+// diaEnZona: helper compartido por Stockout y Cobertura (tercera revision
+// de Alex, 2026-09-24) para calcular el "dia calendario" de una fecha de
+// corte segun una zona horaria explicita, en vez de UTC -- "usar una
+// fecha diaria segun la zona horaria definida para la cadena". Usa
+// Intl.DateTimeFormat (parte de JS estandar, no rompe la pureza de
+// engine/ -- no es Prisma ni infra). El VALOR de esa zona horaria (de
+// donde sale -- Cadena, DefinicionKpi u otro) lo decide el caller
+// (Bloque B); esta funcion solo hace el calculo puro dada una zona.
 import { RULE_VERSION_KPIS, type ResultadoCalculoKpi } from "./constantes";
+
+export function diaEnZona(fecha: Date, zonaHoraria: string): string {
+  // en-CA formatea como AAAA-MM-DD de forma estable -- evita depender de
+  // una libreria externa solo para este calculo.
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: zonaHoraria,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(fecha);
+}
 
 function cobertura(filasEvaluadas: number, filasExcluidas: number): number {
   const total = filasEvaluadas + filasExcluidas;
