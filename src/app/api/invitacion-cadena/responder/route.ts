@@ -122,6 +122,13 @@ export async function POST(request: Request) {
     } else {
       await client.respuestaCadena.create({
         data: {
+          // empresaId explicito, del payload YA verificado del token
+          // (nunca del body) -- injectTenantFilter() lo sobrescribe igual
+          // en runtime, pero sin pasarlo aca el tipo generado real de
+          // Prisma (Windows) exige empresaId como campo no opcional en el
+          // create -- mismo patron ya usado en cadenas/[id]/nodos/route.ts
+          // y conexiones/route.ts.
+          empresaId: payload.empresaId,
           cadenaId: payload.cadenaId,
           conexionCadenaId: payload.conexionCadenaId,
           email: payload.email,
