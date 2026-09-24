@@ -34,27 +34,40 @@ export default async function CadenaMapaPage({
   }
 
   const { id } = await params;
-  const cadena = await tenantClient(session.user.empresaId).cadena.findUnique({
+  const client = tenantClient(session.user.empresaId);
+
+  const cadena = await client.cadena.findUnique({
     where: { id },
     include: {
       nodos: { orderBy: { createdAt: "asc" } },
       conexiones: { include: { flujos: true }, orderBy: { createdAt: "asc" } },
-      // Bloque C Paso 3 (RF38/RF39) -- solo existen filas en DIFERENCIA
-      // (ver el comentario de HallazgoCadena en schema.prisma), asi que
-      // no hace falta filtrar por "resultado" aca: todo lo que hay para
-      // mostrar es, por diseno, una diferencia de percepcion real.
-      hallazgos: {
-        include: {
-          conexionCadena: { include: { origenNodo: true, destinoNodo: true } },
-        },
-        orderBy: { createdAt: "desc" },
-      },
     },
   });
 
   if (!cadena) {
     notFound();
   }
+
+  // Bloque C Paso 3 (RF38/RF39) -- consulta separada de la de arriba a
+  // proposito: mezclar esto en el mismo cadena.findUnique() (una 3ra rama
+  // de include, hallazgos -> conexionCadena -> {origenNodo, destinoNodo})
+  // disparaba en Windows (adapter-pg, ADR-0003) el warning de pg
+  // "Calling client.query() when the client is already executing a
+  // query" -- tenantClient() envuelve cada operacion en su propio
+  // $transaction(), asi que dos llamadas separadas a traves de `client`
+  // usan cada una su propia transaccion/conexion en vej de compartir una
+  // sola conexion pineada para un include anidado mas profundo. Solo
+  // existen filas en DIFERENCIA (ver el comentario de HallazgoCadena en
+  // schema.prisma), asi que no hace falta filtrar por "resultado" aca:
+  // todo lo que hay para mostrar es, por diseno, una diferencia de
+  // percepcion real.
+  const hallazgos = await client.hallazgoCadena.findMany({
+    where: { cadenaId: cadena.id },
+    include: {
+      conexionCadena: { include: { origenNodo: true, destinoNodo: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-4 py-12">
@@ -71,17 +84,17 @@ export default async function CadenaMapaPage({
         </p>
       </div>
 
-      {cadena.hallazgos.length > 0 && (
+      {hallazgos.length > 0 && (
         <div className="flex flex-col gap-2 rounded border border-amber-200 bg-amber-50 p-3">
           <p className="text-sm font-medium text-amber-900">
-            Diferencias de percepción detectadas ({cadena.hallazgos.length})
+            Diferencias de percepción detectadas ({hallazgos.length})
           </p>
           <p className="text-xs text-amber-700">
             Distintas personas invitadas respondieron distinto sobre lo mismo —
             no indica quién tiene razón, solo que vale la pena conversarlo.
           </p>
           <ul className="flex flex-col gap-1.5 text-sm text-amber-900">
-            {cadena.hallazgos.map(
+            {hallazgos.map(
               (hallazgo: {
                 id: string;
                 dimension: string;
