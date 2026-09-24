@@ -15,6 +15,7 @@
 // prisma/seed.ts — ver .env.example). Hay que volver a correrlo si se borra
 // el schema "pgboss" a mano, o si se agrega una cola nueva mas adelante
 // (Incremento 4: import de CSV; Incremento 7: recomputo de Market Signals).
+import "./_cargarEnv";
 import { PgBoss } from "pg-boss";
 import { Client } from "pg";
 import { COLA_PURGA_HUELLA_ORIGEN } from "../src/infra/jobs/purgaHuellaOrigenJob";

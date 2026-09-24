@@ -32,6 +32,7 @@
 // Uso:
 //   npm run limpiar:tenants-prueba          -- lista y borra
 //   npm run limpiar:tenants-prueba -- --dry-run   -- solo lista, no borra
+import "./_cargarEnv";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { prisma } from "../src/infra/prisma/client";

@@ -44,6 +44,7 @@
 // Uso:
 //   npm run limpiar:cadenas-duplicadas -- --dry-run   -- solo lista, no borra
 //   npm run limpiar:cadenas-duplicadas                -- lista y borra las copias vacias
+import "./_cargarEnv";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { prisma } from "../src/infra/prisma/client";
