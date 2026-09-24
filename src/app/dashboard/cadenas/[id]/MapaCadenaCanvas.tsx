@@ -494,12 +494,28 @@ export default function MapaCadenaCanvas({
   // Supr/Backspace borra la conexion seleccionada -- solo mientras el
   // panel de edicion esta abierto (conexionEditando != null), para no
   // interceptar esas teclas en ningun otro momento (ej. mientras se
-  // escribe en el input de "+ Nodo").
+  // escribe en el input de "+ Nodo"). Bug encontrado por Alex
+  // (2026-09-24, probando Bloque C Paso 2): el panel "Invitar a esta
+  // conexion" se abre DESDE DENTRO del panel de edicion sin limpiar
+  // conexionEditando, asi que su input de email queda con este listener
+  // activo -- cada Backspace/Supr tipeado ahi disparaba el
+  // window.confirm() de "eliminar conexion" en vez de borrar el
+  // caracter, obligando a cerrar el panel y escribir el email de nuevo
+  // desde cero. Fix: ignorar la tecla si el foco esta en un campo de
+  // texto/editable, para que el atajo solo actue cuando el foco esta en
+  // el lienzo (o en cualquier otro lugar que no sea un input).
   useEffect(() => {
     if (!conexionEditando) return;
     const conexionId = conexionEditando.id;
     function alPresionarTecla(evento: KeyboardEvent) {
       if (evento.key !== "Delete" && evento.key !== "Backspace") return;
+      const objetivo = evento.target;
+      const enCampoEditable =
+        objetivo instanceof HTMLInputElement ||
+        objetivo instanceof HTMLTextAreaElement ||
+        objetivo instanceof HTMLSelectElement ||
+        (objetivo instanceof HTMLElement && objetivo.isContentEditable);
+      if (enCampoEditable) return;
       evento.preventDefault();
       confirmarYEliminarConexion(conexionId);
     }
