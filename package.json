@@ -16,6 +16,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
     "seed:cuestionario-v2": "tsx prisma/seedCuestionarioV2.ts",
+    "seed:definiciones-kpi": "tsx prisma/seedDefinicionesKpi.ts",
     "jobs:bootstrap": "tsx scripts/bootstrapPgBoss.ts",
     "limpiar:tenants-prueba": "tsx scripts/limpiarTenantsPrueba.ts",
     "limpiar:cadenas-duplicadas": "tsx scripts/limpiarCadenasDuplicadas.ts",

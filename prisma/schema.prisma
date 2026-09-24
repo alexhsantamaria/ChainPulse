@@ -277,6 +277,7 @@ model Empresa {
   conexionesCadena ConexionCadena[]
   hallazgosCadena HallazgoCadena[]
   respuestasCadena RespuestaCadena[]
+  observacionesKpi ObservacionKpi[]
 
   @@map("empresas")
 }
@@ -676,6 +677,7 @@ model UsuarioPlataforma {
   createdAt DateTime @default(now())
 
   cuestionariosPublicados CuestionarioVersion[]
+  definicionesKpiCuradas  DefinicionKpi[]
 
   @@map("usuarios_plataforma")
 }
@@ -997,6 +999,7 @@ model Cadena {
   conexiones ConexionCadena[]
   hallazgos  HallazgoCadena[]
   respuestas RespuestaCadena[]
+  observacionesKpi ObservacionKpi[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1235,4 +1238,110 @@ model RespuestaCadena {
   @@index([cadenaId])
   @@index([conexionCadenaId])
   @@map("respuestas_cadena")
+}
+
+
+// Incremento 4 Bloque A (MVP-DEFINITIVO Seccion 6.3/Especificacion V2
+// Seccion 11.1, "Decision #6 confirmada por Alex el 2026-09-15") --
+// catalogo de plataforma de los 10 KPIs iniciales (OTIF, Fill Rate,
+// Stockout, Cobertura, Lead time, Variabilidad de lead time, OTIF
+// proveedor, Tiempo de deteccion/decision/recuperacion). Mismo patron de
+// aggregate versionado que CuestionarioVersion: codigo (identidad logica
+// estable, ej. "OTIF") + numero (incremental) + estado, publicada
+// inmutable. Nunca entra en TENANT_SCOPED_MODELS ni en prisma/rls.sql --
+// contenido compartido entre tenants, mismo regimen de tenant nulo que
+// CuestionarioVersion/UsuarioPlataforma (Seccion 18.2.B).
+//
+// Igual que CuestionarioVersion (ver su comentario de cabecera): una
+// version PUBLICADA nunca convive con otra PUBLICADA del mismo codigo --
+// backstop de base de datos con un indice unico parcial
+// (uq_definicion_kpi_publicada, WHERE estado = 'PUBLICADA') escrito a
+// mano en la migracion (no representable en el DSL de Prisma). No lo
+// interpretes como "drift" en un futuro `prisma migrate dev`.
+model DefinicionKpi {
+  id          String                 @id @default(cuid())
+  codigo      String // "OTIF", "FILL_RATE", "STOCKOUT", "COBERTURA", "LEAD_TIME", "VARIABILIDAD_LEAD_TIME", "OTIF_PROVEEDOR", "TIEMPO_DETECCION", "TIEMPO_DECISION", "TIEMPO_RECUPERACION"
+  numero      Int
+  estado      EstadoVersionContenido @default(BORRADOR)
+  publicadaEn DateTime?
+  retiradaEn  DateTime?
+  // Nullable por el mismo motivo que CuestionarioVersion.curadorId: RF19
+  // (Curador Metodologico) todavia no tiene UI de publicacion -- el seed
+  // de los 10 KPIs (prisma/seedDefinicionesKpi.ts) bootstrapea sin
+  // curadorId, igual que seedCuestionarioV2.ts.
+  curadorId String?
+  curador   UsuarioPlataforma? @relation(fields: [curadorId], references: [id])
+
+  nombre      String
+  descripcion String
+  formula     String
+  unidad      String
+  // Periodo por defecto sugerido al declarar una ObservacionKpi (ej.
+  // "mensual") -- no restringe periodoInicio/periodoFin, que quedan
+  // libres en ObservacionKpi (una cadena puede reportar OTIF semanal si
+  // asi lo declara).
+  periodoDefecto  String
+  zonaHoraria     String @default("America/Lima")
+  // Reglas de exclusion de filas del calculo (ej. pedidos cancelados),
+  // formato libre por KPI -- consumido por la funcion pura correspondiente
+  // en src/engine/kpis/, nunca validado aca (mismo criterio que
+  // PreguntaVersion.opciones: contenido versionado, no estructura fija).
+  reglasExclusion Json?
+  notasCambio     String?
+
+  observaciones ObservacionKpi[]
+
+  @@unique([codigo, numero])
+  @@index([curadorId])
+  @@map("definicion_kpis")
+}
+
+// Incremento 4 Bloque A -- UNA observacion ya agregada de un KPI para una
+// Cadena en un periodo (el resultado de correr la funcion pura
+// correspondiente de src/engine/kpis/ sobre los datos crudos ingresados
+// en Bloque B -- esta tabla nunca guarda las filas crudas de un CSV/pegado,
+// solo el {valor, numerador, denominador} ya calculado, mismo principio
+// "la IA explica, el motor calcula" aplicado a datos: aca es "el motor
+// calcula, la tabla persiste el resultado").
+//
+// `estado` es EstadoDato (como se cargo el dato: DECLARADO/INFERIDO/
+// VERIFICADO), NO EstadoEvidencia -- eje distinto, mismo criterio ya
+// documentado en el comentario de ConexionCadena.estadoEvidencia.
+//
+// Bloque B (ingreso progresivo + CSV, todavia no construido) es quien
+// define los 3 niveles reales de ingreso -- por eso `fuente` es String
+// libre ("manual"/"pegado"/"csv") en vez de un enum cerrado, para no
+// bloquear su propia migracion aditiva cuando llegue: agregara `importId`
+// (FK logica a ImportacionCsv, la tabla de Bloque B) mas su propio indice
+// de idempotencia (numeroFila) -- no hace falta hoy, nada sube CSVs
+// todavia.
+//
+// H4 (idempotencia de ingreso manual/pegado, PLAN-DE-TRABAJO.md Seccion
+// 18.3.F) -- @@unique de abajo evita que reingresar el mismo periodo dos
+// veces por error duplique la observacion; la idempotencia de CSV usa una
+// clave distinta (importId+numeroFila) que llega recien con Bloque B.
+model ObservacionKpi {
+  id              String        @id @default(cuid())
+  empresaId       String
+  empresa         Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cadenaId        String
+  cadena          Cadena        @relation(fields: [cadenaId], references: [id], onDelete: Cascade)
+  definicionKpiId String
+  definicionKpi   DefinicionKpi @relation(fields: [definicionKpiId], references: [id], onDelete: Restrict)
+
+  periodoInicio DateTime
+  periodoFin    DateTime
+  valor         Float?
+  numerador     Float?
+  denominador   Float?
+  fuente        String // "manual" | "pegado" | "csv" -- Bloque B define los flujos reales, hoy es solo el rotulo de origen
+  estado        EstadoDato @default(DECLARADO)
+
+  createdAt DateTime @default(now())
+
+  @@unique([cadenaId, definicionKpiId, periodoInicio, periodoFin, fuente])
+  @@index([empresaId])
+  @@index([cadenaId])
+  @@index([definicionKpiId])
+  @@map("observaciones_kpi")
 }
