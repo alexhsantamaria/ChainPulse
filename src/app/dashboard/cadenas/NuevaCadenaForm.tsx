@@ -3,7 +3,7 @@
 // sobre el mapa visual (RF34), nunca en este formulario.
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { fetchJsonSeguro } from "@/infra/http/fetchJsonSeguro";
 
@@ -25,37 +25,56 @@ export default function NuevaCadenaForm() {
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
 
+  // Bug encontrado por Alex (2026-09-24): al declarar una cadena, a veces
+  // quedaban 2 filas identicas (mismo nombre/periodo, una con nodos y otra
+  // con 0). `disabled={cargando}` en el boton NO alcanza para evitar un
+  // doble envio real: `cargando` es estado de React, que se pinta en el
+  // DOM recien despues de que el navegador ya proceso el evento -- dos
+  // clicks (o Enter + click) muy seguidos pueden disparar handleSubmit()
+  // dos veces antes de que el boton se vea/este deshabilitado de verdad, y
+  // como Cadena no tiene ninguna restriccion de unicidad (RF27 no la
+  // pide), el backend crea las 2 sin quejarse. Un `ref` es sincronico --
+  // se lee/escribe al toque, sin esperar un repintado -- asi que bloquea
+  // el segundo envio pase lo que pase con el render.
+  const enviandoRef = useRef(false);
+
   async function handleSubmit(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
+    if (enviandoRef.current) return;
+    enviandoRef.current = true;
     setError(null);
     setCargando(true);
 
-    const resultado = await fetchJsonSeguro("/api/cadenas", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nombre, productoServicio, periodoInicio, periodoFin, tipoOperacion }),
-    });
-    setCargando(false);
+    try {
+      const resultado = await fetchJsonSeguro("/api/cadenas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre, productoServicio, periodoInicio, periodoFin, tipoOperacion }),
+      });
 
-    if (!resultado.ok) {
-      setError(
-        resultado.error === "ERROR_RED"
-          ? "No se pudo conectar. Revisá tu conexión e intentá de nuevo."
-          : "No se pudo guardar la cadena. Revisá que el período de fin sea posterior al de inicio e intentá de nuevo.",
-      );
-      return;
-    }
+      if (!resultado.ok) {
+        setError(
+          resultado.error === "ERROR_RED"
+            ? "No se pudo conectar. Revisá tu conexión e intentá de nuevo."
+            : "No se pudo guardar la cadena. Revisá que el período de fin sea posterior al de inicio e intentá de nuevo.",
+        );
+        return;
+      }
 
-    if (typeof resultado.cadenaId === "string") {
-      router.push(`/dashboard/cadenas/${resultado.cadenaId}`);
-      return;
+      if (typeof resultado.cadenaId === "string") {
+        router.push(`/dashboard/cadenas/${resultado.cadenaId}`);
+        return;
+      }
+      setNombre("");
+      setProductoServicio("");
+      setPeriodoInicio("");
+      setPeriodoFin("");
+      setTipoOperacion("");
+      router.refresh();
+    } finally {
+      setCargando(false);
+      enviandoRef.current = false;
     }
-    setNombre("");
-    setProductoServicio("");
-    setPeriodoInicio("");
-    setPeriodoFin("");
-    setTipoOperacion("");
-    router.refresh();
   }
 
   return (
