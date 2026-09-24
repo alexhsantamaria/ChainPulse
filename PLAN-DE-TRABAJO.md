@@ -2585,3 +2585,65 @@ Los 26 hallazgos de la Sección 19 (5 agentes de revisión + Auditoría, código
 **Validación aplicada en este entorno (sin red completa — ver README, "Bloqueo de entorno"):** `typecheck`, `lint` y `test` (87/87) en verde. **Pendiente de validar por Alex** con red real: `npm run prisma:migrate` (4 migraciones nuevas: `20260916160000_ciclo_abierto_unico`, `20260916170000_grants_incremento2`, `20260916180000_rename_evidence_state`, `20260916190000_indices_r5_18_25`) y `test:integration`, mismo criterio que todas las rondas anteriores.
 
 *Nota de proceso: al aplicar esta ronda se encontró y corrigió, además, un `import` faltante introducido durante la propia corrección de R5-13 (`tenantClient` sin importar en `src/infra/auth/rateLimit.ts`, detectado por `tsc --noEmit`) y se extrajo la lógica pura de `tenantClient.ts` a `tenantScope.ts` para que la prueba unitaria de R5-6 no dependiera de tener `prisma generate` corrido contra red real — ambos son ajustes de esta misma ronda, no hallazgos nuevos de una ronda futura.*
+
+## 21. Vulnerabilidades de dependencias — seguimiento de `npm audit` (2026-09-24)
+
+Pedido de Alex tras el cierre del bloque R2: evaluar las 8 vulnerabilidades que reporta `npm audit`, distinguirlas por exposición real (no asumir "solo desarrollo" sin comprobarlo) y avanzar solo con la parte segura. Son 3 cadenas independientes, no 8 hallazgos sueltos.
+
+### 21.1 Actualización aplicada — `next` 15.5.25 → 15.5.26
+
+Commit separado (ver Sección 0 de gobernanza). Cambio mínimo: `npm install next@15.5.26` (dentro del rango ya declarado `^15.5.0`, sin tocar el `^` del `package.json` salvo el número de versión), 4 paquetes modificados en `package-lock.json` (`next`, `@next/env`, `@next/swc-linux-arm64-gnu`, `@next/swc-linux-arm64-musl` — los binarios nativos de la plataforma de build). Sin `--force`, sin prereleases, sin cambios de major.
+
+**Corrección sobre lo que dije antes de aplicarlo:** afirmé que este patch resolvía 3 de los 8 avisos (la cadena de `postcss`). Es incorrecto — verificado con `npm audit` antes y después del cambio: **los 8 avisos siguen exactamente igual, ninguno se resuelve con este patch.** El `postcss` que usa `next` internamente (`node_modules/next/node_modules/postcss`) sigue en `8.4.31` en ambos casos; el `npm audit fix --dry-run` ya lo decía explícitamente ("fix available via `npm audit fix --force` — Will install next@16.3.6") y lo leí mal la primera vez, atribuyéndole a `next`/`postcss` una línea que en realidad pertenecía a la cadena de `deepmerge-ts`. Se mantiene el update igual porque es una mejora legítima dentro del propio rango ya aprobado (patch de Next.js, sin relación con este audit), pero no cuenta como mitigación de ninguna de las 8 vulnerabilidades.
+
+**Validado en este entorno (sin red real — mismo bloqueo de siempre, ver README "Bloqueo de entorno"):**
+- `git diff --stat` sobre `package.json`/`package-lock.json` revisado — diff mínimo, sin paquetes no relacionados.
+- `typecheck` limpio (mismos 5 falsos positivos conocidos de `Prisma.InputJsonValue`, sin relación con este cambio).
+- `lint` limpio.
+- `test` (unitarias): 284/284 en verde.
+- `npm audit` repetido después del cambio: sigue en 8 (4 high, 4 moderate) — sin cambio, documentado arriba.
+
+**Bloqueado en este entorno, requiere Windows (mismo criterio "Windows-only" ya establecido para todo lo que toca Prisma/Neon real):**
+- `test:integration` — falla con `@prisma/client did not initialize yet` (el cliente generado en este entorno no tiene motor real por el 403 de `binaries.prisma.sh`, no es un efecto de esta actualización).
+- `npm run build` (`next build`) — falla en el paso de type-check propio de Next (que no tolera los 5 falsos positivos de `Prisma.InputJsonValue` como sí lo hace `tsc --noEmit` corrido aparte); no puede completarse en este entorno sin un cliente Prisma real.
+- `npm start` + comprobación manual de login y dashboard — requiere servidor corriendo contra Neon real y `.env` completo, que solo existen en Windows.
+
+**Pendiente de Alex en Windows antes de dar por cerrado este commit:**
+```
+git pull
+npm install
+npm run test:integration
+npm run build
+npm start
+```
+y confirmar manualmente que login y el dashboard cargan sin error. Recién con eso confirmado se puede decir que la actualización de Next.js quedó validada de punta a punta.
+
+### 21.2 Los 8 avisos restantes, documentados por cadena (no como "solo desarrollo" sin verificar)
+
+**Cadena A — `postcss` (vía `next`, bundleado internamente en `node_modules/next/node_modules/postcss@8.4.31`):**
+- GHSA-qx2v-qp2m-jg93 — XSS vía `</style>` sin escapar en el stringify de PostCSS (moderate, CVSS 6.1) — afecta `postcss < 8.5.10`.
+- GHSA-6g55-p6wh-862q — lectura arbitraria de archivos vía `sourceMappingURL` controlado por el atacante en comentarios CSS (high, CVSS 7.5) — afecta `postcss <= 8.5.11`.
+- GHSA-fxqj-rqcc-2cmp — fix incompleto del anterior, mismo vector cuando `from` no está seteado (moderate) — afecta `postcss <= 8.5.22`.
+- GHSA-r28c-9q8g-f849 — path traversal en auto-carga de source maps previos (high, CVSS 7.5) — afecta `postcss <= 8.5.17`.
+- **Exposición verificada (no asumida):** grep sobre `src/` confirma que ningún código de la aplicación importa `postcss` directamente ni existe ninguna función que procese CSS/Markdown suministrado por un usuario (no hay tal feature en ChainPulse). El `postcss` vulnerable corre únicamente dentro del pipeline de build de Next (`next build`/`next dev`, procesando los propios archivos `.css`/Tailwind del repo) — no forma parte del bundle servido ni se re-ejecuta al atender una request en producción. El vector real no es "un atacante externo contra la app desplegada", sino un compromiso de cadena de suministro (un CSS malicioso colado en una dependencia o un PR) durante el build — bajo, pero no cero, y no es "sin ningún riesgo".
+- **Arreglo:** requiere `next@16.3.6` (major, `--force`) — explícitamente excluido de este commit por instrucción de Alex.
+
+**Cadena B — `deepmerge-ts` → `@prisma/config` → `prisma` (CLI):**
+- GHSA-ggr8-5vv4-36mx — agotamiento de stack al fusionar (`merge`) grafos de objetos recursivos (high, sin CVSS asignado) — afecta `deepmerge-ts < 8.0.0`.
+- **Exposición verificada:** `prisma` (el paquete CLI) está en `devDependencies`, no en `dependencies` — no se instala en producción (`npm install --omit=dev` no lo trae) ni se importa desde ningún archivo de `src/`. `@prisma/client` (el que sí es dependencia de producción y sí se usa en runtime) no depende de `@prisma/config`/`deepmerge-ts` — son dos paquetes de Prisma con árboles de dependencias separados, confirmado con `npm ls`. La función vulnerable de `deepmerge-ts` fusiona los propios archivos de configuración de Prisma que nosotros controlamos (`prisma.config.ts`/`schema.prisma`), no input de un usuario externo de la aplicación.
+- **Arreglo:** no existe todavía. Comprobado contra el registro de npm: ninguna versión estable publicada de `@prisma/config` usa ya `deepmerge-ts >= 8` (solo existe en builds `6.20.0-integration-*`, prerelease interno de Prisma, no apto para consumo).
+
+**Cadena C — `@vitest/mocker` → `vitest`/`@vitest/coverage-v8`:**
+- GHSA-82fw-gwwq-j7x9 — path traversal / lectura arbitraria de archivos vía "Redirect Mock" (moderate, CVSS 5.9, `AC:H` — complejidad de ataque alta) — afecta `vitest 2.1.0 - 4.1.10` y `@vitest/mocker >= 2.1.0 < 4.1.11`.
+- **Exposición verificada:** `vitest` y `@vitest/coverage-v8` están en `devDependencies` — nunca se empaquetan en `next build` ni se despliegan a Vercel. Solo corren sobre nuestros propios 45 archivos de test al ejecutar `npm run test`/`test:integration`, nunca sobre input de un usuario externo de la aplicación.
+- **Arreglo:** `vitest@5.0.1` (major, `isSemVerMajor: true`) — puede tocar configuración/API de los 45 archivos de test existentes, se trata como tarea aparte y deliberada, no se mezcla con este commit.
+
+### 21.3 Pendientes registrados (ni "solucionados" ni "falsos positivos")
+
+| Cadena | Estado | Próxima revisión |
+|---|---|---|
+| B — `deepmerge-ts`/`@prisma/config`/`prisma` (CLI, dev-only) | Pendiente — sin arreglo estable publicado todavía | Revisar de nuevo cuando Prisma publique una versión estable de `@prisma/config` con `deepmerge-ts >= 8`, o en la próxima auditoría de dependencias trimestral (2026-12) |
+| C — `@vitest/mocker`/`vitest`/`@vitest/coverage-v8` (dev-only, `AC:H`) | Pendiente — arreglo existe (`vitest@5.0.1`) pero es major, requiere esfuerzo propio | Programar como tarea dedicada antes de cerrar el Incremento 4 (evaluar impacto en los 45 archivos de test), o en la auditoría trimestral (2026-12) si no hay urgencia |
+| A — `postcss` (vía `next`, bundleado, build-time) | Pendiente — arreglo existe (`next@16.3.6`) pero es major | Evaluar junto con la migración completa a Next.js 16 (no programada todavía) |
+
+Ninguna de las tres cuentas como cerrada. Las tres siguen apareciendo en `npm audit` hasta que se aplique su arreglo real.
