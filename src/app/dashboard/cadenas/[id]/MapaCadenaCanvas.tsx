@@ -444,6 +444,53 @@ export default function MapaCadenaCanvas({
     [eliminarConexion],
   );
 
+  // Invitacion (RF36, Bloque C) -- un mismo panel sirve para invitar a
+  // toda la Cadena (boton del toolbar, invitarConexionCadenaId null) o a
+  // una ConexionCadena puntual (boton dentro del panel de edicion de
+  // abajo, invitarConexionCadenaId = conexionEditando.id). El invitado
+  // nunca crea cuenta -- ver el comentario de cabecera de invitacion.ts.
+  const [invitarAbierto, setInvitarAbierto] = useState(false);
+  const [invitarConexionCadenaId, setInvitarConexionCadenaId] = useState<string | null>(null);
+  const [emailInvitar, setEmailInvitar] = useState("");
+  const [cargandoInvitar, setCargandoInvitar] = useState(false);
+  const [errorInvitar, setErrorInvitar] = useState<string | null>(null);
+  const [exitoInvitar, setExitoInvitar] = useState(false);
+
+  function abrirInvitar(conexionCadenaId: string | null) {
+    setInvitarConexionCadenaId(conexionCadenaId);
+    setEmailInvitar("");
+    setErrorInvitar(null);
+    setExitoInvitar(false);
+    setInvitarAbierto(true);
+  }
+
+  async function enviarInvitacion() {
+    if (!emailInvitar.trim()) return;
+    setErrorInvitar(null);
+    setExitoInvitar(false);
+    setCargandoInvitar(true);
+    const resultado = await fetchJsonSeguro(`/api/cadenas/${cadenaId}/invitar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: emailInvitar, conexionCadenaId: invitarConexionCadenaId }),
+    });
+    setCargandoInvitar(false);
+
+    if (!resultado.ok) {
+      setErrorInvitar(
+        resultado.error === "ERROR_ENVIO_CORREO"
+          ? "No se pudo enviar el correo. Revisá la configuración de Resend e intentá de nuevo."
+          : resultado.error === "ERROR_RED"
+            ? "No se pudo conectar. Revisá tu conexión e intentá de nuevo."
+            : "No se pudo enviar la invitación. Revisá el email e intentá de nuevo.",
+      );
+      return;
+    }
+
+    setExitoInvitar(true);
+    setEmailInvitar("");
+  }
+
   // Supr/Backspace borra la conexion seleccionada -- solo mientras el
   // panel de edicion esta abierto (conexionEditando != null), para no
   // interceptar esas teclas en ningun otro momento (ej. mientras se
@@ -467,16 +514,25 @@ export default function MapaCadenaCanvas({
           Agregá un nodo con el botón, o arrastrá desde el borde de un nodo hasta otro para
           declarar una conexión.
         </p>
-        <button
-          type="button"
-          onClick={() => {
-            setErrorNodo(null);
-            setPanelNodoAbierto((abierto) => !abierto);
-          }}
-          className="shrink-0 rounded bg-slate-900 px-3 py-1.5 text-sm text-white"
-        >
-          + Nodo
-        </button>
+        <div className="flex shrink-0 gap-2">
+          <button
+            type="button"
+            onClick={() => abrirInvitar(null)}
+            className="rounded border border-slate-300 px-3 py-1.5 text-sm"
+          >
+            Invitar
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setErrorNodo(null);
+              setPanelNodoAbierto((abierto) => !abierto);
+            }}
+            className="rounded bg-slate-900 px-3 py-1.5 text-sm text-white"
+          >
+            + Nodo
+          </button>
+        </div>
       </div>
 
       {panelNodoAbierto && (
@@ -629,6 +685,13 @@ export default function MapaCadenaCanvas({
             </button>
             <button
               type="button"
+              onClick={() => abrirInvitar(conexionEditando.id)}
+              className="rounded border border-slate-300 px-3 py-1.5 text-sm"
+            >
+              Invitar a esta conexión
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 setConexionEditando(null);
                 setFlujosEdicion([]);
@@ -642,6 +705,47 @@ export default function MapaCadenaCanvas({
             Tip: con este panel abierto también podés presionar Supr o Backspace para eliminar la
             conexión.
           </p>
+        </div>
+      )}
+
+      {invitarAbierto && (
+        <div className="flex flex-col gap-2 rounded border border-slate-200 bg-slate-50 p-3">
+          <p className="text-sm font-medium">
+            {invitarConexionCadenaId
+              ? "Invitar a responder sobre esta conexión"
+              : "Invitar a responder sobre toda la cadena"}
+          </p>
+          <p className="text-xs text-slate-500">
+            La persona invitada recibe un correo con un enlace para responder unas pocas
+            preguntas, sin crear ninguna cuenta.
+          </p>
+          <input
+            type="email"
+            placeholder="Email de la persona invitada"
+            required
+            value={emailInvitar}
+            onChange={(e) => setEmailInvitar(e.target.value)}
+            className="rounded border border-slate-300 px-3 py-2 text-sm"
+          />
+          {errorInvitar && <p className="text-sm text-red-600">{errorInvitar}</p>}
+          {exitoInvitar && <p className="text-sm text-green-700">Invitación enviada.</p>}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={cargandoInvitar || !emailInvitar.trim()}
+              onClick={enviarInvitacion}
+              className="rounded bg-slate-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              {cargandoInvitar ? "Enviando..." : "Enviar invitación"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setInvitarAbierto(false)}
+              className="rounded border border-slate-300 px-3 py-1.5 text-sm"
+            >
+              Cerrar
+            </button>
+          </div>
         </div>
       )}
     </div>

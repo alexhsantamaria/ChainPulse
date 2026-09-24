@@ -200,6 +200,48 @@ enum TipoFlujoV2 {
   DEVOLUCION
 }
 
+// Bloque C (RF36-39) -- vocabulario propio de RespuestaCadena, NO
+// reutiliza el sistema versionado de PreguntaVersion/OpcionRespuesta de
+// Q1-Q7 (RF19-26, Usuario de plataforma) -- seria arrastrar toda esa
+// infraestructura de contenido versionado para un cuestionario fijo de
+// 6 dimensiones que no lo necesita (Seccion 14.4/14.5 de requirements.md
+// no lo pide). Las opciones citan el mismo lenguaje que Q1/Q3/Q5 del
+// cuestionario V2 (CHAINPULSE_ESPECIFICACION_FUNCIONAL_TECNICA_V2.md
+// Seccion 7.2) solo por consistencia de UX, sin ninguna FK ni relacion
+// de datos entre ambos sistemas.
+
+// "Prioridad elegida" (RF38) -- mismas 8 opciones de Q1 V2.
+enum PromesaPrincipalCadena {
+  DISPONIBILIDAD
+  RAPIDEZ
+  CUMPLIMIENTO_FECHA_CANTIDAD
+  CALIDAD_CONSISTENCIA
+  PRECIO_EFICIENCIA
+  PERSONALIZACION
+  CONTINUIDAD_INTERRUPCIONES
+  NO_DEFINIDA
+}
+
+// "Conocimiento de entradas/salidas" (RF38) -- mismas 5 opciones de Q3 V2.
+enum ConocimientoEntradaSalida {
+  DEFINIDO_Y_USADO
+  CLARO_PARA_ALGUNAS_AREAS
+  DEPENDE_DE_PERSONAS
+  NO_CLARO
+  NO_SABE
+}
+
+// "Fuente de datos" (RF38) -- mismo catalogo de la subpregunta contextual
+// de Q5 V2.
+enum FuenteDatosCadena {
+  SAP_ERP
+  EXCEL
+  WMS_TMS_APS
+  CORREO_MENSAJERIA
+  VARIOS_SISTEMAS
+  SIN_FUENTE_DEFINIDA
+}
+
 // RF38 -- las seis dimensiones de comparacion multi-rol de V2 Seccion 10.
 enum DimensionComparacionCadena {
   PRIORIDAD_ELEGIDA
@@ -953,6 +995,7 @@ model Cadena {
   nodos      Nodo[]
   conexiones ConexionCadena[]
   hallazgos  HallazgoCadena[]
+  respuestas RespuestaCadena[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -989,6 +1032,9 @@ model Nodo {
 
   conexionesOrigen  ConexionCadena[] @relation("conexion_cadena_origen")
   conexionesDestino ConexionCadena[] @relation("conexion_cadena_destino")
+  // RF38 -- respuestas de RespuestaCadena que eligieron este Nodo como el
+  // mas critico de la cadena.
+  respuestasNodoCritico RespuestaCadena[] @relation("respuesta_cadena_nodo_critico")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1026,8 +1072,9 @@ model ConexionCadena {
   origenHandleId  String?
   destinoHandleId String?
 
-  flujos    FlujoConexionCadena[]
-  hallazgos HallazgoCadena[]
+  flujos     FlujoConexionCadena[]
+  hallazgos  HallazgoCadena[]
+  respuestas RespuestaCadena[]
 
   // RF30 -- requerimiento recibido, cada indicador independiente de si
   // aplica a esta conexion (nunca combinados en un unico indicador).
@@ -1114,4 +1161,63 @@ model HallazgoCadena {
   @@index([empresaId])
   @@index([cadenaId])
   @@map("hallazgos_cadena")
+}
+
+// RF36-38 -- respuesta individual de UN invitado (sin cuenta propia, ver
+// el comentario de cabecera de invitacionCadena.ts) a las preguntas de
+// una Cadena o de una ConexionCadena puntual. "email" es la unica
+// identidad que existe: viene del token de invitacion, nunca de un
+// Usuario -- decision explicita de Alex (2026-09-24): un link sin login,
+// mismo criterio de RF36 ("sin requerir infraestructura adicional") y del
+// mismo patron ya usado en la evaluacion expres anonima. Solo se piden
+// los campos que aplican al alcance de la invitacion (RF37): "toda la
+// cadena" pide prioridadElegida/nodoCriticoId; "una conexion puntual"
+// pide las otras cuatro. El campo que no corresponde a ese alcance queda
+// null, nunca "sin responder" mezclado con "no aplica" (mismo principio
+// que EstadoDato/EstadoEvidencia en otros modelos: null y "no sabe" no
+// son lo mismo -- aca no hay opcion "no sabe" en las 4 preguntas
+// reutilizadas de ConexionCadena/Nodo porque tampoco la tienen alli).
+model RespuestaCadena {
+  id        String  @id @default(cuid())
+  empresaId String
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cadenaId  String
+  cadena    Cadena  @relation(fields: [cadenaId], references: [id], onDelete: Cascade)
+
+  // null = invitacion a la Cadena completa; presente = invitacion acotada
+  // a esta ConexionCadena puntual (RF36, "una cadena o una conexion
+  // concreta").
+  conexionCadenaId String?
+  conexionCadena   ConexionCadena? @relation(fields: [conexionCadenaId], references: [id], onDelete: Cascade)
+
+  email String
+
+  // Alcance "cadena completa":
+  prioridadElegida PromesaPrincipalCadena?
+  nodoCriticoId    String?
+  nodoCritico      Nodo?                   @relation("respuesta_cadena_nodo_critico", fields: [nodoCriticoId], references: [id], onDelete: SetNull)
+
+  // Alcance "conexion puntual":
+  conocimientoEntradasSalidas ConocimientoEntradaSalida?
+  momentoInformacion          DuracionCategorica? // reutiliza el mismo enum de RF3/RF31
+  fuenteDatos                 FuenteDatosCadena?
+  tieneAlternativa            Boolean? // mismo par que ConexionCadena.tieneAlternativa/alternativaProbada
+  alternativaProbada          Boolean?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Identidad real "un invitado responde una sola vez por cadena/conexion,
+  // reabrir el link actualiza en vez de duplicar" -- NO expresable como
+  // @@unique de Prisma porque conexionCadenaId es nullable (Postgres trata
+  // cada NULL como distinto en una unique constraint normal, asi que dos
+  // invitaciones a la Cadena completa con el mismo email no chocarian).
+  // Resuelto con DOS indices unicos PARCIALES a mano en la migracion
+  // 20260924000000_respuesta_cadena (mismo patron ya usado por
+  // 20260916160000_ciclo_abierto_unico) -- no los borres en un futuro
+  // `prisma migrate dev` por "drift", son intencionales.
+  @@index([empresaId])
+  @@index([cadenaId])
+  @@index([conexionCadenaId])
+  @@map("respuestas_cadena")
 }

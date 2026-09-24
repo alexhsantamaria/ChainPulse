@@ -41,6 +41,31 @@ export async function enviarInvitacionResponsable(datos: {
   });
 }
 
+// RF36 — invitacion a responder sobre una Cadena o una conexion puntual
+// del mapa, sin cuenta (el invitado nunca crea un Usuario, ver el
+// comentario de cabecera de invitacion.ts). "alcance" ya viene resuelto
+// en texto desde el llamador -- esta funcion no decide de negocio, solo
+// arma el correo.
+export async function enviarInvitacionCadena(datos: {
+  email: string;
+  empresaNombre: string;
+  cadenaNombre: string;
+  alcanceTexto: string;
+  linkInvitacion: string;
+}): Promise<void> {
+  const cliente = obtenerCliente();
+  await cliente.emails.send({
+    from: REMITENTE,
+    to: datos.email,
+    subject: `${datos.empresaNombre} te invitó a participar en ChainPulse`,
+    html: `
+      <p>Te invitaron a responder sobre ${escaparHtml(datos.alcanceTexto)} de la cadena <strong>${escaparHtml(datos.cadenaNombre)}</strong> en <strong>${escaparHtml(datos.empresaNombre)}</strong> dentro de ChainPulse.</p>
+      <p><a href="${datos.linkInvitacion}">Responder ahora</a></p>
+      <p>No hace falta crear ninguna cuenta. Este enlace vence en 7 días.</p>
+    `,
+  });
+}
+
 // RF5 — aviso de apertura de ciclo a un responsable elegible.
 export async function enviarAvisoCicloAbierto(datos: { email: string; nombre: string }): Promise<void> {
   const cliente = obtenerCliente();

@@ -1,4 +1,8 @@
-// Infraestructura — invitacion de un responsable de eslabon por correo (RF4).
+// Infraestructura — invitacion de un responsable de eslabon por correo
+// (RF4), y desde 2026-09-24 tambien invitacion a una Cadena/ConexionCadena
+// puntual (RF36, ver crearTokenInvitacionCadena() mas abajo) -- mismo
+// mecanismo stateless, audience de JWT distinta para que un token de un
+// tipo nunca sirva como del otro.
 //
 // Decision de implementacion: la invitacion NO se persiste en una tabla
 // propia. Se codifica como un JWT firmado (misma libreria "jose" que usa
@@ -65,6 +69,63 @@ export async function verificarTokenInvitacion(token: string): Promise<PayloadIn
     // se trata igual, como "invitacion invalida", sin distinguir el
     // motivo al cliente (mismo criterio de no dar pistas que ADR-0003 usa
     // en el login).
+    return null;
+  }
+}
+
+// Bloque C (RF36) -- invitacion a una Cadena o a una ConexionCadena
+// puntual, extension del mismo mecanismo de arriba (JWT stateless
+// firmado con "jose", vigencia de 7 dias). AUDIENCE propia y distinta de
+// la de invitacion de responsable: sin esto, un token de invitacion de
+// eslabon (que tambien trae un "empresaId"/"email") pasaria la
+// verificacion de firma de esta funcion igual, solo que sin
+// "cadenaId" -- jwtVerify() ya rechaza por audience antes de llegar a esa
+// revision de campos, asi que un token de un tipo nunca es aceptado como
+// del otro (RNF15: "mismo estandar de no reutilizacion... que RF4").
+// "conexionCadenaId" ausente = invitacion a la Cadena completa; presente
+// = acotada a esa conexion (RF36, "una cadena o una conexion concreta").
+const AUDIENCE_CADENA = "chainpulse:invitacion-cadena";
+
+export interface PayloadInvitacionCadena {
+  empresaId: string;
+  cadenaId: string;
+  conexionCadenaId: string | null;
+  email: string;
+}
+
+export async function crearTokenInvitacionCadena(datos: PayloadInvitacionCadena): Promise<string> {
+  return new SignJWT({
+    empresaId: datos.empresaId,
+    cadenaId: datos.cadenaId,
+    conexionCadenaId: datos.conexionCadenaId,
+    email: datos.email,
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuer(ISSUER)
+    .setAudience(AUDIENCE_CADENA)
+    .setIssuedAt()
+    .setExpirationTime(VIGENCIA)
+    .sign(obtenerSecreto());
+}
+
+export async function verificarTokenInvitacionCadena(token: string): Promise<PayloadInvitacionCadena | null> {
+  try {
+    const { payload } = await jwtVerify(token, obtenerSecreto(), { issuer: ISSUER, audience: AUDIENCE_CADENA });
+    if (
+      typeof payload.empresaId !== "string" ||
+      typeof payload.cadenaId !== "string" ||
+      typeof payload.email !== "string" ||
+      (payload.conexionCadenaId !== null && typeof payload.conexionCadenaId !== "string")
+    ) {
+      return null;
+    }
+    return {
+      empresaId: payload.empresaId,
+      cadenaId: payload.cadenaId,
+      conexionCadenaId: (payload.conexionCadenaId as string | null) ?? null,
+      email: payload.email,
+    };
+  } catch {
     return null;
   }
 }

@@ -74,6 +74,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   "Nodo",
   "ConexionCadena",
   "HallazgoCadena",
+  "RespuestaCadena",
 ]);
 
 export function uncapitalize(model: string): string {
