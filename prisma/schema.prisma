@@ -278,6 +278,8 @@ model Empresa {
   hallazgosCadena HallazgoCadena[]
   respuestasCadena RespuestaCadena[]
   observacionesKpi ObservacionKpi[]
+  observacionesCobertura ObservacionCobertura[]
+  importacionesCsv       ImportacionCsv[]
 
   @@map("empresas")
 }
@@ -318,6 +320,7 @@ model Usuario {
   metricasCuestionario       MetricaCuestionario[]
   recomendacionesEjecutadas  RecomendacionEjecutada[]
   consentimientosCuenta      ConsentimientoCuenta[]
+  importacionesCsvConfirmadas ImportacionCsv[]
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -1000,6 +1003,8 @@ model Cadena {
   hallazgos  HallazgoCadena[]
   respuestas RespuestaCadena[]
   observacionesKpi ObservacionKpi[]
+  observacionesCobertura ObservacionCobertura[]
+  importacionesCsv       ImportacionCsv[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1290,6 +1295,8 @@ model DefinicionKpi {
   notasCambio     String?
 
   observaciones ObservacionKpi[]
+  observacionesCobertura ObservacionCobertura[]
+  importacionesCsv       ImportacionCsv[]
 
   @@unique([codigo, numero])
   @@index([curadorId])
@@ -1344,4 +1351,215 @@ model ObservacionKpi {
   @@index([cadenaId])
   @@index([definicionKpiId])
   @@map("observaciones_kpi")
+}
+
+// Incremento 4 Bloque B -- ImportacionCsv + ObservacionCobertura.
+// CONFIRMADO por Alex el 2026-09-24 (las 4 preguntas abiertas de la
+// propuesta de arriba, todas con la opcion recomendada): normalizar
+// SKU/ubicacion a mayusculas; el alcance de una correccion se declara
+// EXPLICITO (rango de fechaCorte) en la UI de confirmacion, nunca
+// inferido del archivo; el modelo de historial/correccion aplica SOLO a
+// Cobertura, ObservacionKpi (los otros 9 KPIs) sigue con su upsert
+// silencioso ya migrado, sin tocar esa tabla; sin reproceso retroactivo
+// automatico al subir RULE_VERSION_KPIS -- una fila persistida nunca
+// cambia de ruleVersion. Migracion de schema solamente -- todavia no
+// existe el codigo del importador (cliente R2, job de pg-boss, UI de
+// previsualizacion), eso sigue esperando las credenciales de R2.
+//
+// ImportacionCsv es generica por KPI (definicionKpiId), pero HOY solo la
+// usa Cobertura (via observacionesCobertura) -- CSV para los otros 9 KPIs
+// (que persisten en ObservacionKpi, no aca) queda pendiente de diseño
+// propio cuando se construya, sin tocar esta tabla ni ObservacionKpi.
+enum EstadoImportacion {
+  PENDIENTE_REVISION
+  CONFIRMADA
+  DESCARTADA
+  ERROR
+}
+
+// CONFIRMADO por Alex el 2026-09-24 (precision sobre la propuesta
+// original): un rango de fechas por si solo NUNCA autoriza a retirar
+// todo lo que caiga en ese rango -- el alcance de una correccion exige
+// TAMBIEN declarar las ubicaciones incluidas explicitamente
+// (ImportacionCsv.alcanceUbicaciones). Empresa/cadena/fuente ya estan
+// implicitos (empresaId/cadenaId de la propia importacion, fuente="csv"
+// siempre para filas que vienen de aca).
+enum EstrategiaImportacionCsv {
+  // Los SKU/ubicaciones ausentes del archivo NO se tocan -- agrega o
+  // corrige solo lo que el archivo trae.
+  CARGA_PARCIAL
+  // Cualquier ObservacionCobertura vigente dentro del alcance declarado
+  // (cadena + fuente="csv" + fechaCorte en rango + ubicacion en
+  // alcanceUbicaciones) que NO este en este archivo se retira
+  // explicitamente (vigente=false, reemplazadaPorId=null), conservando su
+  // historial -- nunca se borra la fila.
+  REEMPLAZO_ALCANCE
+}
+
+model ImportacionCsv {
+  id              String        @id @default(cuid())
+  empresaId       String
+  empresa         Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cadenaId        String
+  cadena          Cadena        @relation(fields: [cadenaId], references: [id], onDelete: Cascade)
+  definicionKpiId String
+  definicionKpi   DefinicionKpi @relation(fields: [definicionKpiId], references: [id], onDelete: Restrict)
+
+  objetoStorageKey String // clave en R2 -- el archivo crudo NUNCA se persiste en Postgres
+  // Propuesta de mapeo de columnas (heuristica del job de parseo,
+  // editable por el usuario antes de confirmar) -- nullable: puede no
+  // existir todavia en el instante entre "subido a R2" y "el job ya lo
+  // parseo".
+  mapeoColumnas   Json?
+  filasDetectadas Int  @default(0)
+  filasConError   Int  @default(0)
+  erroresMuestra  Json?
+  estado          EstadoImportacion @default(PENDIENTE_REVISION)
+
+  // Estrategia declarada EXPLICITAMENTE por el usuario en la UI de
+  // confirmacion (Alex, 2026-09-24) -- nunca inferida del contenido del
+  // archivo. Default CARGA_PARCIAL: la opcion que nunca retira nada por
+  // accidente.
+  estrategia EstrategiaImportacionCsv @default(CARGA_PARCIAL)
+  // Alcance de una correccion -- SOLO se usa (y es obligatorio, CHECK en
+  // la migracion) cuando estrategia=REEMPLAZO_ALCANCE. Un rango de fechas
+  // por si solo NO autoriza a retirar nada -- hace falta ademas la lista
+  // de ubicaciones incluidas (Alex, 2026-09-24). Ignorados en
+  // CARGA_PARCIAL.
+  alcanceFechaCorteInicio DateTime? @db.Date
+  alcanceFechaCorteFin    DateTime? @db.Date
+  // Array JSON de ubicaciones normalizadas (mismo criterio que
+  // ObservacionCobertura.ubicacion) incluidas en el alcance -- una
+  // ubicacion vigente que NO este en esta lista nunca se retira, aunque
+  // su fechaCorte caiga en el rango.
+  alcanceUbicaciones Json?
+
+  confirmadaPorId String?
+  confirmadaPor   Usuario?  @relation(fields: [confirmadaPorId], references: [id])
+  confirmadaEn    DateTime?
+
+  observacionesCobertura ObservacionCobertura[]
+
+  createdAt DateTime @default(now())
+
+  @@index([empresaId])
+  @@index([cadenaId])
+  @@index([definicionKpiId])
+  @@map("importaciones_csv")
+}
+
+enum EstadoObservacionCobertura {
+  CALCULADA
+  SIN_CONSUMO_REFERENCIA
+  DATOS_INCOMPLETOS
+  VALOR_NEGATIVO
+  UNIDADES_INCOMPATIBLES
+  // DUPLICADO no aplica aca -- calcularCobertura() ya excluye los
+  // duplicados en conflicto ANTES de llegar a persistencia (src/engine/
+  // kpis/cobertura.ts) -- esta tabla solo guarda resultados que superaron
+  // esa etapa en memoria.
+}
+
+// UNA observacion de Cobertura por SKU+ubicacion+fecha de corte -- a
+// diferencia de ObservacionKpi (un valor agregado por periodo), Cobertura
+// no tiene ningun agregado entre SKU ("la agregacion de cobertura entre
+// SKU queda fuera de esta implementacion hasta acordar su metodologia",
+// Alex 2026-09-24) por eso necesita su propia tabla en vez de reusar
+// ObservacionKpi -- ver PLAN-DE-TRABAJO.md, seccion de Incremento 4
+// Bloque B, para el razonamiento completo (3 claves: observacion de
+// negocio, intento de importacion, huella de contenido) y los 4 casos de
+// correccion con ejemplos.
+model ObservacionCobertura {
+  id              String        @id @default(cuid())
+  empresaId       String
+  empresa         Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cadenaId        String
+  cadena          Cadena        @relation(fields: [cadenaId], references: [id], onDelete: Cascade)
+  definicionKpiId String
+  definicionKpi   DefinicionKpi @relation(fields: [definicionKpiId], references: [id], onDelete: Restrict)
+
+  // -- Clave de observacion de negocio --
+  // CORREGIDO 2026-09-24 (precision de Alex sobre la propuesta original):
+  // normalizados por la capa de ingesta ANTES de llegar aca -- SOLO
+  // mayusculas + trim de espacios en los extremos. NUNCA se tocan ceros
+  // iniciales, guiones, NI espacios internos (la propuesta original decia
+  // "colapsar espacios internos" -- corregido, eso tambien se preserva).
+  // Esta tabla guarda el valor YA normalizado (sku/ubicacion, usado para
+  // la clave de negocio y los indices unicos) mas el valor ORIGINAL sin
+  // tocar (*Original, solo para mostrar/auditar -- nunca se usa para
+  // comparar ni deduplicar). Si dos filas del mismo archivo normalizan a
+  // la misma clave pero traen datos distintos, el importador debe
+  // reportarlo como duplicado -- NUNCA fusionarlas ni quedarse con una en
+  // silencio (mismo choque que ya detecta el indice unico parcial de
+  // manual/pegado, ver mas abajo).
+  sku            String
+  skuOriginal    String
+  ubicacion         String
+  ubicacionOriginal String
+  fechaCorte            DateTime @db.Date // fecha de NEGOCIO (solo dia) -- evita que una medianoche UTC se lea como el dia anterior en la UI
+  zonaHorariaReferencia String   // zona horaria IANA usada por diaEnZona() para calcular fechaCorte -- se guarda para poder auditar/recalcular, nunca se asume despues
+
+  inventarioDisponible  Float?
+  unidadInventario      String
+  consumoDiarioEsperado Float?
+  unidadConsumoDiario   String
+  // Regla de Alex (ronda 3 de la revision de KPIs): el consumo esperado
+  // debe recibirse como dato, con fuente y periodo de referencia
+  // declarados -- nunca inferido en silencio.
+  fuenteConsumo                  String
+  periodoReferenciaConsumoInicio DateTime? @db.Date
+  periodoReferenciaConsumoFin    DateTime? @db.Date
+
+  coberturaDias Float?
+  estado        EstadoObservacionCobertura
+  ruleVersion   String // RULE_VERSION_KPIS al momento del calculo -- CONFIRMADO 2026-09-24: nunca se reescribe con una version distinta, sin reproceso retroactivo automatico.
+
+  fuente String // "manual" | "pegado" | "csv" -- canal de ingreso, mismo criterio que ObservacionKpi.fuente
+
+  // -- Clave de intento de importacion (null para manual/pegado) --
+  importId   String?
+  importacion ImportacionCsv? @relation(fields: [importId], references: [id], onDelete: SetNull)
+  numeroFila Int?
+
+  // -- Huella de contenido -- sha256 de {sku, ubicacion, fechaCorte,
+  // inventarioDisponible, unidadInventario, consumoDiarioEsperado,
+  // unidadConsumoDiario, fuenteConsumo, periodoReferenciaConsumo*,
+  // ruleVersion} con claves ordenadas -- distingue reintento identico
+  // (no-op) de correccion real (contenido distinto).
+  contenidoHash String
+
+  // -- Correccion / vigencia -- nunca UPDATE en el lugar: una correccion
+  // inserta una fila nueva y marca la anterior no vigente, con
+  // trazabilidad explicita (ver los 4 casos documentados en
+  // PLAN-DE-TRABAJO.md).
+  vigente          Boolean   @default(true)
+  reemplazadaPorId String?   @unique
+  reemplazadaPor   ObservacionCobertura? @relation("SupersedeCobertura", fields: [reemplazadaPorId], references: [id], onDelete: Restrict)
+  reemplazaA       ObservacionCobertura? @relation("SupersedeCobertura")
+  reemplazadaEn    DateTime?
+
+  createdAt DateTime @default(now())
+
+  // Los DOS indices unicos parciales de idempotencia (dedup manual/pegado
+  // por clave de negocio + retry-safety de CSV por importId+numeroFila)
+  // NO son representables como un solo @@unique de Prisma -- un solo
+  // @@unique sobre columnas nullable no impide duplicados manuales
+  // (Postgres trata cada NULL como distinto). Se escriben a mano en la
+  // migracion, mismo patron que uq_definicion_kpi_publicada -- no los
+  // borres en un futuro `prisma migrate dev` por "drift".
+  @@index([empresaId])
+  @@index([cadenaId])
+  @@index([definicionKpiId])
+  @@index([importId])
+  // Consulta real: "dame la cobertura vigente de este SKU/ubicacion/fecha".
+  // map explicito: el nombre auto-generado por Prisma para esta
+  // combinacion mide 76 caracteres, supera el limite de 63 de Postgres y
+  // se truncaria de un modo que no podemos verificar sin el engine de
+  // Prisma (bloqueado en el Mac, ver README.md) -- mismo riesgo que ya
+  // causo un problema real con curadorId en
+  // 20260924020000_incremento4_kpis_bloque_a. Nombrado a mano en ambos
+  // lados (aca y en la migracion) para que coincidan siempre, sin
+  // depender de adivinar el truncamiento de Prisma.
+  @@index([cadenaId, sku, ubicacion, fechaCorte, fuente, vigente], map: "idx_observaciones_cobertura_vigente_lookup")
+  @@map("observaciones_cobertura")
 }
