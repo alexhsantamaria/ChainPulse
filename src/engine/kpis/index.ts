@@ -16,8 +16,13 @@ export type { FilaFillRate } from "./fillRate";
 export { calcularStockout } from "./stockout";
 export type { FilaStockout } from "./stockout";
 
+// Cobertura NO devuelve ResultadoCalculoKpi -- ver el comentario de
+// cabecera de cobertura.ts. Devuelve un detalle por SKU+ubicacion
+// (`porSku`), sin ningun campo de agregado: "La agregacion de cobertura
+// entre SKU queda fuera de esta implementacion hasta acordar su
+// metodologia" (Alex, 2026-09-24).
 export { calcularCobertura } from "./cobertura";
-export type { FilaCobertura } from "./cobertura";
+export type { FilaCobertura, EstadoCoberturaFila, CoberturaPorSku, ResultadoCobertura } from "./cobertura";
 
 export { calcularLeadTime } from "./leadTime";
 export type { FilaLeadTime } from "./leadTime";
