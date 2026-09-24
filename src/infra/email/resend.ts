@@ -6,6 +6,24 @@
 // flujo de invitacion ahora; verificar un dominio propio queda pendiente
 // para cuando se invite a gente real de las empresas piloto (no bloquea
 // el Incremento 1).
+//
+// IMPORTANTE -- el SDK de Resend NO lanza excepcion en un fallo de la
+// API (dominio de prueba, rebote, rate limit, etc): `emails.send()`
+// devuelve siempre `{ data, error }`, nunca rechaza la promesa (ver
+// `Response<T>` en node_modules/resend/dist/index.d.mts). Bug real
+// encontrado por Alex 2026-09-24: invito a 2 direcciones distintas
+// probando Bloque C Paso 3, la 2da (fuera del dominio de prueba)
+// devolvio 403 de Resend pero la UI no mostro ningun error -- porque
+// estas funciones hacian `await cliente.emails.send(...)` sin revisar
+// `error`, asi que el 403 se tragaba en silencio y el llamador (ej.
+// api/cadenas/[id]/invitar) creia que el correo se habia enviado bien.
+// Por eso TODA funcion de aca abajo revisa `error` explicitamente y
+// lanza -- asi el try/catch de cada ruta (que ya existia) lo atrapa de
+// verdad y le devuelve un error real al usuario, en vez de un falso
+// exito. Mismo criterio para las 4 funciones, no solo la de invitacion
+// de cadena: enviarCorreoRecuperacion es la mas sensible (RF/recuperar-
+// contrasena) -- un fallo silencioso ahi deja a alguien esperando un
+// correo que nunca va a llegar, sin forma de saberlo.
 import { Resend } from "resend";
 
 function obtenerCliente(): Resend {
@@ -29,7 +47,7 @@ export async function enviarInvitacionResponsable(datos: {
   linkInvitacion: string;
 }): Promise<void> {
   const cliente = obtenerCliente();
-  await cliente.emails.send({
+  const { error } = await cliente.emails.send({
     from: REMITENTE,
     to: datos.email,
     subject: `${datos.empresaNombre} te invitó a ChainPulse`,
@@ -39,6 +57,9 @@ export async function enviarInvitacionResponsable(datos: {
       <p>Este enlace vence en 7 días.</p>
     `,
   });
+  if (error) {
+    throw new Error(`Resend enviarInvitacionResponsable: ${error.message}`);
+  }
 }
 
 // RF36 — invitacion a responder sobre una Cadena o una conexion puntual
@@ -54,7 +75,7 @@ export async function enviarInvitacionCadena(datos: {
   linkInvitacion: string;
 }): Promise<void> {
   const cliente = obtenerCliente();
-  await cliente.emails.send({
+  const { error } = await cliente.emails.send({
     from: REMITENTE,
     to: datos.email,
     subject: `${datos.empresaNombre} te invitó a participar en ChainPulse`,
@@ -64,12 +85,15 @@ export async function enviarInvitacionCadena(datos: {
       <p>No hace falta crear ninguna cuenta. Este enlace vence en 7 días.</p>
     `,
   });
+  if (error) {
+    throw new Error(`Resend enviarInvitacionCadena: ${error.message}`);
+  }
 }
 
 // RF5 — aviso de apertura de ciclo a un responsable elegible.
 export async function enviarAvisoCicloAbierto(datos: { email: string; nombre: string }): Promise<void> {
   const cliente = obtenerCliente();
-  await cliente.emails.send({
+  const { error } = await cliente.emails.send({
     from: REMITENTE,
     to: datos.email,
     subject: "Nuevo ciclo de pulso abierto en ChainPulse",
@@ -78,13 +102,16 @@ export async function enviarAvisoCicloAbierto(datos: { email: string; nombre: st
       <p>Se abrió un nuevo ciclo de pulso para las conexiones de tu eslabón. Ingresá a ChainPulse para responder el cuestionario.</p>
     `,
   });
+  if (error) {
+    throw new Error(`Resend enviarAvisoCicloAbierto: ${error.message}`);
+  }
 }
 
 // Recuperacion de contraseña -- enlace de un solo uso (ver
 // src/infra/auth/recuperacion.ts), vence en 1 hora.
 export async function enviarCorreoRecuperacion(datos: { email: string; nombre: string; link: string }): Promise<void> {
   const cliente = obtenerCliente();
-  await cliente.emails.send({
+  const { error } = await cliente.emails.send({
     from: REMITENTE,
     to: datos.email,
     subject: "Recuperá tu contraseña de ChainPulse",
@@ -95,4 +122,7 @@ export async function enviarCorreoRecuperacion(datos: { email: string; nombre: s
       <p>Este enlace vence en 1 hora. Si no pediste esto, podés ignorar este correo -- tu contraseña actual sigue funcionando.</p>
     `,
   });
+  if (error) {
+    throw new Error(`Resend enviarCorreoRecuperacion: ${error.message}`);
+  }
 }
