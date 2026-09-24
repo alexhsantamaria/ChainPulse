@@ -154,7 +154,7 @@ function NodoCadenaVisual({ data }: NodeProps) {
 
 const TIPOS_NODO_REACT_FLOW = { nodoCadena: NodoCadenaVisual };
 
-function construirNodos(nodos: NodoProp[]): Node[] {
+function construirNodos(nodos: NodoProp[], nodoSeleccionadoId: string | null): Node[] {
   return nodos.map((nodo, indice) => {
     const estilo = ESTILO_TIPO[nodo.tipo];
     // Posicion elegida por el usuario si ya arrastro este nodo alguna
@@ -163,6 +163,15 @@ function construirNodos(nodos: NodoProp[]): Node[] {
       nodo.posX !== null && nodo.posY !== null
         ? { x: nodo.posX, y: nodo.posY }
         : { x: (indice % COLUMNAS) * ANCHO_COLUMNA, y: Math.floor(indice / COLUMNAS) * ALTO_FILA };
+    // Resaltado de seleccion (Alex, 2026-09-24: "cuando senalamos o
+    // seleccionamos un proceso o conexion seria bueno que se resalte") --
+    // React Flow trae seleccion nativa via onNodesChange/`node.selected`,
+    // pero este canvas ya es "controlado" desde el estado propio `nodos`
+    // sin onNodesChange conectado (mismo criterio que el comentario de
+    // cabecera sobre `conexionEditando` en vez de `edge.selected`: mas
+    // simple resaltar a mano que sincronizar contra el estado interno de
+    // seleccion de la libreria).
+    const seleccionado = nodo.id === nodoSeleccionadoId;
     return {
       id: nodo.id,
       type: "nodoCadena",
@@ -176,29 +185,43 @@ function construirNodos(nodos: NodoProp[]): Node[] {
         fontSize: 12,
         whiteSpace: "pre-line" as const,
         width: 180,
+        boxShadow: seleccionado ? `0 0 0 3px ${estilo.borde}66` : "none",
       },
     };
   });
 }
 
-function construirAristas(conexiones: ConexionProp[]): Edge[] {
-  return conexiones.map((conexion) => ({
-    id: conexion.id,
-    source: conexion.origenNodoId,
-    target: conexion.destinoNodoId,
-    // undefined (no null) para conexiones viejas sin esto guardado -- ver
-    // el comentario de cabecera del archivo.
-    sourceHandle: conexion.origenHandleId ?? undefined,
-    targetHandle: conexion.destinoHandleId ?? undefined,
-    label: conexion.flujos.map((f) => ETIQUETA_FLUJO[f.tipo]).join(", "),
-    labelStyle: { fontSize: 10 },
-    animated: false,
-    // Punto D del documento de revision -- sin flecha no se distingue
-    // origen de destino a simple vista, sobre todo con el layout en
-    // grilla (no siempre queda claro que fila "sigue" a cual).
-    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
-    style: { strokeWidth: 1.5 },
-  }));
+function construirAristas(conexiones: ConexionProp[], conexionSeleccionadaId: string | null): Edge[] {
+  return conexiones.map((conexion) => {
+    // Mismo resaltado que construirNodos() -- a mano, sin depender de
+    // `edge.selected` de React Flow (ver el comentario de cabecera del
+    // archivo sobre por que ya se evita sincronizar contra el estado
+    // interno de seleccion de la libreria).
+    const seleccionada = conexion.id === conexionSeleccionadaId;
+    const colorResaltado = "#2563eb";
+    return {
+      id: conexion.id,
+      source: conexion.origenNodoId,
+      target: conexion.destinoNodoId,
+      // undefined (no null) para conexiones viejas sin esto guardado -- ver
+      // el comentario de cabecera del archivo.
+      sourceHandle: conexion.origenHandleId ?? undefined,
+      targetHandle: conexion.destinoHandleId ?? undefined,
+      label: conexion.flujos.map((f) => ETIQUETA_FLUJO[f.tipo]).join(", "),
+      labelStyle: { fontSize: 10, fontWeight: seleccionada ? 700 : 400 },
+      animated: false,
+      // Punto D del documento de revision -- sin flecha no se distingue
+      // origen de destino a simple vista, sobre todo con el layout en
+      // grilla (no siempre queda claro que fila "sigue" a cual).
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        width: 18,
+        height: 18,
+        color: seleccionada ? colorResaltado : undefined,
+      },
+      style: { strokeWidth: seleccionada ? 3 : 1.5, stroke: seleccionada ? colorResaltado : undefined },
+    };
+  });
 }
 
 export default function MapaCadenaCanvas({
@@ -213,8 +236,12 @@ export default function MapaCadenaCanvas({
   const [nodos, setNodos] = useState<NodoProp[]>(nodosIniciales);
   const [conexiones, setConexiones] = useState<ConexionProp[]>(conexionesIniciales);
 
-  const nodosFlow = useMemo(() => construirNodos(nodos), [nodos]);
-  const aristasFlow = useMemo(() => construirAristas(conexiones), [conexiones]);
+  // Id del nodo resaltado por click (ver el comentario de construirNodos()
+  // sobre por que esto se maneja a mano en vez de con `node.selected` de
+  // React Flow). Nulo = ningun nodo resaltado.
+  const [nodoSeleccionadoId, setNodoSeleccionadoId] = useState<string | null>(null);
+
+  const nodosFlow = useMemo(() => construirNodos(nodos, nodoSeleccionadoId), [nodos, nodoSeleccionadoId]);
 
   // Panel "+ Nodo".
   const [panelNodoAbierto, setPanelNodoAbierto] = useState(false);
@@ -355,10 +382,28 @@ export default function MapaCadenaCanvas({
   const [cargandoEdicion, setCargandoEdicion] = useState(false);
   const [errorEdicion, setErrorEdicion] = useState<string | null>(null);
 
+  // Resaltado de la conexion con el panel de edicion abierto -- mismo
+  // criterio que nodoSeleccionadoId mas arriba. Va aca (no junto a
+  // nodosFlow) porque depende de conexionEditando, declarado recien acá.
+  const aristasFlow = useMemo(
+    () => construirAristas(conexiones, conexionEditando?.id ?? null),
+    [conexiones, conexionEditando],
+  );
+
+  const onNodeClick = useCallback((_evento: unknown, nodo: Node) => {
+    setNodoSeleccionadoId(nodo.id);
+    // Un click sobre un nodo mientras el panel de edicion de una conexion
+    // esta abierto lo cierra -- solo una cosa resaltada/editandose a la
+    // vez, mismo criterio que onPaneClick de mas abajo.
+    setConexionEditando(null);
+    setFlujosEdicion([]);
+  }, []);
+
   const onEdgeClick = useCallback(
     (_evento: unknown, arista: Edge) => {
       const conexion = conexiones.find((c) => c.id === arista.id);
       if (!conexion) return;
+      setNodoSeleccionadoId(null);
       setErrorEdicion(null);
       setFlujosEdicion(conexion.flujos.map((f) => f.tipo));
       setConexionEditando(conexion);
@@ -367,10 +412,12 @@ export default function MapaCadenaCanvas({
   );
 
   // Click en el fondo del canvas (no sobre un nodo/arista) cierra el panel
-  // de edicion sin guardar, mismo criterio que "Cancelar".
+  // de edicion sin guardar, mismo criterio que "Cancelar", y quita el
+  // resaltado de nodo si habia uno.
   const onPaneClick = useCallback(() => {
     setConexionEditando(null);
     setFlujosEdicion([]);
+    setNodoSeleccionadoId(null);
   }, []);
 
   function alternarFlujoEdicion(tipo: TipoFlujoV2) {
@@ -614,6 +661,7 @@ export default function MapaCadenaCanvas({
           // porque ahi es donde el mouse quedaba mas cerca del punto).
           connectionRadius={40}
           onConnect={onConnect}
+          onNodeClick={onNodeClick}
           onNodeDragStop={onNodeDragStop}
           onEdgeClick={onEdgeClick}
           onPaneClick={onPaneClick}
