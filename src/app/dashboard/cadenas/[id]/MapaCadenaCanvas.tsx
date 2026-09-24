@@ -74,6 +74,13 @@ import type { RespuestaApiBase } from "@/infra/http/fetchJsonSeguro";
 type TipoNodo = "ORGANIZACION" | "AREA" | "INSTALACION" | "PROCESO" | "PERSONA_DECISORA" | "SISTEMA";
 type TipoFlujoV2 = "PRODUCTO_SERVICIO" | "INFORMACION" | "DINERO" | "DECISION" | "DEVOLUCION";
 
+// RF30-33 -- mismos valores que los enums DuracionCategorica/NivelImpacto/
+// EstadoEvidencia (prisma/schema.prisma), repetidos como union de strings,
+// mismo criterio que TipoFlujoV2 de arriba (ADR-0003).
+type DuracionCategoricaV2 = "CORTO" | "MEDIO" | "LARGO";
+type NivelImpactoV2 = "BAJO" | "MEDIO" | "ALTO" | "CRITICO";
+type EstadoEvidenciaV2Valor = "DECLARADO" | "CONFIRMADO_POR_OTROS" | "VERIFICADO_CON_DATOS";
+
 interface NodoProp {
   id: string;
   nombre: string;
@@ -91,6 +98,28 @@ interface ConexionProp {
   // por que esto hace falta (React Flow, sin esto, dibuja siempre arriba).
   origenHandleId: string | null;
   destinoHandleId: string | null;
+  // RF30-33 -- datos de la conexion del mapa, existian en el schema desde
+  // el Bloque A pero nunca se exponian en ningun formulario hasta ahora.
+  requerimientoCantidad: boolean;
+  requerimientoFecha: boolean;
+  requerimientoEspecificacion: boolean;
+  requerimientoAprobacion: boolean;
+  requerimientoPago: boolean;
+  coincidePrioridad: boolean | null;
+  coincideCantidad: boolean | null;
+  coincideFecha: boolean | null;
+  oportunidadInformacion: DuracionCategoricaV2 | null;
+  responsableDecision: string | null;
+  impactoFalla: NivelImpactoV2 | null;
+  tieneAlternativa: boolean | null;
+  alternativaProbada: boolean | null;
+  tiempoTolerable: DuracionCategoricaV2 | null;
+  tiempoRecuperacion: DuracionCategoricaV2 | null;
+  estadoEvidencia: EstadoEvidenciaV2Valor;
+  // RF35 -- string ISO (no Date): pasar un Date de Server a Client
+  // Component no es un tipo serializable garantizado por React Flight,
+  // asi que page.tsx ya lo convierte antes de pasarlo como prop.
+  updatedAt: string;
 }
 
 interface RespuestaNodoApi extends RespuestaApiBase {
@@ -99,6 +128,124 @@ interface RespuestaNodoApi extends RespuestaApiBase {
 
 interface RespuestaConexionApi extends RespuestaApiBase {
   conexionCadenaId?: string;
+}
+
+// RF30-33 -- mismas etiquetas ya usadas para los 5 campos equivalentes de
+// Conexion v1 (ConexionForm.tsx) y para EstadoEvidenciaV2 en el
+// cuestionario publico (src/lib/evaluacionExpres/etiquetas.ts), para no
+// inventar un segundo vocabulario para el mismo concepto.
+const ETIQUETA_DURACION: Record<DuracionCategoricaV2, string> = {
+  CORTO: "Corto (menos de 24 horas)",
+  MEDIO: "Medio (entre 24 horas y 1 semana)",
+  LARGO: "Largo (más de 1 semana)",
+};
+const DURACIONES: DuracionCategoricaV2[] = ["CORTO", "MEDIO", "LARGO"];
+
+const ETIQUETA_IMPACTO: Record<NivelImpactoV2, string> = {
+  BAJO: "Bajo",
+  MEDIO: "Medio",
+  ALTO: "Alto",
+  CRITICO: "Crítico",
+};
+const NIVELES_IMPACTO: NivelImpactoV2[] = ["BAJO", "MEDIO", "ALTO", "CRITICO"];
+
+const ETIQUETA_ESTADO_EVIDENCIA: Record<EstadoEvidenciaV2Valor, string> = {
+  DECLARADO: "Declarado",
+  CONFIRMADO_POR_OTROS: "Confirmado por otros",
+  VERIFICADO_CON_DATOS: "Verificado con datos",
+};
+const ESTADOS_EVIDENCIA: EstadoEvidenciaV2Valor[] = ["DECLARADO", "CONFIRMADO_POR_OTROS", "VERIFICADO_CON_DATOS"];
+
+// Estado del formulario de RF30-33 -- mismo criterio que DatosCriticidad
+// de ConexionForm.tsx (v1): selects/booleans nulos representados como ""
+// en el form, convertidos a boolean | null recien al armar el payload.
+interface DatosConexionForm {
+  requerimientoCantidad: boolean;
+  requerimientoFecha: boolean;
+  requerimientoEspecificacion: boolean;
+  requerimientoAprobacion: boolean;
+  requerimientoPago: boolean;
+  coincidePrioridad: string;
+  coincideCantidad: string;
+  coincideFecha: string;
+  oportunidadInformacion: DuracionCategoricaV2 | "";
+  responsableDecision: string;
+  impactoFalla: NivelImpactoV2 | "";
+  tieneAlternativa: string;
+  alternativaProbada: string;
+  tiempoTolerable: DuracionCategoricaV2 | "";
+  tiempoRecuperacion: DuracionCategoricaV2 | "";
+  estadoEvidencia: EstadoEvidenciaV2Valor;
+}
+
+const DATOS_CONEXION_VACIOS: DatosConexionForm = {
+  requerimientoCantidad: false,
+  requerimientoFecha: false,
+  requerimientoEspecificacion: false,
+  requerimientoAprobacion: false,
+  requerimientoPago: false,
+  coincidePrioridad: "",
+  coincideCantidad: "",
+  coincideFecha: "",
+  oportunidadInformacion: "",
+  responsableDecision: "",
+  impactoFalla: "",
+  tieneAlternativa: "",
+  alternativaProbada: "",
+  tiempoTolerable: "",
+  tiempoRecuperacion: "",
+  estadoEvidencia: "DECLARADO",
+};
+
+function boolAString(valor: boolean | null): string {
+  return valor === true ? "si" : valor === false ? "no" : "";
+}
+
+function stringABool(valor: string): boolean | null {
+  return valor === "" ? null : valor === "si";
+}
+
+function datosFormDesdeConexion(conexion: ConexionProp): DatosConexionForm {
+  return {
+    requerimientoCantidad: conexion.requerimientoCantidad,
+    requerimientoFecha: conexion.requerimientoFecha,
+    requerimientoEspecificacion: conexion.requerimientoEspecificacion,
+    requerimientoAprobacion: conexion.requerimientoAprobacion,
+    requerimientoPago: conexion.requerimientoPago,
+    coincidePrioridad: boolAString(conexion.coincidePrioridad),
+    coincideCantidad: boolAString(conexion.coincideCantidad),
+    coincideFecha: boolAString(conexion.coincideFecha),
+    oportunidadInformacion: conexion.oportunidadInformacion ?? "",
+    responsableDecision: conexion.responsableDecision ?? "",
+    impactoFalla: conexion.impactoFalla ?? "",
+    tieneAlternativa: boolAString(conexion.tieneAlternativa),
+    alternativaProbada: boolAString(conexion.alternativaProbada),
+    tiempoTolerable: conexion.tiempoTolerable ?? "",
+    tiempoRecuperacion: conexion.tiempoRecuperacion ?? "",
+    estadoEvidencia: conexion.estadoEvidencia,
+  };
+}
+
+// Forma -> payload del PATCH (campo "datos", ver actualizarFlujosConexionCadena.ts).
+function datosFormAPayload(form: DatosConexionForm) {
+  return {
+    requerimientoCantidad: form.requerimientoCantidad,
+    requerimientoFecha: form.requerimientoFecha,
+    requerimientoEspecificacion: form.requerimientoEspecificacion,
+    requerimientoAprobacion: form.requerimientoAprobacion,
+    requerimientoPago: form.requerimientoPago,
+    coincidePrioridad: stringABool(form.coincidePrioridad),
+    coincideCantidad: stringABool(form.coincideCantidad),
+    coincideFecha: stringABool(form.coincideFecha),
+    oportunidadInformacion: form.oportunidadInformacion || null,
+    responsableDecision: form.responsableDecision.trim() || null,
+    impactoFalla: form.impactoFalla || null,
+    tieneAlternativa: stringABool(form.tieneAlternativa),
+    alternativaProbada: stringABool(form.alternativaProbada),
+    tiempoTolerable: form.tiempoTolerable || null,
+    tiempoRecuperacion: form.tiempoRecuperacion || null,
+    estadoEvidencia: form.estadoEvidencia,
+  };
 }
 
 // Colores por tipo de nodo -- distinguir visualmente organizacion/area/
@@ -366,6 +513,25 @@ export default function MapaCadenaCanvas({
         flujos: flujosElegidos.map((tipo) => ({ tipo })),
         origenHandleId: pendiente.origenHandleId,
         destinoHandleId: pendiente.destinoHandleId,
+        // RF30-33/RF35 -- una conexion recien creada todavia no tiene
+        // ningun dato declarado, mismos valores por defecto que el schema.
+        requerimientoCantidad: false,
+        requerimientoFecha: false,
+        requerimientoEspecificacion: false,
+        requerimientoAprobacion: false,
+        requerimientoPago: false,
+        coincidePrioridad: null,
+        coincideCantidad: null,
+        coincideFecha: null,
+        oportunidadInformacion: null,
+        responsableDecision: null,
+        impactoFalla: null,
+        tieneAlternativa: null,
+        alternativaProbada: null,
+        tiempoTolerable: null,
+        tiempoRecuperacion: null,
+        estadoEvidencia: "DECLARADO",
+        updatedAt: new Date().toISOString(),
       },
     ]);
     setPendiente(null);
@@ -379,6 +545,10 @@ export default function MapaCadenaCanvas({
   // conexion clickeada.
   const [conexionEditando, setConexionEditando] = useState<ConexionProp | null>(null);
   const [flujosEdicion, setFlujosEdicion] = useState<TipoFlujoV2[]>([]);
+  // RF30-33 -- estado del formulario de datos de la conexion, precargado
+  // en onEdgeClick y reseteado junto con flujosEdicion en cada lugar que
+  // cierra el panel (mismo ciclo de vida que flujosEdicion).
+  const [datosEdicion, setDatosEdicion] = useState<DatosConexionForm>(DATOS_CONEXION_VACIOS);
   const [cargandoEdicion, setCargandoEdicion] = useState(false);
   const [errorEdicion, setErrorEdicion] = useState<string | null>(null);
 
@@ -397,6 +567,7 @@ export default function MapaCadenaCanvas({
     // vez, mismo criterio que onPaneClick de mas abajo.
     setConexionEditando(null);
     setFlujosEdicion([]);
+    setDatosEdicion(DATOS_CONEXION_VACIOS);
   }, []);
 
   const onEdgeClick = useCallback(
@@ -406,6 +577,7 @@ export default function MapaCadenaCanvas({
       setNodoSeleccionadoId(null);
       setErrorEdicion(null);
       setFlujosEdicion(conexion.flujos.map((f) => f.tipo));
+      setDatosEdicion(datosFormDesdeConexion(conexion));
       setConexionEditando(conexion);
     },
     [conexiones],
@@ -417,6 +589,7 @@ export default function MapaCadenaCanvas({
   const onPaneClick = useCallback(() => {
     setConexionEditando(null);
     setFlujosEdicion([]);
+    setDatosEdicion(DATOS_CONEXION_VACIOS);
     setNodoSeleccionadoId(null);
   }, []);
 
@@ -426,14 +599,19 @@ export default function MapaCadenaCanvas({
     );
   }
 
+  function campoDatos<K extends keyof DatosConexionForm>(clave: K, valor: DatosConexionForm[K]) {
+    setDatosEdicion((previo) => ({ ...previo, [clave]: valor }));
+  }
+
   async function guardarEdicionFlujos() {
     if (!conexionEditando || flujosEdicion.length === 0) return;
     setErrorEdicion(null);
     setCargandoEdicion(true);
+    const datosPayload = datosFormAPayload(datosEdicion);
     const resultado = await fetchJsonSeguro(`/api/cadenas/${cadenaId}/conexiones/${conexionEditando.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ flujos: flujosEdicion }),
+      body: JSON.stringify({ flujos: flujosEdicion, datos: datosPayload }),
     });
     setCargandoEdicion(false);
 
@@ -447,11 +625,25 @@ export default function MapaCadenaCanvas({
     }
 
     const conexionId = conexionEditando.id;
+    // RF35 -- updatedAt se aproxima en el cliente (en vez de releer del
+    // servidor) para que el badge de "foto puntual" muestre la fecha del
+    // guardado recien hecho sin recargar la pagina; el servidor fija el
+    // valor real con `@updatedAt` practicamente en el mismo instante.
     setConexiones((previas) =>
-      previas.map((c) => (c.id === conexionId ? { ...c, flujos: flujosEdicion.map((tipo) => ({ tipo })) } : c)),
+      previas.map((c) =>
+        c.id === conexionId
+          ? {
+              ...c,
+              flujos: flujosEdicion.map((tipo) => ({ tipo })),
+              ...datosPayload,
+              updatedAt: new Date().toISOString(),
+            }
+          : c,
+      ),
     );
     setConexionEditando(null);
     setFlujosEdicion([]);
+    setDatosEdicion(DATOS_CONEXION_VACIOS);
   }
 
   // Borrado de una conexion -- accion irreversible (RF34 extension, ver
@@ -475,6 +667,7 @@ export default function MapaCadenaCanvas({
       setConexiones((previas) => previas.filter((c) => c.id !== conexionId));
       setConexionEditando(null);
       setFlujosEdicion([]);
+      setDatosEdicion(DATOS_CONEXION_VACIOS);
     },
     [cadenaId],
   );
@@ -729,6 +922,233 @@ export default function MapaCadenaCanvas({
               </label>
             ))}
           </div>
+
+          {/* RF30-33/RF35 -- datos de la conexion, existian en el schema
+              desde el Bloque A pero nunca se exponian en ningun
+              formulario. Un solo badge de "foto puntual" para toda la
+              seccion (no uno por campo): todos estos campos viven en la
+              misma fila de ConexionCadena, sin timestamp independiente
+              por campo, asi que repetirlo 15 veces seria ruido sin
+              agregar informacion -- ver el comentario de cabecera de
+              actualizarFlujosConexionCadena.ts. */}
+          <div className="flex flex-col gap-3 border-t border-slate-200 pt-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">
+                Foto puntual
+              </span>
+              <p className="text-xs text-slate-500">
+                Una sola declaración en un momento dado, no un monitoreo continuo -- actualizado el{" "}
+                {new Date(conexionEditando.updatedAt).toLocaleDateString("es-PE")}.
+              </p>
+            </div>
+
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-sm font-medium">Requerimiento recibido (marcá lo que aplique)</legend>
+              <div className="flex flex-wrap gap-3">
+                <label className="flex items-center gap-1.5 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={datosEdicion.requerimientoCantidad}
+                    onChange={(e) => campoDatos("requerimientoCantidad", e.target.checked)}
+                  />
+                  Cantidad
+                </label>
+                <label className="flex items-center gap-1.5 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={datosEdicion.requerimientoFecha}
+                    onChange={(e) => campoDatos("requerimientoFecha", e.target.checked)}
+                  />
+                  Fecha
+                </label>
+                <label className="flex items-center gap-1.5 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={datosEdicion.requerimientoEspecificacion}
+                    onChange={(e) => campoDatos("requerimientoEspecificacion", e.target.checked)}
+                  />
+                  Especificación
+                </label>
+                <label className="flex items-center gap-1.5 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={datosEdicion.requerimientoAprobacion}
+                    onChange={(e) => campoDatos("requerimientoAprobacion", e.target.checked)}
+                  />
+                  Aprobación
+                </label>
+                <label className="flex items-center gap-1.5 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={datosEdicion.requerimientoPago}
+                    onChange={(e) => campoDatos("requerimientoPago", e.target.checked)}
+                  />
+                  Pago
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-sm font-medium">¿Lo recibido coincidió con lo pedido?</legend>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <label className="flex flex-1 flex-col gap-1 text-sm">
+                  Prioridad
+                  <select
+                    value={datosEdicion.coincidePrioridad}
+                    onChange={(e) => campoDatos("coincidePrioridad", e.target.value)}
+                    className="rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  >
+                    <option value="">Sin confirmar</option>
+                    <option value="si">Sí</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+                <label className="flex flex-1 flex-col gap-1 text-sm">
+                  Cantidad
+                  <select
+                    value={datosEdicion.coincideCantidad}
+                    onChange={(e) => campoDatos("coincideCantidad", e.target.value)}
+                    className="rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  >
+                    <option value="">Sin confirmar</option>
+                    <option value="si">Sí</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+                <label className="flex flex-1 flex-col gap-1 text-sm">
+                  Fecha
+                  <select
+                    value={datosEdicion.coincideFecha}
+                    onChange={(e) => campoDatos("coincideFecha", e.target.value)}
+                    className="rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  >
+                    <option value="">Sin confirmar</option>
+                    <option value="si">Sí</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset className="flex flex-col gap-3">
+              <legend className="text-sm font-medium">Oportunidad y decisión</legend>
+              <label className="flex flex-col gap-1 text-sm">
+                Oportunidad con la que llega la información
+                <select
+                  value={datosEdicion.oportunidadInformacion}
+                  onChange={(e) => campoDatos("oportunidadInformacion", e.target.value as DuracionCategoricaV2 | "")}
+                  className="rounded border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">Sin confirmar</option>
+                  {DURACIONES.map((valor) => (
+                    <option key={valor} value={valor}>
+                      {ETIQUETA_DURACION[valor]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                Responsable de la decisión (opcional, no hace falta el nombre real)
+                <input
+                  type="text"
+                  maxLength={160}
+                  value={datosEdicion.responsableDecision}
+                  onChange={(e) => campoDatos("responsableDecision", e.target.value)}
+                  className="rounded border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="Cargo o alias"
+                />
+              </label>
+            </fieldset>
+
+            <fieldset className="flex flex-col gap-3">
+              <legend className="text-sm font-medium">Impacto y continuidad</legend>
+              <label className="flex flex-col gap-1 text-sm">
+                Impacto de una falla en esta conexión
+                <select
+                  value={datosEdicion.impactoFalla}
+                  onChange={(e) => campoDatos("impactoFalla", e.target.value as NivelImpactoV2 | "")}
+                  className="rounded border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">Sin confirmar</option>
+                  {NIVELES_IMPACTO.map((valor) => (
+                    <option key={valor} value={valor}>
+                      {ETIQUETA_IMPACTO[valor]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                ¿Existe una alternativa o sustituto?
+                <select
+                  value={datosEdicion.tieneAlternativa}
+                  onChange={(e) => campoDatos("tieneAlternativa", e.target.value)}
+                  className="rounded border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">Sin confirmar</option>
+                  <option value="si">Sí</option>
+                  <option value="no">No</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                ¿Esa alternativa fue probada?
+                <select
+                  value={datosEdicion.alternativaProbada}
+                  onChange={(e) => campoDatos("alternativaProbada", e.target.value)}
+                  className="rounded border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">Sin confirmar</option>
+                  <option value="si">Sí</option>
+                  <option value="no">No</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                Tiempo tolerable sin esta conexión
+                <select
+                  value={datosEdicion.tiempoTolerable}
+                  onChange={(e) => campoDatos("tiempoTolerable", e.target.value as DuracionCategoricaV2 | "")}
+                  className="rounded border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">Sin confirmar</option>
+                  {DURACIONES.map((valor) => (
+                    <option key={valor} value={valor}>
+                      {ETIQUETA_DURACION[valor]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                Tiempo estimado de recuperación
+                <select
+                  value={datosEdicion.tiempoRecuperacion}
+                  onChange={(e) => campoDatos("tiempoRecuperacion", e.target.value as DuracionCategoricaV2 | "")}
+                  className="rounded border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">Sin confirmar</option>
+                  {DURACIONES.map((valor) => (
+                    <option key={valor} value={valor}>
+                      {ETIQUETA_DURACION[valor]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </fieldset>
+
+            <fieldset className="flex flex-col gap-1">
+              <legend className="text-sm font-medium">Estado de evidencia</legend>
+              <select
+                value={datosEdicion.estadoEvidencia}
+                onChange={(e) => campoDatos("estadoEvidencia", e.target.value as EstadoEvidenciaV2Valor)}
+                className="rounded border border-slate-300 px-3 py-2 text-sm"
+              >
+                {ESTADOS_EVIDENCIA.map((valor) => (
+                  <option key={valor} value={valor}>
+                    {ETIQUETA_ESTADO_EVIDENCIA[valor]}
+                  </option>
+                ))}
+              </select>
+            </fieldset>
+          </div>
+
           {errorEdicion && <p className="text-sm text-red-600">{errorEdicion}</p>}
           <div className="flex gap-2">
             <button
@@ -759,6 +1179,7 @@ export default function MapaCadenaCanvas({
               onClick={() => {
                 setConexionEditando(null);
                 setFlujosEdicion([]);
+                setDatosEdicion(DATOS_CONEXION_VACIOS);
               }}
               className="rounded border border-slate-300 px-3 py-1.5 text-sm"
             >

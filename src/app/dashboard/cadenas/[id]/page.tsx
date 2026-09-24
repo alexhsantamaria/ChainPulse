@@ -121,7 +121,10 @@ export default async function CadenaMapaPage({
       <MapaCadenaCanvas
         cadenaId={cadena.id}
         nodosIniciales={cadena.nodos}
-        conexionesIniciales={cadena.conexiones}
+        conexionesIniciales={cadena.conexiones.map((conexion: (typeof cadena.conexiones)[number]) => ({
+          ...conexion,
+          updatedAt: conexion.updatedAt.toISOString(),
+        }))}
       />
     </main>
   );
