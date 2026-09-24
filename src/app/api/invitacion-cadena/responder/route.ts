@@ -9,6 +9,11 @@ import { z } from "zod";
 import { verificarTokenInvitacionCadena } from "@/infra/auth/invitacion";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import { logError } from "@/infra/log";
+import {
+  compararDimensionesCadena,
+  compararDimensionesConexion,
+} from "@/engine/cadena/compararCadena";
+import { persistirHallazgosCadena } from "@/infra/cadena/persistirHallazgosCadena";
 
 const responderSchema = z.object({
   token: z.string().min(1),
@@ -26,11 +31,24 @@ const responderSchema = z.object({
     .nullish(),
   nodoCriticoId: z.string().min(1).nullish(),
   conocimientoEntradasSalidas: z
-    .enum(["DEFINIDO_Y_USADO", "CLARO_PARA_ALGUNAS_AREAS", "DEPENDE_DE_PERSONAS", "NO_CLARO", "NO_SABE"])
+    .enum([
+      "DEFINIDO_Y_USADO",
+      "CLARO_PARA_ALGUNAS_AREAS",
+      "DEPENDE_DE_PERSONAS",
+      "NO_CLARO",
+      "NO_SABE",
+    ])
     .nullish(),
   momentoInformacion: z.enum(["CORTO", "MEDIO", "LARGO"]).nullish(),
   fuenteDatos: z
-    .enum(["SAP_ERP", "EXCEL", "WMS_TMS_APS", "CORREO_MENSAJERIA", "VARIOS_SISTEMAS", "SIN_FUENTE_DEFINIDA"])
+    .enum([
+      "SAP_ERP",
+      "EXCEL",
+      "WMS_TMS_APS",
+      "CORREO_MENSAJERIA",
+      "VARIOS_SISTEMAS",
+      "SIN_FUENTE_DEFINIDA",
+    ])
     .nullish(),
   tieneAlternativa: z.boolean().nullish(),
   alternativaProbada: z.boolean().nullish(),
@@ -40,18 +58,29 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const parsed = responderSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ ok: false, error: "DATOS_INVALIDOS" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: "DATOS_INVALIDOS" },
+      { status: 400 },
+    );
   }
 
   const payload = await verificarTokenInvitacionCadena(parsed.data.token);
   if (!payload) {
-    return NextResponse.json({ ok: false, error: "TOKEN_INVALIDO" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: "TOKEN_INVALIDO" },
+      { status: 400 },
+    );
   }
 
   const client = tenantClient(payload.empresaId);
-  const cadena = await client.cadena.findUnique({ where: { id: payload.cadenaId } });
+  const cadena = await client.cadena.findUnique({
+    where: { id: payload.cadenaId },
+  });
   if (!cadena) {
-    return NextResponse.json({ ok: false, error: "CADENA_INEXISTENTE" }, { status: 404 });
+    return NextResponse.json(
+      { ok: false, error: "CADENA_INEXISTENTE" },
+      { status: 404 },
+    );
   }
 
   // RF37: el invitado nunca responde preguntas fuera de su alcance --
@@ -70,18 +99,26 @@ export async function POST(request: Request) {
   };
 
   if (payload.conexionCadenaId) {
-    const conexionCadena = await client.conexionCadena.findUnique({ where: { id: payload.conexionCadenaId } });
+    const conexionCadena = await client.conexionCadena.findUnique({
+      where: { id: payload.conexionCadenaId },
+    });
     if (!conexionCadena || conexionCadena.cadenaId !== payload.cadenaId) {
-      return NextResponse.json({ ok: false, error: "CONEXION_INEXISTENTE" }, { status: 404 });
+      return NextResponse.json(
+        { ok: false, error: "CONEXION_INEXISTENTE" },
+        { status: 404 },
+      );
     }
     datos = {
       prioridadElegida: null,
       nodoCriticoId: null,
-      conocimientoEntradasSalidas: parsed.data.conocimientoEntradasSalidas ?? null,
+      conocimientoEntradasSalidas:
+        parsed.data.conocimientoEntradasSalidas ?? null,
       momentoInformacion: parsed.data.momentoInformacion ?? null,
       fuenteDatos: parsed.data.fuenteDatos ?? null,
       tieneAlternativa: parsed.data.tieneAlternativa ?? null,
-      alternativaProbada: parsed.data.tieneAlternativa ? (parsed.data.alternativaProbada ?? null) : null,
+      alternativaProbada: parsed.data.tieneAlternativa
+        ? (parsed.data.alternativaProbada ?? null)
+        : null,
     };
   } else {
     // "cinturon y tirantes" -- si vino nodoCriticoId, confirmar que
@@ -89,9 +126,14 @@ export async function POST(request: Request) {
     // agregarConexionCadena.ts).
     let nodoCriticoId: string | null = null;
     if (parsed.data.nodoCriticoId) {
-      const nodo = await client.nodo.findUnique({ where: { id: parsed.data.nodoCriticoId } });
+      const nodo = await client.nodo.findUnique({
+        where: { id: parsed.data.nodoCriticoId },
+      });
       if (!nodo || nodo.cadenaId !== payload.cadenaId) {
-        return NextResponse.json({ ok: false, error: "NODO_INVALIDO" }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: "NODO_INVALIDO" },
+          { status: 400 },
+        );
       }
       nodoCriticoId = nodo.id;
     }
@@ -113,12 +155,19 @@ export async function POST(request: Request) {
   const existente = await client.respuestaCadena.findFirst({
     where: payload.conexionCadenaId
       ? { conexionCadenaId: payload.conexionCadenaId, email: payload.email }
-      : { cadenaId: payload.cadenaId, email: payload.email, conexionCadenaId: null },
+      : {
+          cadenaId: payload.cadenaId,
+          email: payload.email,
+          conexionCadenaId: null,
+        },
   });
 
   try {
     if (existente) {
-      await client.respuestaCadena.update({ where: { id: existente.id }, data: datos });
+      await client.respuestaCadena.update({
+        where: { id: existente.id },
+        data: datos,
+      });
     } else {
       await client.respuestaCadena.create({
         data: {
@@ -136,9 +185,34 @@ export async function POST(request: Request) {
         },
       });
     }
+
+    // Bloque C Paso 3 (RF38/RF39) -- recalcula solo las dimensiones del
+    // alcance que acaba de cambiar (nunca las 6 juntas: una respuesta de
+    // "cadena completa" no toca los hallazgos de ninguna conexion puntual,
+    // y viceversa) contra TODAS las respuestas de ese mismo alcance, no
+    // solo la que se acaba de guardar -- la comparacion es entre
+    // participantes, no de una respuesta contra si misma.
+    const respuestasEnAlcance = await client.respuestaCadena.findMany({
+      where: payload.conexionCadenaId
+        ? { conexionCadenaId: payload.conexionCadenaId }
+        : { cadenaId: payload.cadenaId, conexionCadenaId: null },
+    });
+    const resultados = payload.conexionCadenaId
+      ? compararDimensionesConexion(respuestasEnAlcance)
+      : compararDimensionesCadena(respuestasEnAlcance);
+    await persistirHallazgosCadena(
+      client,
+      payload.empresaId,
+      payload.cadenaId,
+      payload.conexionCadenaId,
+      resultados,
+    );
   } catch (err) {
     logError("api/invitacion-cadena/responder POST", err);
-    return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "ERROR_INTERNO" },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json({ ok: true });

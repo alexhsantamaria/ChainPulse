@@ -1159,6 +1159,20 @@ model HallazgoCadena {
 
   createdAt DateTime @default(now())
 
+  // Identidad real "una diferencia activa por dimension y por alcance
+  // (cadena completa o conexion puntual)" (Bloque C Paso 3, RF38/RF39) --
+  // NO expresable como @@unique de Prisma por el mismo motivo que
+  // RespuestaCadena (conexionCadenaId nullable, Postgres trata cada NULL
+  // como distinto en una unique constraint normal). Resuelto con DOS
+  // indices unicos PARCIALES a mano en la migracion
+  // 20260924010000_hallazgos_cadena_unique (mismo patron que
+  // 20260924000000_respuesta_cadena) -- no los borres en un futuro
+  // `prisma migrate dev` por "drift", son intencionales. Solo se
+  // persiste una fila por dimension mientras el resultado sea DIFERENCIA
+  // (RF39: "cuando... resulta en el estado diferencia, el sistema
+  // debera registrarla como un hallazgo") -- src/infra/cadena/
+  // persistirHallazgosCadena.ts borra la fila si una respuesta
+  // actualizada hace que la dimension deje de ser DIFERENCIA.
   @@index([empresaId])
   @@index([cadenaId])
   @@map("hallazgos_cadena")
