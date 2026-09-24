@@ -42,9 +42,23 @@
 // (usuarios dividiendo archivos legitimos todo el tiempo) o muy altos
 // (el job sigue cortandose a mitad de camino), se ajustan aca, en un solo
 // lugar.
+//
+// CORREGIDO 2026-09-24 -- MAX_TAMANO_ARCHIVO_BYTES bajo de 5 MB a 4 MB tras
+// la decision de cifrado de aplicacion (Alex, ver docs/ADR/0006-cifrado-
+// r2.md): "cifrar en el servidor antes de subir" significa que el CSV en
+// claro ya no sube directo del navegador a R2 via URL prefirmada (el plan
+// original de Setup de R2) -- ahora pasa primero por el BODY de un Route
+// Handler de Next.js (src/infra/storage/r2.ts), que lo cifra y recien ahi
+// lo sube. Eso mete el limite de tamano de body de Vercel en el medio: 4.5
+// MB en el plan Hobby (ya citado en PLAN-DE-TRABAJO.md, Setup de R2, para
+// justificar por que el flujo original evitaba pasar por el servidor). 4
+// MB deja margen real bajo ese techo (overhead de multipart/headers) sin
+// acercarse al limite exacto. El descifrado en el job (~4 MB, AES-256-GCM)
+// es del orden de milisegundos -- no cambia en nada el presupuesto de 60s
+// ya razonado arriba para MAX_FILAS, que se mantiene sin cambios.
 
-/** 5 MB -- a razon de ~200-300 bytes por fila de CSV (SKU, ubicacion, fecha, par de numeros), da margen para MAX_FILAS con columnas de texto mas largas de lo esperado. */
-export const MAX_TAMANO_ARCHIVO_BYTES = 5 * 1024 * 1024;
+/** 4 MB -- bajo el limite de body de un Route Handler de Vercel Hobby (4.5 MB, ver comentario de cabecera) porque el cifrado de aplicacion exige que el CSV pase por el servidor antes de subir a R2. A razon de ~200-300 bytes por fila de CSV (SKU, ubicacion, fecha, par de numeros), sigue dando margen para MAX_FILAS con columnas de texto mas largas de lo esperado. */
+export const MAX_TAMANO_ARCHIVO_BYTES = 4 * 1024 * 1024;
 
 /** 10.000 filas -- deliberadamente por debajo del techo teorico (~15.000) de lo que un solo ciclo del job (60s) puede insertar, para dejar margen a la descarga/parseo y a que un lote individual tarde mas de lo estimado. */
 export const MAX_FILAS = 10_000;

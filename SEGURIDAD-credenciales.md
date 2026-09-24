@@ -20,6 +20,18 @@ Este documento rastrea credenciales que se compartieron en texto plano durante l
 - Al desplegar a producción, usar el mecanismo de variables de entorno/secretos del proveedor de hosting (no archivos versionados) — ver ADR-0003 para la política de secretos de autenticación (`NEXTAUTH_SECRET`, etc.).
 - Cuando se implemente RF1/RF4 (ADR-0003), aplicar el mismo criterio a los secretos de MFA (TOTP) y de sesión.
 
+## Custodia de claves de cifrado de aplicación (R2)
+
+Política completa (generación, envelope encryption, rotación, retención de claves viejas) en [`docs/ADR/0006-cifrado-r2.md`](./docs/ADR/0006-cifrado-r2.md) -- esta sección es solo el registro de custodia, mismo espíritu que la tabla de arriba pero para claves que **nunca deberían pasar por el chat**, ni siquiera una vez.
+
+- `R2_ENCRYPTION_KEY_ACTIVA`/`R2_ENCRYPTION_KEY_ACTIVA_ID`: Alex las genera él mismo (comando en el ADR) y las carga directo en Vercel/`.env` -- nunca se le pide ni se le pega el valor en el chat.
+- **Backup offline pendiente [HUMANO]:** sin esta clave respaldada en algún lugar fuera de Vercel (gestor de contraseñas, archivo cifrado aparte), perderla vuelve ilegibles todos los CSV ya subidos que dependan de ella -- ver ADR-0006, sección de custodia. Registrar acá cuando el backup exista.
+- `R2_ENCRYPTION_KEYS_ANTERIORES`: vacío hasta la primera rotación. Cada rotación real (clave retirada, id, fecha, motivo) se agrega como fila nueva abajo, igual que las rotaciones de Neon/`NEXTAUTH_SECRET`.
+
+| Clave (id) | Estado | Fecha de rotación | Motivo |
+|---|---|---|---|
+| _(ninguna generada todavía)_ | -- | -- | -- |
+
 ## Historial
 
 - 2026-09-12: primera versión, tras levantar la base en Neon y aplicar RLS con el rol `chainpulse_app`.

@@ -1405,7 +1405,22 @@ model ImportacionCsv {
   definicionKpiId String
   definicionKpi   DefinicionKpi @relation(fields: [definicionKpiId], references: [id], onDelete: Restrict)
 
-  objetoStorageKey String // clave en R2 -- el archivo crudo NUNCA se persiste en Postgres
+  // Clave del objeto en R2. Confirmado por Alex 2026-09-24 (ver
+  // docs/ADR/0006-cifrado-r2.md): el objeto en R2 es SIEMPRE ciphertext --
+  // el CSV en claro NUNCA se persiste ni en Postgres ni en R2, ni siquiera
+  // transitoriamente (se cifra en el servidor antes de subir).
+  objetoStorageKey String
+
+  // -- Metadata de cifrado de aplicacion (envelope encryption AES-256-GCM,
+  // ver src/infra/storage/cifradoObjeto.ts) -- NUNCA la DEK en claro, NUNCA
+  // el contenido del archivo. Todo nullable: se completa recien cuando el
+  // servidor termina de cifrar y subir (misma operacion, sin estado
+  // intermedio "subido sin cifrar" -- ver comentario de objetoStorageKey).
+  cifradoVersion    Int?    // version del formato de envoltorio (VERSION_FORMATO_ACTUAL)
+  cifradoClaveId    String? // que clave maestra (R2_ENCRYPTION_KEY_ACTIVA_ID o una de R2_ENCRYPTION_KEYS_ANTERIORES) envolvio la DEK -- permite rotar la clave maestra sin re-cifrar el archivo en R2
+  cifradoDek        String? // DEK ya ENVUELTA (cifrada con la clave maestra), base64
+  cifradoDekIv      String? // iv del envolvimiento de la DEK, base64
+  cifradoDekAuthTag String? // authTag del envolvimiento de la DEK, base64
   // Propuesta de mapeo de columnas (heuristica del job de parseo,
   // editable por el usuario antes de confirmar) -- nullable: puede no
   // existir todavia en el instante entre "subido a R2" y "el job ya lo
