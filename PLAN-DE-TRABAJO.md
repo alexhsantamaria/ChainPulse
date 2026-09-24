@@ -1747,6 +1747,118 @@ Pruebas de integración escritas, ya confirmadas en verde contra Neon real:
 
 **Deuda técnica a pagar ANTES de avanzar:** el Bloque A del Incremento 2 (cola de jobs) es prerrequisito directo — sin pg-boss ya funcionando en producción real (no solo instalado), este bloque no tiene dónde correr el procesamiento asíncrono.
 
+**PROPUESTA 2026-09-24 — persistencia de Cobertura + modelo de idempotencia/corrección (revisión pendiente de Alex, NINGÚN cambio aplicado -- sin migración, sin código de importador).** Responde a dos cosas: (1) dónde persiste el resultado de `calcularCobertura` (hueco de schema encontrado más arriba) y (2) la corrección de Alex a la nota de idempotencia original -- "no demos por resuelto el problema... únicamente con un `upsert`", distinguiendo unicidad de idempotencia real.
+
+*Tres claves distintas, no una sola:*
+
+1. **Clave de observación de negocio** -- identifica QUÉ se está midiendo, sin importar cuántas veces se cargó: para Cobertura, `cadenaId + sku + ubicación + fechaCorte + fuente`. Para los otros 9 KPIs, la que ya existe en `ObservacionKpi`: `cadenaId + definicionKpiId + periodoInicio + periodoFin + fuente`.
+2. **Clave de intento de importación** -- identifica QUÉ CARGA la produjo, no qué mide: `importId` (FK lógica a `ImportacionCsv`, ya diseñada en la Sección 18.3.A pero sin construir) + `numeroFila` (la fila dentro de ese archivo). Null para manual/pegado. Esta es la clave que hace un reintento seguro: reintentar el mismo `importId` reinserta las mismas filas con el mismo `numeroFila`, nunca filas nuevas.
+3. **Huella de contenido** (`contenidoHash`) -- un hash estable (SHA-256 sobre un JSON con claves ordenadas, para que el hash no dependa del orden de propiedades) de los campos de negocio + la versión de fórmula (`ruleVersion`) vigentes al calcular. Sirve para distinguir, ante la MISMA clave de observación: ¿esta carga trae el mismo dato que ya existe (reintento seguro, no-op) o uno distinto (corrección real, o conflicto)?
+
+*Corrección de la nota original del documento:* la restricción única que ya tiene `ObservacionKpi` (para los 9 KPIs) resuelve la clave de intento para manual/pegado (reingresar el mismo período por error no duplica), pero el propio comentario de cabecera de `ObservacionKpi` en `schema.prisma` ya dejaba dicho que CSV necesita su propia clave (`importId+numeroFila`, todavía sin agregar) -- mi resumen anterior a Alex no mencionó esa distinción con suficiente claridad. Además, tal como está hoy, reingresar el mismo período+fuente para esos 9 KPIs hace un upsert que SOBREESCRIBE en silencio, sin historial -- exactamente lo que la revisión de Alex objeta en general. Cambiar ESO requeriría tocar una tabla ya migrada (`d78c880`/`35e6c49` en adelante); lo dejo como pregunta abierta para Alex al final, no lo resuelvo acá.
+
+*Esquema propuesto (Prisma, sin aplicar):*
+
+```prisma
+enum EstadoObservacionCobertura {
+  CALCULADA
+  SIN_CONSUMO_REFERENCIA
+  DATOS_INCOMPLETOS
+  VALOR_NEGATIVO
+  UNIDADES_INCOMPATIBLES
+  // DUPLICADO no aplica aca: calcularCobertura() ya excluye los
+  // duplicados en conflicto ANTES de llegar a persistencia -- esta tabla
+  // solo guarda resultados que superaron esa etapa en memoria.
+}
+
+model ObservacionCobertura {
+  id              String        @id @default(cuid())
+  empresaId       String
+  empresa         Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cadenaId        String
+  cadena          Cadena        @relation(fields: [cadenaId], references: [id], onDelete: Cascade)
+  // Siempre el id de la DefinicionKpi "COBERTURA" -- FK a la version
+  // vigente del catalogo funcional, no un enum/string KPI redundante
+  // (mismo criterio que ObservacionKpi -- no hace falta un campo KPI
+  // aparte cuando definicionKpiId ya lo identifica).
+  definicionKpiId String
+  definicionKpi   DefinicionKpi @relation(fields: [definicionKpiId], references: [id], onDelete: Restrict)
+
+  // -- Clave de observacion de negocio --
+  sku       String // normalizado: trim + colapsar espacios internos + mayusculas -- NUNCA se tocan ceros iniciales ni otros caracteres (ver nota de normalizacion abajo)
+  ubicacion String // idem
+  fechaCorte             DateTime @db.Date // fecha de NEGOCIO (solo dia, no DateTime con hora) -- evita que una medianoche UTC se lea como el dia anterior en la UI
+  zonaHorariaReferencia  String   // la zona horaria IANA usada por diaEnZona() para calcular fechaCorte -- se guarda para poder auditar/recalcular, nunca se asume despues
+
+  inventarioDisponible  Float?
+  unidadInventario      String
+  consumoDiarioEsperado Float?
+  unidadConsumoDiario   String
+  // Regla de Alex (ronda 3): el consumo esperado debe recibirse como
+  // dato, con fuente y periodo de referencia declarados -- nunca
+  // inferido en silencio.
+  fuenteConsumo                  String
+  periodoReferenciaConsumoInicio DateTime?
+  periodoReferenciaConsumoFin    DateTime?
+
+  coberturaDias Float?
+  estado        EstadoObservacionCobertura
+  ruleVersion   String // RULE_VERSION_KPIS al momento del calculo -- nunca se reescribe con una version distinta (ver "version de formula" abajo)
+
+  fuente String // "manual" | "pegado" | "csv" -- canal de ingreso, mismo criterio que ObservacionKpi.fuente. NO es el identificador estable de origen que pediste -- ver nota abajo.
+
+  // -- Clave de intento de importacion --
+  importId   String? // FK logica a ImportacionCsv -- el id (cuid) de esa fila ES el identificador estable de origen para CSV, nunca el nombre del archivo (que puede repetirse entre subidas distintas). Null para manual/pegado.
+  numeroFila Int?    // fila dentro de ese importId. Null para manual/pegado.
+
+  // -- Huella de contenido --
+  contenidoHash String // sha256 de {sku, ubicacion, fechaCorte, inventarioDisponible, unidadInventario, consumoDiarioEsperado, unidadConsumoDiario, fuenteConsumo, periodoReferenciaConsumo*, ruleVersion} con claves ordenadas
+
+  // -- Correccion / vigencia --
+  vigente          Boolean   @default(true) // false si una carga posterior la reemplazo o la retiro explicitamente
+  reemplazadaPorId String?   // FK logica a la fila que la reemplazo (correccion con reemplazo) -- null si sigue vigente, o si fue retirada SIN reemplazo (ver caso 4 abajo)
+  reemplazadaEn    DateTime?
+
+  createdAt DateTime @default(now())
+
+  // Evita duplicar EXACTAMENTE el mismo intento -- no resuelve por si
+  // sola "mismo contenido -> no-op" vs. "distinto contenido -> conflicto"
+  // ni el modelo de correccion; esa logica vive en el importador,
+  // comparando contra la fila vigente de la misma clave de negocio. Ver
+  // los 4 casos con ejemplos mas abajo.
+  @@unique([cadenaId, sku, ubicacion, fechaCorte, fuente, importId, numeroFila], map: "uq_observacion_cobertura_intento")
+  @@index([empresaId])
+  @@index([cadenaId])
+  @@index([definicionKpiId])
+  // Consulta real: "dame la cobertura vigente de este SKU/ubicacion/fecha".
+  @@index([cadenaId, sku, ubicacion, fechaCorte, fuente, vigente])
+  @@map("observaciones_cobertura")
+}
+```
+
+RLS: mismo patrón que `observaciones_kpi` (`empresaId` propio, comparación directa contra `app.tenant_id`), agregada a `TENANT_SCOPED_MODELS`. `GRANT SELECT, INSERT, UPDATE, DELETE ... TO chainpulse_app` en la misma migración.
+
+*Nota de normalización (SKU/ubicación):* propongo trim + colapsar espacios internos + mayúsculas, preservando todo lo demás sin tocar (ceros iniciales, guiones, cualquier carácter). Ejemplo: `"  sku-007 "` → `"SKU-007"`; `"sku-007"` y `"SKU-007"` cargados por separado se tratan como la MISMA observación. Esto es una recomendación, no un hecho: si el catálogo real de algún cliente distingue mayúsculas/minúsculas como códigos distintos, esta normalización sería incorrecta -- lo dejo como pregunta abierta.
+
+*Los 4 casos de reintento/corrección, con ejemplos concretos (cadena "C1", SKU "A", ubicación "Lima", fecha "2026-09-20"):*
+
+1. **Mismo intento, mismo contenido (reintento seguro).** Se reintenta `importId=IMP1, numeroFila=5` tras un timeout de red, con exactamente el mismo CSV. `contenidoHash` coincide con la fila ya persistida para esa clave de intento → no se inserta nada nuevo, se devuelve la fila existente. El `@@unique` de arriba ya lo impide a nivel de base (INSERT ... ON CONFLICT DO NOTHING, después SELECT).
+2. **Mismo intento, contenido distinto (anomalía, no una corrección).** `importId=IMP1, numeroFila=5` se reintenta pero con un valor distinto de `inventarioDisponible` -- esto no debería pasar nunca en un reintento real (el archivo no cambia entre reintentos), así que se trata como error/anomalía a investigar, nunca se sobrescribe en silencio. El job de importación lo reporta como fallo, no como éxito parcial.
+3. **Intento nuevo, misma clave de negocio, contenido distinto (corrección explícita).** Una nueva carga `importId=IMP2` trae `SKU A, Lima, 2026-09-20` con un inventario corregido. La fila anterior (de `IMP1`) se marca `vigente=false, reemplazadaPorId=<id de la fila nueva>, reemplazadaEn=now()`; se inserta la fila nueva con `vigente=true`. Nunca un UPDATE en el lugar -- el historial completo queda consultable (mismo criterio "nunca se elige un ganador en silencio" que ya usan Stockout/Cobertura en memoria, aplicado ahora a la persistencia).
+4. **Corrección con MENOS SKU que la carga anterior.** `IMP1` cargó A, B y C para `2026-09-20`; la corrección `IMP2` solo trae A y B (C se dejó de reportar, a propósito o por error). Sin un paso explícito, C quedaría `vigente=true` de `IMP1` para siempre, aunque ya no la reporte nadie -- exactamente el riesgo que señalaste. Propuesta: al confirmar una corrección, el usuario declara explícitamente el alcance que está corrigiendo (cadena + rango de `fechaCorte` + fuente -- nunca inferido en silencio del contenido del archivo, para no retirar SKU de fechas que el archivo ni tocaba); cualquier fila `vigente=true` dentro de ese alcance que NO esté en la nueva carga se marca `vigente=false, reemplazadaEn=now(), reemplazadaPorId=null` (retirada sin reemplazo, un caso distinto de "reemplazada por una fila nueva"). Esto es una decisión de producto, no solo de schema -- cómo declara el usuario "estoy corrigiendo este alcance" es parte del diseño de la UI de previsualización de Bloque B, todavía sin construir.
+
+*Versión de fórmula:* una fila ya persistida nunca cambia su `ruleVersion` (mismo principio ya documentado en `RULE_VERSION_KPIS`, `engine/kpis/constantes.ts`). Si `RULE_VERSION_KPIS` sube, una corrección posterior calcula con la versión nueva, pero eso por sí solo no dispara un reproceso retroactivo de las filas vigentes calculadas con la fórmula vieja -- ¿hace falta ese reproceso explícito cuando cambia la fórmula, o las filas vigentes se quedan con la versión con la que se calcularon hasta que alguien las recargue a mano? Lo dejo como pregunta abierta -- nadie lo había planteado hasta esta revisión.
+
+*Concurrencia y fallos parciales (para las pruebas cuando se construya el importador):* dos workers de `pg-boss` procesando el mismo `importId` en simultáneo (reintento automático + manual superpuestos) deben poder correr el mismo lote sin duplicar -- el `@@unique` de intento hace que el segundo INSERT choque y el importador lo trate como no-op, no como error. Un lote que falla a mitad de camino dentro de una `tenantTransaction()` (~500 filas, ver el riesgo ya documentado más arriba en este mismo bloque) dejaría insertadas las filas de lotes anteriores del mismo `importId` -- con la clave de intento (`importId+numeroFila`) ya construida, un reintento del job completo puede SALTAR las filas ya insertadas (no reprocesarlas) en vez de tener que revertir todo el archivo, que es lo que de verdad resuelve "reintentar un job fallido no debe duplicar". Casos a testear cuando exista el importador: (a) reintento exacto del mismo intento -- no-op; (b) dos intentos distintos con contenido distinto en la misma clave de negocio -- corrección con historial; (c) job interrumpido a mitad de los lotes, reintento completo -- las filas de los lotes ya aplicados no se duplican; (d) corrección con menos SKU que la carga anterior -- las filas ausentes quedan `vigente=false` explícitamente, nunca vigentes por omisión.
+
+*Preguntas abiertas para Alex antes de migrar cualquier cosa de esto:*
+- ¿La normalización de SKU/ubicación propuesta (mayúsculas, trim) es correcta para los datos reales, o algún cliente distingue casos?
+- ¿Cómo declara el usuario el "alcance" de una corrección en la UI (ítem 4 arriba) -- selecciona un rango de fechas explícito, o se infiere del archivo? Recomiendo explícito.
+- ¿Aplica el mismo modelo de corrección-con-historial (en vez del upsert silencioso actual) a los otros 9 KPIs, o se acepta el comportamiento actual de `ObservacionKpi` (upsert sin historial) para esos por ser un solo valor agregado por período, reservando el historial más caro solo para Cobertura? Esto no requiere tocar la migración ya aplicada si la respuesta es "se acepta como está".
+- ¿Hace falta reproceso retroactivo cuando sube `RULE_VERSION_KPIS`, o las filas vigentes se quedan con la versión con la que se calcularon hasta que alguien las recargue?
+
+Nada de esto se aplicó -- ni migración, ni código de importador, ni cambios a `ObservacionKpi`. Los 253 tests reportados en el commit anterior son evidencia del sanitizador y del motor de cálculo, no de este diseño ni de ningún importador (que todavía no existe).
+
 ---
 
 ### Incremento 5 — Consultas en lenguaje natural
