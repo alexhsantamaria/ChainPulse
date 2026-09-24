@@ -276,6 +276,7 @@ model Empresa {
   nodos Nodo[]
   conexionesCadena ConexionCadena[]
   hallazgosCadena HallazgoCadena[]
+  respuestasCadena RespuestaCadena[]
 
   @@map("empresas")
 }
