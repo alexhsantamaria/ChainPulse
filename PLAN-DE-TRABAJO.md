@@ -1708,7 +1708,11 @@ Pruebas de integración escritas, ya confirmadas en verde contra Neon real:
 
 **Fix post-Mac (commit `684929b`, 2026-09-24):** el primer `npm run typecheck` en Windows (con el cliente Prisma completo, `prisma generate` sin bloqueo de red) encontró un error real que Mac no detectó: al `create()` de `RespuestaCadena` le faltaba `empresaId` explícito -- en runtime no rompía nada (`injectTenantFilter()` lo inyecta igual), pero el tipo generado lo exige como campo no opcional. Mismo patrón ya usado en `cadenas/[id]/nodos/route.ts` y `conexiones/route.ts`; se aplicó el mismo fix. **Confirmado en Windows (2026-09-24):** típecheck/lint/test limpios (153/153) contra el cliente Prisma real.
 
-**Pendiente:** probar el formulario a mano en el navegador contra Neon real (llenar una respuesta de "cadena completa" y otra de "conexión puntual", confirmar que la fila se crea/actualiza, y que reabrir el mismo link precarga la respuesta).
+**Validado a mano en el navegador contra Neon real (Alex, 2026-09-24):** respuestas de "cadena completa" y "conexión puntual" guardan y precargan correctamente al reabrir el link.
+
+**Bug encontrado durante esa prueba y corregido (commit `6ffd225`):** en el panel "Invitar a esta conexión", cualquier Backspace/Supr tipeado en el campo de email disparaba el `window.confirm()` de "eliminar conexión" en vez de borrar el carácter -- el listener global de teclado para borrar la conexión seleccionada no distinguía si el foco estaba en un input de texto. Corregido para que ese atajo solo actúe con el foco en el lienzo, no en un campo editable.
+
+**Paso 2 -- cerrado.**
 - [ ] **Paso 3 — pendiente:** función pura de comparación de respuestas multi-rol (candidato natural para `src/engine/v2/` o un módulo hermano, no para `infra/`, siguiendo la separación ya establecida), corre después de cada `RespuestaCadena` nueva, escribe/actualiza `HallazgoCadena`. Lugar en el dashboard para ver los hallazgos.
 
 ---
