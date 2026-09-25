@@ -41,7 +41,17 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/");
+    // Bug reportado por Alex (2026-09-25, pruebas Windows): aca decia
+    // router.push("/") -- el login funcionaba (sesion valida, cookie
+    // seteada), pero devolvia a la portada publica sin ninguna senal de
+    // que la sesion quedo iniciada. El middleware (src/middleware.ts)
+    // solo protege /activar-mfa y /dashboard/:path*, no /, asi que no
+    // habia ninguna segunda capa que corrigiera el destino. /dashboard es
+    // el destino correcto para RESPONSABLE y ADMINISTRADOR por igual --
+    // el propio middleware ya redirige a /activar-mfa si un ADMINISTRADOR
+    // sin MFA intenta entrar ahi, asi que no hace falta bifurcar por rol
+    // aca.
+    router.push("/dashboard");
   }
 
   return (
