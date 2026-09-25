@@ -83,6 +83,17 @@ export default async function DashboardPage() {
             </p>
           </Link>
         )}
+        {session.user.rol === "ADMINISTRADOR" && (
+          <Link
+            href="/dashboard/kpis/cobertura"
+            className="rounded border border-slate-200 p-4 hover:border-slate-400 sm:col-span-2"
+          >
+            <p className="text-sm text-slate-500">Cobertura (importación CSV)</p>
+            <p className="mt-2 text-sm text-slate-600">
+              Importar datos de Cobertura desde un archivo CSV y ver el historial de importaciones →
+            </p>
+          </Link>
+        )}
       </div>
 
       {eslabones.length === 0 && (
