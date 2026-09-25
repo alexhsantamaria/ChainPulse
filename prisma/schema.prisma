@@ -1449,6 +1449,24 @@ model ImportacionCsv {
   // su fechaCorte caiga en el rango.
   alcanceUbicaciones Json?
 
+  // Contexto de consumo de la importacion (Alex, 2026-09-25, decision
+  // sobre el vertical slice de Cobertura): fuenteConsumo y el periodo de
+  // referencia del consumo son obligatorios POR FILA en
+  // ObservacionCobertura, pero en la practica casi nunca varian dentro
+  // de un mismo archivo (todo un CSV suele venir "del ERP de mayo,
+  // periodo 1-31 mayo") -- se piden UNA SOLA VEZ en el formulario de
+  // confirmacion y se aplican a TODAS las filas de esta importacion, en
+  // vez de columnas mapeables del CSV. Se persisten aca (no solo se
+  // pasan en memoria a la escritura) porque el cron de respaldo
+  // (src/app/api/internal/jobs/run/route.ts) puede reprocesar esta
+  // importacion en un request totalmente separado del de confirmar, sin
+  // ningun otro lugar de donde leerlos. Nullable porque valen null hasta
+  // que la ruta de confirmar los completa (mismo criterio de "sin estado
+  // intermedio" que cifradoVersion/cifradoClaveId/cifradoDek* arriba).
+  fuenteConsumo                  String?
+  periodoReferenciaConsumoInicio DateTime? @db.Date
+  periodoReferenciaConsumoFin    DateTime? @db.Date
+
   confirmadaPorId String?
   confirmadaPor   Usuario?  @relation(fields: [confirmadaPorId], references: [id])
   confirmadaEn    DateTime?
