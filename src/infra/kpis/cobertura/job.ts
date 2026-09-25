@@ -40,7 +40,7 @@ import { interpretarFilaCobertura } from "../../../domain/interpretarFilaCobertu
 import { prepararFilasCoberturaParaImportar } from "../../../domain/prepararFilasCoberturaParaImportar";
 import {
   importarObservacionesCobertura,
-  retirarObservacionesFueraDeAlcance,
+  finalizarConRetiroAutorizado,
   claveNegocio,
   type ContextoImportacionCobertura,
 } from "./importar";
@@ -243,39 +243,74 @@ export async function procesarUnaImportacionCsv({ importId, empresaId }: Payload
   };
   await importarObservacionesCobertura(contexto, preparacion.filasParaGuardar);
 
-  // 6. Retiro por alcance -- SOLO si estrategia=REEMPLAZO_ALCANCE, y solo
-  //    se llega aca si el paso 5 termino sin lanzar (ver comentario de
-  //    arriba). clavesEnArchivo incluye TODA fila que se guardo o que ya
-  //    estaba vigente sin cambios (ver el comentario de
-  //    retirarObservacionesFueraDeAlcance() en importar.ts) -- nunca solo
-  //    las insertadas, o se retiraria por error una fila identica a la
-  //    vigente.
-  let retiradas = 0;
+  // 6+7. REEMPLAZO_ALCANCE: recomprobar el retiro autorizado, retirar y
+  //      finalizar (estado=CONFIRMADA + procesadaEn) TODO en UNA sola
+  //      transaccion atomica -- ver finalizarConRetiroAutorizado() en
+  //      importar.ts para el detalle completo (por que se recomprueba
+  //      antes de escribir, como se protege contra concurrencia, y por
+  //      que retiro+finalizacion nunca quedan a medias uno sin el otro).
+  //      clavesEnArchivo incluye TODA fila que se guardo o que ya estaba
+  //      vigente sin cambios -- nunca solo las insertadas, o se
+  //      retiraria por error una fila identica a la vigente.
+  //      CARGA_PARCIAL no tiene retiro que autorizar -- finaliza aparte,
+  //      mas abajo, en una sola escritura (atomica en si misma).
   if (importacion.estrategia === "REEMPLAZO_ALCANCE") {
     if (!importacion.alcanceFechaCorteInicio || !importacion.alcanceFechaCorteFin || !importacion.alcanceUbicaciones) {
       await marcarError(empresaId, importId, "REEMPLAZO_ALCANCE sin alcance completo (fechas + ubicaciones) -- no se retiro nada.");
       return;
     }
+    if (!importacion.retiroHashConfirmado) {
+      // No deberia poder pasar -- la ruta de confirmar siempre persiste
+      // retiroHashConfirmado para REEMPLAZO_ALCANCE (ver el comentario
+      // del campo en prisma/schema.prisma). Fallar cerrado en vez de
+      // asumir o retirar sin autorizacion registrada.
+      await marcarError(
+        empresaId,
+        importId,
+        "REEMPLAZO_ALCANCE sin retiroHashConfirmado -- no hay autorizacion registrada para retirar nada. Hace falta una vista previa y una confirmacion nuevas.",
+      );
+      return;
+    }
     const clavesEnArchivo = new Set(
       preparacion.filasParaGuardar.map((f) => claveNegocio(f.fila.sku, f.fila.ubicacion, f.fila.fecha)),
     );
-    const resultadoRetiro = await retirarObservacionesFueraDeAlcance(
-      { empresaId, cadenaId: importacion.cadenaId },
+    const resultado = await finalizarConRetiroAutorizado(
+      { empresaId, cadenaId: importacion.cadenaId, importId },
       {
         fechaCorteInicio: importacion.alcanceFechaCorteInicio,
         fechaCorteFin: importacion.alcanceFechaCorteFin,
         ubicaciones: importacion.alcanceUbicaciones as unknown as string[],
       },
       clavesEnArchivo,
+      importacion.retiroHashConfirmado,
+      {
+        filasDetectadas: filas.length,
+        filasConError: erroresTotales.length,
+        erroresMuestra: erroresTotales.length > 0 ? erroresTotales.slice(0, 50) : null,
+      },
     );
-    retiradas = resultadoRetiro.retiradas;
+    if (!resultado.ok) {
+      // Identificable: quien lea erroresMuestra/logs ve exactamente por
+      // que -- el conjunto que se iba a retirar ya no es el que el
+      // usuario autorizo al confirmar (cambio desde entonces: otra
+      // importacion se proceso, una correccion manual, otra corrida
+      // concurrente). Nunca se retira ni se publica nada en esta corrida
+      // -- ver finalizarConRetiroAutorizado() en importar.ts, punto 2.
+      await marcarError(
+        empresaId,
+        importId,
+        "RETIRO_DESACTUALIZADO_EN_JOB: lo que se iba a retirar ya no coincide con lo que el usuario autorizo al confirmar (el conjunto vigente cambio desde la confirmacion). Ninguna fila se retiro ni se publico como definitiva en esta corrida -- hace falta una vista previa y una confirmacion nuevas.",
+      );
+      return;
+    }
+    return;
   }
 
-  // 7. Cerrar -- CONFIRMADA + procesadaEn juntos, siempre en la misma
-  //    escritura (nunca uno sin el otro -- ver el comentario de
-  //    procesadaEn). filasConError/erroresMuestra reflejan las filas que
-  //    NO se guardaron (parseo invalido + duplicados en conflicto),
-  //    nunca se ocultan aunque el resto haya salido bien.
+  // Cerrar (CARGA_PARCIAL) -- CONFIRMADA + procesadaEn juntos, siempre en
+  // la misma escritura (nunca uno sin el otro -- ver el comentario de
+  // procesadaEn). filasConError/erroresMuestra reflejan las filas que NO
+  // se guardaron (parseo invalido + duplicados en conflicto), nunca se
+  // ocultan aunque el resto haya salido bien.
   await cliente.importacionCsv.update({
     where: { id: importId },
     data: {
@@ -286,7 +321,6 @@ export async function procesarUnaImportacionCsv({ importId, empresaId }: Payload
       erroresMuestra: erroresTotales.length > 0 ? erroresTotales.slice(0, 50) : null,
     },
   });
-  void retiradas; // usado arriba solo para el resultado de esta funcion (sin valor de retorno hoy) -- referenciado para dejar explicito que no se descarta en silencio.
 }
 
 export interface ResultadoProcesarImportacionesCsv {

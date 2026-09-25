@@ -197,6 +197,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   // --- Primera confirmacion real (PENDIENTE_REVISION -> CONFIRMADA) -----
+  // retiroHashConfirmado: se persiste UNA SOLA VEZ aca (null para
+  // CARGA_PARCIAL, que no tiene retiro que autorizar) -- es el valor
+  // contra el que el job recomprueba antes de retirar/publicar, ver el
+  // comentario del campo en prisma/schema.prisma y
+  // procesarRetiroFueraDeAlcanceAutorizado() en
+  // src/infra/kpis/cobertura/importar.ts.
+  let retiroHashConfirmado: string | null = null;
   if (datos.estrategia === "REEMPLAZO_ALCANCE") {
     const vista = await calcularVistaPreviaRetiro(cliente, sesion.empresaId, importId, importacion, datos);
     if (!vista.ok) return NextResponse.json({ ok: false, error: vista.error }, { status: 502 });
@@ -210,6 +217,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       // nueva.
       return NextResponse.json({ ok: false, error: "RETIRO_DESACTUALIZADO", candidatasRetiro: vista.candidatas, retiroHash: vista.hash }, { status: 409 });
     }
+    retiroHashConfirmado = vista.hash;
   }
 
   const boss = await obtenerBoss();
@@ -235,6 +243,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           estado: "CONFIRMADA",
           confirmadaPorId: sesion.usuarioId,
           confirmadaEn: new Date(),
+          retiroHashConfirmado,
         },
       });
       // fromPrisma(tx): adaptador OFICIAL de pg-boss (pg-boss/dist/adapters/prisma.ts)

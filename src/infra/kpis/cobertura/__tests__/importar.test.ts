@@ -14,7 +14,24 @@ import { describe, expect, it, vi } from "vitest";
 // falta para que el modulo cargue, procesarLoteCobertura() en si nunca llama
 // a tenantTransaction()/prisma directamente -- recibe el `tx` ya armado.
 vi.mock("../../../prisma/client", () => ({ prisma: {} }));
-import { procesarLoteCobertura, procesarRetiroFueraDeAlcance, claveNegocio, type ContextoImportacionCobertura } from "../importar";
+
+// El stub degradado de @prisma/client en la Mac (sin red a
+// binaries.prisma.sh, ver README.md) no expone Prisma.join en runtime
+// -- confirmado con un smoke test manual (node -e), no es un supuesto.
+// Mismo criterio que el resto de este archivo: procesarFinalizacionConRetiroAutorizado()
+// recibe un `tx` falso cuyo $queryRaw no inspecciona el SQL armado (eso
+// es justo lo que la Mac no puede probar sin Postgres real -- ver el
+// test de integracion), asi que a esta prueba unitaria le alcanza con
+// que Prisma.join no lance, el valor que devuelva es irrelevante aca.
+vi.mock("@prisma/client", () => ({ Prisma: { join: (valores: unknown) => valores } }));
+import {
+  procesarLoteCobertura,
+  procesarRetiroFueraDeAlcance,
+  procesarFinalizacionConRetiroAutorizado,
+  claveNegocio,
+  type ContextoImportacionCobertura,
+} from "../importar";
+import { calcularHashVistaPreviaRetiro } from "../../../../domain/hashVistaPreviaRetiroCobertura";
 import type { FilaCoberturaParaImportar } from "../../../../domain/prepararFilasCoberturaParaImportar";
 import { calcularContenidoHashCobertura } from "../../../../domain/contenidoHashCobertura";
 
@@ -203,6 +220,98 @@ describe("procesarRetiroFueraDeAlcance", () => {
     tx.observacionCobertura.findMany.mockResolvedValue([]);
     const r = await procesarRetiroFueraDeAlcance(tx, { empresaId: "empresa-1", cadenaId: "cadena-1" }, alcance, new Set());
     expect(r).toEqual({ retiradas: 0 });
+  });
+});
+
+// txFalso() (arriba) modela un `tx` con la API de la ORM de Prisma
+// (findMany/create/update) -- procesarFinalizacionConRetiroAutorizado()
+// ademas usa $queryRaw (para el FOR UPDATE, que la ORM no expone) y
+// tx.importacionCsv.update() (para la finalizacion). Helper aparte para
+// no complicar txFalso() con metodos que el resto de este archivo no
+// necesita.
+function txFalsoParaRetiroAutorizado(
+  filasBloqueadas: Array<{ id: string; sku: string; ubicacion: string; fechaCorteIso: string }>,
+) {
+  const observacionesActualizadas: Array<{ id: string; data: Record<string, unknown> }> = [];
+  const importacionesActualizadas: Array<{ where: unknown; data: Record<string, unknown> }> = [];
+  return {
+    // Tagged template -- vi.fn() recibe (strings, ...valores) igual que
+    // una llamada normal, alcanza con devolver siempre las mismas filas
+    // "bloqueadas" sin inspeccionar el SQL armado (eso es exactamente lo
+    // que NO se puede probar sin Postgres real -- ver el test de
+    // integracion 5.3 para el FOR UPDATE en si).
+    $queryRaw: vi.fn().mockResolvedValue(filasBloqueadas),
+    observacionCobertura: {
+      update: vi.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        observacionesActualizadas.push({ id: where.id, data });
+        return {};
+      }),
+    },
+    importacionCsv: {
+      update: vi.fn(async ({ where, data }: { where: unknown; data: Record<string, unknown> }) => {
+        importacionesActualizadas.push({ where, data });
+        return {};
+      }),
+    },
+    __observacionesActualizadas: observacionesActualizadas,
+    __importacionesActualizadas: importacionesActualizadas,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- solo se usan los metodos de arriba en este archivo.
+  } as any;
+}
+
+describe("procesarFinalizacionConRetiroAutorizado", () => {
+  const contexto = { empresaId: "empresa-1", cadenaId: "cadena-1", importId: "import-1" };
+  const alcance = {
+    fechaCorteInicio: new Date("2026-09-01T00:00:00.000Z"),
+    fechaCorteFin: new Date("2026-09-30T00:00:00.000Z"),
+    ubicaciones: ["LIMA"],
+  };
+  const datosFinalizacion = { filasDetectadas: 5, filasConError: 0, erroresMuestra: null };
+
+  it("hash recalculado coincide con el autorizado -- retira las candidatas y finaliza (CONFIRMADA+procesadaEn) EN LA MISMA llamada", async () => {
+    const filaVieja = { id: "vieja-1", sku: "A-999", ubicacion: "LIMA", fechaCorteIso: "2026-09-24" };
+    const hashAutorizado = calcularHashVistaPreviaRetiro(
+      [{ id: filaVieja.id, sku: filaVieja.sku, ubicacion: filaVieja.ubicacion, fechaCorte: new Date("2026-09-24T00:00:00.000Z") }],
+      alcance,
+    );
+    const tx = txFalsoParaRetiroAutorizado([filaVieja]);
+    const r = await procesarFinalizacionConRetiroAutorizado(tx, contexto, alcance, new Set(), hashAutorizado, datosFinalizacion);
+    expect(r).toEqual({ ok: true, retiradas: 1 });
+    expect(tx.__observacionesActualizadas).toEqual([{ id: "vieja-1", data: { vigente: false, reemplazadaEn: expect.any(Date) } }]);
+    expect(tx.__importacionesActualizadas).toEqual([
+      {
+        where: { id: "import-1" },
+        data: { estado: "CONFIRMADA", procesadaEn: expect.any(Date), filasDetectadas: 5, filasConError: 0, erroresMuestra: null },
+      },
+    ]);
+  });
+
+  it("hash recalculado NO coincide (algo cambio desde la confirmacion) -- no retira nada, no finaliza nada, devuelve HASH_DESACTUALIZADO", async () => {
+    const filaVieja = { id: "vieja-1", sku: "A-999", ubicacion: "LIMA", fechaCorteIso: "2026-09-24" };
+    const tx = txFalsoParaRetiroAutorizado([filaVieja]);
+    const r = await procesarFinalizacionConRetiroAutorizado(
+      tx,
+      contexto,
+      alcance,
+      new Set(),
+      "hash-de-una-vista-previa-vieja-que-ya-no-coincide",
+      datosFinalizacion,
+    );
+    expect(r).toEqual({ ok: false, motivo: "HASH_DESACTUALIZADO" });
+    expect(tx.observacionCobertura.update).not.toHaveBeenCalled();
+    expect(tx.importacionCsv.update).not.toHaveBeenCalled();
+  });
+
+  it("una fila que YA vino en el archivo (misma clave de negocio) nunca cuenta como candidata, aunque este vigente y en alcance", async () => {
+    const fechaCorte = new Date("2026-09-24T00:00:00.000Z");
+    const filaVigente = { id: "vieja-1", sku: "A-999", ubicacion: "LIMA", fechaCorteIso: "2026-09-24" };
+    const clave = claveNegocio("A-999", "LIMA", fechaCorte);
+    const hashSinCandidatas = calcularHashVistaPreviaRetiro([], alcance);
+    const tx = txFalsoParaRetiroAutorizado([filaVigente]);
+    const r = await procesarFinalizacionConRetiroAutorizado(tx, contexto, alcance, new Set([clave]), hashSinCandidatas, datosFinalizacion);
+    expect(r).toEqual({ ok: true, retiradas: 0 });
+    expect(tx.observacionCobertura.update).not.toHaveBeenCalled();
+    expect(tx.__importacionesActualizadas).toHaveLength(1); // igual finaliza, solo que sin retirar nada
   });
 });
 

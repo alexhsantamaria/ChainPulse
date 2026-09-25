@@ -29,8 +29,10 @@
 // choque en create() significa que TODO el trabajo de esa fila (create +
 // el update de la fila vieja, si aplicaba) ya se confirmo en un intento
 // anterior -- nunca queda a medias.
+import { Prisma } from "@prisma/client";
 import { tenantTransaction } from "../../prisma/tenantTransaction";
 import { calcularContenidoHashCobertura } from "../../../domain/contenidoHashCobertura";
+import { calcularHashVistaPreviaRetiro } from "../../../domain/hashVistaPreviaRetiroCobertura";
 import type { FilaCoberturaParaImportar } from "../../../domain/prepararFilasCoberturaParaImportar";
 
 // Codigo Postgres de violacion de restriccion unica, reexpuesto por
@@ -286,3 +288,188 @@ export async function retirarObservacionesFueraDeAlcance(
   return tenantTransaction(contexto.empresaId, (tx) => procesarRetiroFueraDeAlcance(tx, contexto, alcance, clavesEnArchivo));
 }
 
+
+// -- Recomprobacion atomica del retiro autorizado (Alex, 2026-09-25,
+// condiciones de cierre, "Opcion A") -----------------------------------
+//
+// `retirarObservacionesFueraDeAlcance()`/`procesarRetiroFueraDeAlcance()`
+// (arriba) siguen existiendo tal cual para quien ya las probaba con un
+// `tx` falso -- pero el job (procesarUnaImportacionCsv, Incremento 4
+// Bloque B) YA NO las llama directamente. En su lugar llama a
+// `finalizarConRetiroAutorizado()`, que hace TRES cosas en UNA sola
+// tenantTransaction: recomprobar que el retiro sigue coincidiendo con lo
+// que el usuario autorizo al confirmar, retirar, y finalizar (estado=
+// CONFIRMADA + procesadaEn) -- nunca en pasos separados. Ver el
+// comentario completo de la funcion mas abajo para el porque de cada
+// pieza (comprobacion antes de escribir, proteccion contra concurrencia,
+// atomicidad de "no dejar nada a medias").
+
+export interface DatosFinalizacionCobertura {
+  filasDetectadas: number;
+  filasConError: number;
+  erroresMuestra: Array<{ numeroFila: number; error: string }> | null;
+}
+
+export type ResultadoFinalizacionConRetiro =
+  | { ok: true; retiradas: number }
+  | { ok: false; motivo: "HASH_DESACTUALIZADO" };
+
+/**
+ * SOLO para REEMPLAZO_ALCANCE. Recomprueba, retira y finaliza TODO en UNA
+ * sola tenantTransaction -- cada punto de abajo corresponde a una
+ * condicion de cierre explicita de Alex (2026-09-25):
+ *
+ * 1. "El job debe comprobar que el retiro sigue coincidiendo con lo
+ *    autorizado antes de publicar resultados o retirar registros" -- el
+ *    hash se recalcula FRESCO aca (nunca se confia en lo que penso la
+ *    ruta de confirmar en su momento, ni en `clavesEnArchivo` sin mas) y
+ *    se compara contra `hashAutorizado` (importacion.retiroHashConfirmado,
+ *    lo unico que el usuario realmente vio y acepto en la vista previa)
+ *    ANTES de cualquier UPDATE -- ni el retiro ni la finalizacion
+ *    (el "publicar resultados") ocurren si no coincide.
+ *
+ * 2. "Si el hash cambio, marcar un error identificable... No actualizar
+ *    el hash ni ampliar el retiro automaticamente" -- si no coincide,
+ *    esta funcion NO escribe nada (ni retira, ni finaliza) y devuelve
+ *    `{ ok: false, motivo: "HASH_DESACTUALIZADO" }`; el caller
+ *    (procesarUnaImportacionCsv) es quien decide marcar ERROR -- esta
+ *    funcion nunca reintenta, nunca recalcula un hash "corregido" y
+ *    nunca retira un subconjunto distinto por su cuenta. Hace falta una
+ *    vista previa y una confirmacion nuevas (una importacion nueva, en
+ *    este vertical slice -- no existe todavia un "corregir la misma
+ *    importacion").
+ *
+ * 3. "La comprobacion y el retiro deben estar protegidos frente a
+ *    cambios concurrentes... documentar como se garantiza esa
+ *    proteccion" -- el SELECT inicial usa `FOR UPDATE`: bloquea esas
+ *    filas EXACTAS contra cualquier UPDATE/DELETE/SELECT FOR UPDATE
+ *    concurrente de OTRA transaccion hasta que ESTA transaccion termine
+ *    (commit o rollback). Este bloqueo de fila es una garantia de MVCC
+ *    de Postgres independiente del isolation level de la otra
+ *    transaccion (a diferencia de la visibilidad de snapshot, que si
+ *    depende del isolation level) -- una UPDATE concurrente sobre
+ *    cualquiera de estas filas, venga de donde venga, espera a que esta
+ *    transaccion termine. Como el retiro y la finalizacion corren
+ *    DESPUES del SELECT FOR UPDATE, dentro de la MISMA transaccion,
+ *    nunca hay una ventana entre "se comprobo el hash" y "se retirio"
+ *    donde otra transaccion pueda modificar esas filas -- "recalcular el
+ *    hash y despues retirar en operaciones separadas" (el riesgo que
+ *    esto evita) requeriria dos transacciones distintas; aca es una
+ *    sola. Una fila NUEVA que empiece a calificar como candidata
+ *    DESPUES de este SELECT (insertada por otra transaccion en
+ *    paralelo, ej. otra importacion procesandose al mismo tiempo) no
+ *    queda bloqueada por este FOR UPDATE (Postgres no puede bloquear una
+ *    fila que todavia no existia al momento del SELECT) -- pero tampoco
+ *    se retira ni se ignora por error: como esta funcion recalcula el
+ *    conjunto COMPLETO de candidatas en cada corrida, esa fila nueva
+ *    simplemente pertenece a una corrida FUTURA del job (la proxima vez
+ *    que se dispare/reintente), nunca corrompe el resultado de esta.
+ *    Dos corridas concurrentes con alcances solapados: la segunda en
+ *    tomar el lock ve, al desbloquearse, el estado YA COMMITTEADO por la
+ *    primera (Postgres re-evalua la fila bajo FOR UPDATE contra la
+ *    version mas reciente) -- eso cambia el conjunto de candidatas que
+ *    recalcula, su hash ya no coincide con el que autorizo su propio
+ *    usuario, y termina en HASH_DESACTUALIZADO en vez de una condicion
+ *    de carrera silenciosa.
+ *
+ * 4. "Un fallo no debe dejar resultados parciales como definitivos ni
+ *    observaciones anteriores retiradas" -- retiro + finalizacion son la
+ *    MISMA transaccion de Postgres: si algo lanza a mitad de camino
+ *    (perdida de conexion, timeout, etc.), Postgres revierte TODO -- las
+ *    filas candidatas ya bloqueadas nunca quedan con vigente=false sin
+ *    que procesadaEn tambien haya quedado seteado, ni al reves. Un
+ *    reintento posterior del job (pg-boss) vuelve a correr esta funcion
+ *    entera desde cero -- retry-safe porque siempre recalcula candidatas
+ *    y hash frescos, nunca asume el estado de un intento anterior.
+ *
+ * Nota sobre el SELECT crudo: usa `to_char(..., 'YYYY-MM-DD')` en vez de
+ * dejar que el driver de Postgres parsee la columna DATE a un objeto
+ * Date directamente -- el parser default de "pg" para columnas DATE
+ * construye el Date en la ZONA HORARIA LOCAL del proceso, no en UTC
+ * (a diferencia del motor de Prisma, que normaliza los campos @db.Date a
+ * medianoche UTC de forma consistente) -- sin este paso, claveNegocio()
+ * podria calcular una fecha distinta segun la zona horaria del servidor
+ * que corre el job, causando falsos mismatch (o peor, falsos match) de
+ * hash. Se parsea el string ISO devuelto por la propia base (fuente de
+ * verdad) como medianoche UTC explicita, mismo criterio que
+ * comoFechaISO() en hashVistaPreviaRetiroCobertura.ts.
+ */
+/**
+ * Logica en si de finalizarConRetiroAutorizado() (ver el comentario
+ * completo mas abajo), separada para poder probarla con un `tx` falso --
+ * mismo patron que procesarLoteCobertura()/procesarRetiroFueraDeAlcance()
+ * arriba: recibe el `tx` ya dentro de una tenantTransaction abierta, en
+ * vez de abrirla ella misma.
+ */
+export async function procesarFinalizacionConRetiroAutorizado(
+  tx: TxCobertura,
+  contexto: Pick<ContextoImportacionCobertura, "empresaId" | "cadenaId" | "importId">,
+  alcance: AlcanceReemplazo,
+  clavesEnArchivo: ReadonlySet<string>,
+  hashAutorizado: string,
+  datosFinalizacion: DatosFinalizacionCobertura,
+): Promise<ResultadoFinalizacionConRetiro> {
+  const ubicaciones = [...alcance.ubicaciones];
+  const vigentesEnAlcance: Array<{ id: string; sku: string; ubicacion: string; fechaCorteIso: string }> = await tx.$queryRaw`
+    SELECT "id", "sku", "ubicacion", to_char("fechaCorte", 'YYYY-MM-DD') AS "fechaCorteIso"
+    FROM "observaciones_cobertura"
+    WHERE "empresaId" = ${contexto.empresaId}
+      AND "cadenaId" = ${contexto.cadenaId}
+      AND "fuente" = 'csv'
+      AND "vigente" = true
+      AND "fechaCorte" >= ${alcance.fechaCorteInicio}
+      AND "fechaCorte" <= ${alcance.fechaCorteFin}
+      AND "ubicacion" IN (${Prisma.join(ubicaciones)})
+    ORDER BY "id"
+    FOR UPDATE
+  `;
+  const candidatas = vigentesEnAlcance
+    .map((fila) => ({ ...fila, fechaCorte: new Date(`${fila.fechaCorteIso}T00:00:00.000Z`) }))
+    .filter((fila) => !clavesEnArchivo.has(claveNegocio(fila.sku, fila.ubicacion, fila.fechaCorte)));
+
+  const hashActual = calcularHashVistaPreviaRetiro(candidatas, {
+    fechaCorteInicio: alcance.fechaCorteInicio,
+    fechaCorteFin: alcance.fechaCorteFin,
+    ubicaciones,
+  });
+  if (hashActual !== hashAutorizado) {
+    // Nada se escribe -- ver punto 2 del comentario de arriba.
+    return { ok: false as const, motivo: "HASH_DESACTUALIZADO" as const };
+  }
+
+  for (const fila of candidatas) {
+    await tx.observacionCobertura.update({
+      where: { id: fila.id },
+      data: { vigente: false, reemplazadaEn: new Date() },
+    });
+  }
+
+  await tx.importacionCsv.update({
+    where: { id: contexto.importId },
+    data: {
+      estado: "CONFIRMADA",
+      procesadaEn: new Date(),
+      filasDetectadas: datosFinalizacion.filasDetectadas,
+      filasConError: datosFinalizacion.filasConError,
+      erroresMuestra: datosFinalizacion.erroresMuestra,
+    },
+  });
+
+  return { ok: true as const, retiradas: candidatas.length };
+}
+
+/** Wrapper delgado que abre la tenantTransaction -- ver
+ * procesarFinalizacionConRetiroAutorizado() para la logica en si (probada
+ * aparte con un `tx` falso, mismo patron que
+ * retirarObservacionesFueraDeAlcance()/procesarRetiroFueraDeAlcance()). */
+export async function finalizarConRetiroAutorizado(
+  contexto: Pick<ContextoImportacionCobertura, "empresaId" | "cadenaId" | "importId">,
+  alcance: AlcanceReemplazo,
+  clavesEnArchivo: ReadonlySet<string>,
+  hashAutorizado: string,
+  datosFinalizacion: DatosFinalizacionCobertura,
+): Promise<ResultadoFinalizacionConRetiro> {
+  return tenantTransaction(contexto.empresaId, (tx: TxCobertura) =>
+    procesarFinalizacionConRetiroAutorizado(tx, contexto, alcance, clavesEnArchivo, hashAutorizado, datosFinalizacion),
+  );
+}

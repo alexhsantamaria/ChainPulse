@@ -1471,6 +1471,23 @@ model ImportacionCsv {
   confirmadaPor   Usuario?  @relation(fields: [confirmadaPorId], references: [id])
   confirmadaEn    DateTime?
 
+  // Hash de la vista previa de retiro (REEMPLAZO_ALCANCE) que el usuario
+  // efectivamente vio y acepto al confirmar -- ver
+  // src/domain/hashVistaPreviaRetiroCobertura.ts. Se persiste UNA SOLA VEZ,
+  // en la primera confirmacion real (nunca se reescribe despues: ni en un
+  // reintento idempotente, ni por el job). Null para CARGA_PARCIAL (no hay
+  // retiro que autorizar) y para importaciones creadas antes de este
+  // campo. Alex, 2026-09-25 (ronda 3, condiciones de cierre): "el job debe
+  // comprobar que el retiro sigue coincidiendo con lo autorizado antes de
+  // publicar resultados o retirar registros" -- este es el valor contra el
+  // que el job recalcula y compara al momento de procesar (ver
+  // procesarRetiroFueraDeAlcanceAutorizado() en
+  // src/infra/kpis/cobertura/importar.ts). Si no coincide, el job marca
+  // ERROR y NUNCA actualiza este campo ni amplia el retiro por su cuenta --
+  // hace falta una vista previa y confirmacion nuevas (una importacion
+  // nueva, en este vertical slice).
+  retiroHashConfirmado String?
+
   // Marca de "terminado con exito" (Alex, 2026-09-25 -- "garantizar
   // recuperacion" + "no dejar resultados parciales como definitivos").
   // NUNCA se usa para DESCUBRIR trabajo pendiente entre tenants (RLS

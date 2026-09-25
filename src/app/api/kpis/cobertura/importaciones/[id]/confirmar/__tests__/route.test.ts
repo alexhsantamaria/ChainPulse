@@ -298,6 +298,14 @@ describe("POST .../confirmar -- REEMPLAZO_ALCANCE atado a la vista previa mostra
     expect(json).toEqual({ ok: true, importId: "import-1" });
     expect(tenantTransactionMock).toHaveBeenCalledTimes(1);
     expect(encolarImportacionCsvMock).toHaveBeenCalledTimes(1);
+    // El hash que se acaba de validar contra el body es el que se persiste
+    // -- es el valor que el job va a recomprobar antes de retirar/publicar
+    // (ver job.test.ts).
+    expect(txImportacionCsvUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ retiroHashConfirmado: retiroHash }),
+      }),
+    );
   });
 });
 
@@ -318,6 +326,9 @@ describe("POST .../confirmar -- confirmacion real, atomicidad y disparo inmediat
           confirmadaPorId: "usuario-1",
           confirmadaEn: expect.any(Date),
           fuenteConsumo: "ERP mayo 2026",
+          // CARGA_PARCIAL no tiene retiro que autorizar -- nunca se
+          // persiste un hash (Alex, 2026-09-25, condiciones de cierre).
+          retiroHashConfirmado: null,
         }),
       }),
     );

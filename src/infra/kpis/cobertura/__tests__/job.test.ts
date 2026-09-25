@@ -29,13 +29,13 @@ vi.mock("../../../storage/cifradoObjeto", () => ({
 }));
 
 const importarObservacionesCoberturaMock = vi.fn();
-const retirarObservacionesFueraDeAlcanceMock = vi.fn();
+const finalizarConRetiroAutorizadoMock = vi.fn();
 vi.mock("../importar", async () => {
   const actual = await vi.importActual<typeof import("../importar")>("../importar");
   return {
     ...actual,
     importarObservacionesCobertura: (...args: unknown[]) => importarObservacionesCoberturaMock(...args),
-    retirarObservacionesFueraDeAlcance: (...args: unknown[]) => retirarObservacionesFueraDeAlcanceMock(...args),
+    finalizarConRetiroAutorizado: (...args: unknown[]) => finalizarConRetiroAutorizadoMock(...args),
   };
 });
 
@@ -73,6 +73,7 @@ function importacionBase(overrides: Record<string, unknown> = {}) {
     periodoReferenciaConsumoFin: new Date("2026-05-31T12:00:00.000Z"),
     confirmadaEn: new Date("2026-09-25T00:00:00.000Z"),
     procesadaEn: null,
+    retiroHashConfirmado: null,
     ...overrides,
   };
 }
@@ -81,6 +82,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   descargarObjetoMock.mockResolvedValue(Buffer.from("cifrado"));
   importarObservacionesCoberturaMock.mockResolvedValue({ insertadas: 1, corregidas: 0, sinCambios: 0, yaProcesadas: 0 });
+  finalizarConRetiroAutorizadoMock.mockResolvedValue({ ok: true, retiradas: 0 });
 });
 
 describe("procesarUnaImportacionCsv", () => {
@@ -137,9 +139,128 @@ describe("procesarUnaImportacionCsv", () => {
     );
     const { procesarUnaImportacionCsv } = await import("../job");
     await procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" });
-    expect(retirarObservacionesFueraDeAlcanceMock).not.toHaveBeenCalled();
+    expect(finalizarConRetiroAutorizadoMock).not.toHaveBeenCalled();
     expect(importacionCsvMock.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ estado: "ERROR" }) }),
+    );
+  });
+
+  it("REEMPLAZO_ALCANCE con alcance completo pero SIN retiroHashConfirmado -- marca ERROR, nunca llama a finalizarConRetiroAutorizado", async () => {
+    // No deberia poder pasar en la practica (la ruta de confirmar siempre
+    // lo persiste para REEMPLAZO_ALCANCE) -- el job falla cerrado en vez
+    // de asumir una autorizacion que no quedo registrada.
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    importacionCsvMock.findUnique.mockResolvedValue(
+      importacionBase({
+        estrategia: "REEMPLAZO_ALCANCE",
+        alcanceFechaCorteInicio: new Date("2026-09-01"),
+        alcanceFechaCorteFin: new Date("2026-09-30"),
+        alcanceUbicaciones: ["LIMA"],
+        retiroHashConfirmado: null,
+      }),
+    );
+    const { procesarUnaImportacionCsv } = await import("../job");
+    await procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" });
+    expect(finalizarConRetiroAutorizadoMock).not.toHaveBeenCalled();
+    expect(importacionCsvMock.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ estado: "ERROR" }) }),
+    );
+  });
+
+  // Alex, 2026-09-25 (condiciones de cierre, punto 3, "Opcion A"): el job
+  // recomprueba el retiro autorizado antes de retirar/publicar. Estas dos
+  // pruebas fijan el contrato de procesarUnaImportacionCsv con
+  // finalizarConRetiroAutorizado() (probada aparte, con un `tx` real
+  // contra Postgres, en el test de integracion 5.3 -- aca solo se prueba
+  // COMO reacciona el job al resultado, con la funcion mockeada).
+  it("REEMPLAZO_ALCANCE, el hash recomprobado coincide -- delega retiro+finalizacion a finalizarConRetiroAutorizado, el job NO escribe estado/procesadaEn por su cuenta", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    finalizarConRetiroAutorizadoMock.mockResolvedValue({ ok: true, retiradas: 3 });
+    importacionCsvMock.findUnique.mockResolvedValue(
+      importacionBase({
+        estrategia: "REEMPLAZO_ALCANCE",
+        alcanceFechaCorteInicio: new Date("2026-09-01"),
+        alcanceFechaCorteFin: new Date("2026-09-30"),
+        alcanceUbicaciones: ["LIMA"],
+        retiroHashConfirmado: "hash-de-la-confirmacion",
+      }),
+    );
+    const { procesarUnaImportacionCsv } = await import("../job");
+    await procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" });
+    expect(finalizarConRetiroAutorizadoMock).toHaveBeenCalledWith(
+      { empresaId: "empresa-1", cadenaId: "cadena-1", importId: "import-1" },
+      { fechaCorteInicio: new Date("2026-09-01"), fechaCorteFin: new Date("2026-09-30"), ubicaciones: ["LIMA"] },
+      expect.any(Set),
+      "hash-de-la-confirmacion",
+      expect.objectContaining({ filasDetectadas: 1, filasConError: 0 }),
+    );
+    // La finalizacion (estado=CONFIRMADA+procesadaEn) ya ocurrio DENTRO de
+    // finalizarConRetiroAutorizado (mockeada aca) -- procesarUnaImportacionCsv
+    // nunca vuelve a escribir la importacion por su cuenta en este camino.
+    expect(importacionCsvMock.update).not.toHaveBeenCalled();
+  });
+
+  it("REEMPLAZO_ALCANCE, el hash recomprobado NO coincide -- marca ERROR identificable, nunca retira ni publica nada", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    finalizarConRetiroAutorizadoMock.mockResolvedValue({ ok: false, motivo: "HASH_DESACTUALIZADO" });
+    importacionCsvMock.findUnique.mockResolvedValue(
+      importacionBase({
+        estrategia: "REEMPLAZO_ALCANCE",
+        alcanceFechaCorteInicio: new Date("2026-09-01"),
+        alcanceFechaCorteFin: new Date("2026-09-30"),
+        alcanceUbicaciones: ["LIMA"],
+        retiroHashConfirmado: "hash-de-la-confirmacion",
+      }),
+    );
+    const { procesarUnaImportacionCsv } = await import("../job");
+    await procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" });
+    expect(finalizarConRetiroAutorizadoMock).toHaveBeenCalledTimes(1);
+    // Identificable (Alex: "marcar un error identificable") -- el mensaje
+    // menciona explicitamente que es por desactualizacion del retiro, no
+    // un error generico.
+    expect(importacionCsvMock.update).toHaveBeenCalledTimes(1);
+    expect(importacionCsvMock.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "import-1" },
+        data: expect.objectContaining({
+          estado: "ERROR",
+          erroresMuestra: [expect.objectContaining({ error: expect.stringContaining("RETIRO_DESACTUALIZADO_EN_JOB") })],
+        }),
+      }),
+    );
+    // Nunca se toca procesadaEn en este camino -- ni aca ni dentro de
+    // finalizarConRetiroAutorizado (mockeada: no hizo ninguna escritura
+    // real, y el propio contrato de la funcion garantiza que un ok:false
+    // no escribe nada, ver importar.ts).
+    expect(importacionCsvMock.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ procesadaEn: expect.anything() }) }),
+    );
+  });
+
+  it("CARGA_PARCIAL nunca llama a finalizarConRetiroAutorizado -- finaliza con su propia escritura directa", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    importacionCsvMock.findUnique.mockResolvedValue(importacionBase({ estrategia: "CARGA_PARCIAL" }));
+    const { procesarUnaImportacionCsv } = await import("../job");
+    await procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" });
+    expect(finalizarConRetiroAutorizadoMock).not.toHaveBeenCalled();
+    expect(importacionCsvMock.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ estado: "CONFIRMADA", procesadaEn: expect.any(Date) }) }),
     );
   });
 
@@ -270,7 +391,7 @@ describe("procesarUnaImportacionCsv -- fallos entre lotes y recuperacion", () =>
     );
     const { procesarUnaImportacionCsv } = await import("../job");
     await expect(procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" })).rejects.toThrow("timeout de Neon a mitad del lote");
-    expect(retirarObservacionesFueraDeAlcanceMock).not.toHaveBeenCalled();
+    expect(finalizarConRetiroAutorizadoMock).not.toHaveBeenCalled();
     expect(importacionCsvMock.update).not.toHaveBeenCalled(); // nunca CONFIRMADA/procesadaEn a medias
   });
 
@@ -336,7 +457,7 @@ describe("procesarUnaImportacionCsv -- fallos entre lotes y recuperacion", () =>
     } as any;
     await procesarImportacionesCsv(boss);
     expect(importarObservacionesCoberturaMock).not.toHaveBeenCalled();
-    expect(retirarObservacionesFueraDeAlcanceMock).not.toHaveBeenCalled();
+    expect(finalizarConRetiroAutorizadoMock).not.toHaveBeenCalled();
     expect(importacionCsvMock.update).not.toHaveBeenCalled(); // no vuelve a escribir nada
     expect(boss.complete).toHaveBeenCalledWith(COLA_IMPORTACION_CSV, "job-1"); // esta vez si se completa en pg-boss
     expect(boss.fail).not.toHaveBeenCalled();
