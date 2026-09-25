@@ -87,6 +87,25 @@ describe("(a) dos POST de confirmar simultaneos sobre la MISMA importacion CARGA
             objetoStorageKey: `integracion/concurrencia/${randomUUID()}.bin`,
             estado: "PENDIENTE_REVISION",
             mapeoColumnas: { encabezados: Object.values(MAPEO), propuesto: MAPEO, confirmado: null },
+            // Metadata de cifrado/almacenamiento -- Alex, 2026-09-25 (primera
+            // corrida real en Windows): sin esto, procesarUnaImportacionCsv()
+            // (job.ts) corta en su PRIMER guard ("Falta metadata de
+            // cifrado/almacenamiento") y llama a marcarError() -- estado
+            // queda en ERROR ANTES de siquiera intentar
+            // ClienteAlmacenamientoR2.descargarObjeto(), asi que el mock de
+            // R2 (que rechaza a proposito, ver arriba) nunca llega a
+            // ejercitarse. Valores dummy: el mock de R2 rechaza ANTES de que
+            // el job llegue a desenvolverDek()/descifrarContenido(), asi que
+            // nunca se validan de verdad -- solo necesitan ser no-nulos para
+            // pasar el guard y dejar que el disparo inmediato realmente
+            // intente la descarga (que es lo que esta prueba quiere
+            // ejercitar: "falla de forma limpia via boss.fail(), sin tocar
+            // estado").
+            cifradoVersion: 1,
+            cifradoClaveId: "integracion-concurrencia-dummy",
+            cifradoDek: "ZHVtbXk=",
+            cifradoDekIv: "ZHVtbXk=",
+            cifradoDekAuthTag: "ZHVtbXk=",
           },
           select: { id: true },
         }),
