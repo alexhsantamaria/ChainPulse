@@ -39,12 +39,14 @@ export default async function EslabonesPage() {
                     proveedor externo
                   </span>
                 )}
-                <Link
-                  href={`/dashboard/eslabones/${eslabon.id}/invitar`}
-                  className="text-xs text-slate-500 underline hover:text-slate-700"
-                >
-                  Invitar responsable
-                </Link>
+                {session.user.rol === "ADMINISTRADOR" && (
+                  <Link
+                    href={`/dashboard/eslabones/${eslabon.id}/invitar`}
+                    className="text-xs text-slate-500 underline hover:text-slate-700"
+                  >
+                    Invitar responsable
+                  </Link>
+                )}
               </span>
             </li>
           ))}

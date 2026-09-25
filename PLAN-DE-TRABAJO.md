@@ -2658,3 +2658,21 @@ Pedido de Alex sobre `ResultadoForm.tsx` (pantalla "Tu primer plano preliminar",
 - **Botón "Volver a la página principal":** agregado al final de la pantalla de resultado (debajo del botón/formulario de desbloqueo), como link secundario a `/` con el mismo estilo ya usado en `src/app/page.tsx` (`text-sm text-slate-500 underline`) — visible siempre, con o sin el detalle desbloqueado.
 
 **Validado en este entorno:** typecheck limpio (mismos 5 falsos positivos conocidos), lint limpio, test unitario 292/292 en verde (284 + 8 nuevas de `paisesTelefono.test.ts`). Sin cambios de schema ni de backend — no depende de la validación Windows-only pendiente de la Sección 21.
+
+## 23. Validación de Alex en Windows (2026-09-25) y hallazgos derivados
+
+Reporte de Alex sobre el commit `40a95f5` (next 15.5.26) y el commit `dbe6976` (script `r2:probar` de 10 pasos):
+
+- **Confirmado en Windows:** `typecheck`/`lint` sin errores, `test` 284/284, `build` completa (con advertencias, texto pendiente de que Alex lo comparta para evaluarlas junto a las 8 vulnerabilidades de la Sección 21). Pruebas manuales con usuario **RESPONSABLE**: OK. R2: los 10 pasos del script ampliado, **aprobados** — cierra el pendiente de la Sección 20 de este documento.
+- **`test:integration` posterior al parche de next:** todavía sin confirmar — sigue pendiente.
+
+**Hallazgos nuevos reportados, para investigar/resolver:**
+
+- [x] **"Invitar responsable" visible para el rol RESPONSABLE en `/dashboard/eslabones`:** confirmado y corregido. No era una brecha de seguridad — `/dashboard/eslabones/[id]/invitar` ya exigía `session.user.rol === "ADMINISTRADOR"` server-side (redirige a `/dashboard` si no) — pero la lista mostraba el link a cualquier rol, llevando a un RESPONSABLE a un callejón sin salida. Corregido envolviendo el `<Link>` en `session.user.rol === "ADMINISTRADOR" && (...)`, mismo patrón ya usado en `dashboard/ciclos/page.tsx` y `dashboard/page.tsx`. Validado: typecheck/lint limpios, test 292/292 sin regresión.
+- [ ] **Acceso y pruebas con rol ADMINISTRADOR:** las pruebas manuales de Windows fueron con RESPONSABLE — falta repetirlas con ADMINISTRADOR (incluye el flujo de "Invitar responsable" recién corregido).
+- [ ] **P2028 observado:** código de error de Prisma ("Transaction API error", timeout/transacción ya cerrada según el contexto) reportado durante las pruebas de Windows. Sin el mensaje completo/stack trace ni en qué acción concreta apareció, no se puede diagnosticar — pendiente que Alex comparta el detalle exacto (endpoint u operación, mensaje completo de la consola/terminal).
+- [x] **Configuración permanente de `AUTH_URL` — documentada.** Verificado contra `node_modules/next-auth/lib/env.js` de esta versión exacta (5.0.0-beta.32): la librería resuelve `process.env.AUTH_URL ?? process.env.NEXTAUTH_URL` (y lo mismo para `AUTH_SECRET`/`NEXTAUTH_SECRET`) — `AUTH_URL` es la nomenclatura nueva de v5 y tiene prioridad si está definida, pero `NEXTAUTH_URL` (lo único que `.env.example` documentaba hasta ahora) sigue funcionando como fallback, no hace falta migrar para que el login funcione. `.env.example` actualizado con la explicación completa y las variables `AUTH_URL`/`AUTH_SECRET` documentadas como alias opcionales, con la recomendación de fijar la URL pública real en producción (nunca `localhost`).
+- [ ] **Redirección tras login — sin diagnosticar todavía.** No hay síntoma concreto reportado (¿redirige al lugar equivocado? ¿vuelve a `/login`? ¿404?) — pendiente que Alex describa qué vio exactamente para poder investigarlo; el mecanismo de resolución de URL en sí (arriba) ya está verificado y no parece ser la causa por sí solo, dado que `NEXTAUTH_URL` ya estaba configurada.
+- [ ] **Advertencias del `build`:** texto completo pendiente de que Alex lo comparta — sin verlo no se puede evaluar si son ruido (ej. las de Edge Runtime de `jose`/`next-auth` ya observadas parcialmente en un intento de build en este entorno, sin red real) o algo que requiera acción.
+
+**Nota de proceso:** los hallazgos marcados `[ ]` no se resuelven por conjetura — se investigan con el detalle real que Alex reporte (mensaje completo, pasos para reproducir), siguiendo el mismo criterio del resto del proyecto ("esto es informativo, antes de confirmar algo primero debes revisar").
