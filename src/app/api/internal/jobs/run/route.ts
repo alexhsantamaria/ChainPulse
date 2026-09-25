@@ -14,6 +14,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { obtenerBoss } from "@/infra/jobs/pgBoss";
 import { encolarPurgaHuellaOrigen, procesarPurgaHuellaOrigen } from "@/infra/jobs/purgaHuellaOrigenJob";
+import { procesarImportacionesCsv } from "@/infra/kpis/cobertura/job";
 import { logError } from "@/infra/log";
 
 export const runtime = "nodejs"; // pg-boss necesita el pool "pg" (modulo "node:net"), no corre en Edge.
@@ -41,8 +42,23 @@ export async function GET(request: Request) {
   try {
     const boss = await obtenerBoss();
     await encolarPurgaHuellaOrigen(boss);
-    const resultado = await procesarPurgaHuellaOrigen(boss);
-    return NextResponse.json({ ok: true, ...resultado });
+    const resultadoPurga = await procesarPurgaHuellaOrigen(boss);
+    // Cola de importaciones CSV (Cobertura, Incremento 4 Bloque B) -- via
+    // de respaldo para cuando el disparo inmediato del route de
+    // confirmar falla o el proceso se reinicia antes de completarlo. No
+    // hay "encolar" aca: encolarImportacionCsv() solo se llama una vez,
+    // desde el route de confirmar, con singletonKey=importId (nunca se
+    // duplica el job de una misma importacion).
+    let resultadoImportacionesCsv: { procesados: number } = { procesados: 0 };
+    try {
+      resultadoImportacionesCsv = await procesarImportacionesCsv(boss);
+    } catch (err) {
+      // No perder el resultado de la purga (que ya se completo) por un
+      // fallo aislado en la cola de importaciones -- se registra y la
+      // respuesta lo refleja, pero no se propaga como error 500 general.
+      logError("api/internal/jobs/run (importacionesCsv)", err);
+    }
+    return NextResponse.json({ ok: true, ...resultadoPurga, importacionesCsv: resultadoImportacionesCsv });
   } catch (err) {
     logError("api/internal/jobs/run", err);
     return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
