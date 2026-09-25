@@ -7,6 +7,14 @@
 // (ver README.md).
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+// erroresMuestra es Json? -- job.ts usa Prisma.DbNull (nunca `null` a
+// secas) cuando no hay errores, ver el comentario en job.ts. El stub
+// degradado de @prisma/client en la Mac no expone Prisma.DbNull en
+// runtime (confirmado con un smoke test manual, node -e) -- mismo
+// mock-centinela que importar.test.ts, para que las aserciones de abajo
+// sean deterministas sin depender de ese stub roto.
+vi.mock("@prisma/client", () => ({ Prisma: { DbNull: "PRISMA_DB_NULL_MOCK" } }));
+
 vi.mock("../../../prisma/client", () => ({ prisma: { definicionKpi: { findUnique: vi.fn() } } }));
 
 const importacionCsvMock = {
@@ -40,6 +48,13 @@ vi.mock("../importar", async () => {
 });
 
 const CSV_VALIDO = "sku,ubicacion,fecha,inventario,unidad_inv,consumo,unidad_cons\nA-001,LIMA,2026-09-24,100,unidad,10,unidad\n";
+
+// Segunda fila con SKU vacio -- interpretarFilaCoberturaCsv.ts la rechaza
+// con "SKU vacio" (dominio puro), asi erroresTotales queda con 1 entrada
+// real para probar la rama CON errores de CARGA_PARCIAL (erroresMuestra
+// != Prisma.DbNull).
+const CSV_CON_ERROR =
+  "sku,ubicacion,fecha,inventario,unidad_inv,consumo,unidad_cons\nA-001,LIMA,2026-09-24,100,unidad,10,unidad\n,LIMA,2026-09-24,100,unidad,10,unidad\n";
 
 const MAPEO_CONFIRMADO = {
   sku: "sku",
@@ -277,6 +292,46 @@ describe("procesarUnaImportacionCsv", () => {
     expect(importacionCsvMock.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ estado: "CONFIRMADA", procesadaEn: expect.any(Date), filasDetectadas: 1, filasConError: 0 }),
+      }),
+    );
+  });
+
+  it("CARGA_PARCIAL sin errores -- erroresMuestra usa Prisma.DbNull, nunca `null` a secas (Json? lo exige)", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    importacionCsvMock.findUnique.mockResolvedValue(importacionBase({ estrategia: "CARGA_PARCIAL" }));
+    const { procesarUnaImportacionCsv } = await import("../job");
+    await procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" });
+    expect(importacionCsvMock.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // "PRISMA_DB_NULL_MOCK" es el centinela del mock de @prisma/client
+        // de arriba, no el valor real de Prisma.DbNull (undefined en la
+        // Mac, un objeto real en Windows) -- lo que prueba esta asercion
+        // es que el codigo tomo la rama Prisma.DbNull, no `null`.
+        data: expect.objectContaining({ filasConError: 0, erroresMuestra: "PRISMA_DB_NULL_MOCK" }),
+      }),
+    );
+  });
+
+  it("CARGA_PARCIAL con errores -- erroresMuestra guarda el array de muestras, nunca Prisma.DbNull", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_CON_ERROR));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    importacionCsvMock.findUnique.mockResolvedValue(importacionBase({ estrategia: "CARGA_PARCIAL" }));
+    const { procesarUnaImportacionCsv } = await import("../job");
+    await procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" });
+    expect(importacionCsvMock.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          filasDetectadas: 2,
+          filasConError: 1,
+          erroresMuestra: [expect.objectContaining({ numeroFila: 2, error: expect.stringContaining("SKU vacio") })],
+        }),
       }),
     );
   });

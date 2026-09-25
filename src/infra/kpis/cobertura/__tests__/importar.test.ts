@@ -16,14 +16,18 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../../../prisma/client", () => ({ prisma: {} }));
 
 // El stub degradado de @prisma/client en la Mac (sin red a
-// binaries.prisma.sh, ver README.md) no expone Prisma.join en runtime
-// -- confirmado con un smoke test manual (node -e), no es un supuesto.
-// Mismo criterio que el resto de este archivo: procesarFinalizacionConRetiroAutorizado()
-// recibe un `tx` falso cuyo $queryRaw no inspecciona el SQL armado (eso
-// es justo lo que la Mac no puede probar sin Postgres real -- ver el
-// test de integracion), asi que a esta prueba unitaria le alcanza con
-// que Prisma.join no lance, el valor que devuelva es irrelevante aca.
-vi.mock("@prisma/client", () => ({ Prisma: { join: (valores: unknown) => valores } }));
+// binaries.prisma.sh, ver README.md) no expone Prisma.join NI
+// Prisma.DbNull en runtime -- confirmado con un smoke test manual
+// (node -e), no es un supuesto. Mismo criterio que el resto de este
+// archivo: procesarFinalizacionConRetiroAutorizado() recibe un `tx`
+// falso cuyo $queryRaw no inspecciona el SQL armado (eso es justo lo
+// que la Mac no puede probar sin Postgres real -- ver el test de
+// integracion), asi que a esta prueba unitaria le alcanza con que
+// Prisma.join no lance (el valor que devuelva es irrelevante aca) y con
+// un valor centinela para Prisma.DbNull que las aserciones de abajo
+// puedan reconocer -- nunca el `Prisma.DbNull` real, que en la Mac ni
+// siquiera existe.
+vi.mock("@prisma/client", () => ({ Prisma: { join: (valores: unknown) => valores, DbNull: "PRISMA_DB_NULL_MOCK" } }));
 import {
   procesarLoteCobertura,
   procesarRetiroFueraDeAlcance,
@@ -281,7 +285,36 @@ describe("procesarFinalizacionConRetiroAutorizado", () => {
     expect(tx.__importacionesActualizadas).toEqual([
       {
         where: { id: "import-1" },
-        data: { estado: "CONFIRMADA", procesadaEn: expect.any(Date), filasDetectadas: 5, filasConError: 0, erroresMuestra: null },
+        // erroresMuestra: null (dato de entrada, sin errores) se traduce a
+        // Prisma.DbNull en la llamada real a tx.importacionCsv.update() --
+        // Json? no acepta `null` a secas (Prisma lo rechaza en tiempo de
+        // tipos, ver el comentario en importar.ts). "PRISMA_DB_NULL_MOCK" es
+        // el centinela del mock de arriba, no el valor real de Prisma.DbNull.
+        data: { estado: "CONFIRMADA", procesadaEn: expect.any(Date), filasDetectadas: 5, filasConError: 0, erroresMuestra: "PRISMA_DB_NULL_MOCK" },
+      },
+    ]);
+  });
+
+  it("hash recalculado coincide, CON errores de muestra -- erroresMuestra guarda el array tal cual (nunca Prisma.DbNull cuando hay contenido real)", async () => {
+    const filaVieja = { id: "vieja-1", sku: "A-999", ubicacion: "LIMA", fechaCorteIso: "2026-09-24" };
+    const hashAutorizado = calcularHashVistaPreviaRetiro(
+      [{ id: filaVieja.id, sku: filaVieja.sku, ubicacion: filaVieja.ubicacion, fechaCorte: new Date("2026-09-24T00:00:00.000Z") }],
+      alcance,
+    );
+    const datosConErrores = { filasDetectadas: 5, filasConError: 1, erroresMuestra: [{ numeroFila: 3, error: "SKU vacio" }] };
+    const tx = txFalsoParaRetiroAutorizado([filaVieja]);
+    const r = await procesarFinalizacionConRetiroAutorizado(tx, contexto, alcance, new Set(), hashAutorizado, datosConErrores);
+    expect(r).toEqual({ ok: true, retiradas: 1 });
+    expect(tx.__importacionesActualizadas).toEqual([
+      {
+        where: { id: "import-1" },
+        data: {
+          estado: "CONFIRMADA",
+          procesadaEn: expect.any(Date),
+          filasDetectadas: 5,
+          filasConError: 1,
+          erroresMuestra: [{ numeroFila: 3, error: "SKU vacio" }],
+        },
       },
     ]);
   });

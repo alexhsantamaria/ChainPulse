@@ -26,6 +26,7 @@
 // resultados parciales como definitivos, Alex 2026-09-25).
 import type { PgBoss, Db as PgBossDb } from "pg-boss";
 import Papa from "papaparse";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../prisma/client";
 import { tenantClient } from "../../prisma/tenantClient";
 import { ClienteAlmacenamientoR2 } from "../../storage/r2";
@@ -318,7 +319,14 @@ export async function procesarUnaImportacionCsv({ importId, empresaId }: Payload
       procesadaEn: new Date(),
       filasDetectadas: filas.length,
       filasConError: erroresTotales.length,
-      erroresMuestra: erroresTotales.length > 0 ? erroresTotales.slice(0, 50) : null,
+      // erroresMuestra es Json? -- Prisma exige un valor explicito para
+      // "sin valor" en un campo JSON nullable (Prisma.DbNull, no `null`
+      // a secas: `null` es ambiguo entre "NULL de base de datos" y "el
+      // JSON literal null", y Prisma rechaza la ambiguedad en tiempo de
+      // tipos). Sin errores queremos NULL de base de datos (ausencia de
+      // valor), no el literal JSON null -- por eso Prisma.DbNull, nunca
+      // Prisma.JsonNull.
+      erroresMuestra: erroresTotales.length > 0 ? erroresTotales.slice(0, 50) : Prisma.DbNull,
     },
   });
 }

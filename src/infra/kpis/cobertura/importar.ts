@@ -451,7 +451,13 @@ export async function procesarFinalizacionConRetiroAutorizado(
       procesadaEn: new Date(),
       filasDetectadas: datosFinalizacion.filasDetectadas,
       filasConError: datosFinalizacion.filasConError,
-      erroresMuestra: datosFinalizacion.erroresMuestra,
+      // erroresMuestra es Json? -- Prisma exige Prisma.DbNull (no `null`
+      // a secas) para "sin valor" en un campo JSON nullable, ver el
+      // mismo comentario en job.ts (CARGA_PARCIAL). datosFinalizacion.erroresMuestra
+      // es `Array<...> | null` a proposito (tipo TS plano, agnostico del
+      // ORM) -- la traduccion a la semantica de Prisma pasa SOLO aca, en
+      // el borde de persistencia.
+      erroresMuestra: datosFinalizacion.erroresMuestra ?? Prisma.DbNull,
     },
   });
 
