@@ -90,13 +90,27 @@ export async function crearFixtureCobertura(etiqueta: string): Promise<FixtureCo
     });
     // DefinicionKpi NO es tenant-scoped (sin empresaId) -- numero
     // aleatorio para no chocar con la COBERTURA real ya sembrada
-    // (@@unique([codigo, numero])).
+    // (@@unique([codigo, numero])). PERO ademas hay un indice unico
+    // PARCIAL sobre codigo solo, WHERE estado='PUBLICADA'
+    // (uq_definicion_kpi_publicada, migracion 20260924020000 -- "una
+    // version PUBLICADA nunca convive con otra PUBLICADA del mismo
+    // codigo", backstop de base de datos a proposito, no representable en
+    // schema.prisma). Windows lo encontro real contra Postgres (el `tx`
+    // falso de la Mac nunca valida constraints reales): crear esta fila
+    // sintetica como PUBLICADA choca con la COBERTURA real ya sembrada,
+    // que SI esta PUBLICADA. Ninguno de los tres archivos de integracion
+    // que usan este fixture pasa por el unico lookup del codigo que
+    // exige estado=PUBLICADA (src/app/api/kpis/cobertura/importaciones/
+    // route.ts:58, la ruta de SUBIDA -- ninguno de los tres la ejercita,
+    // construyen su propia ImportacionCsv/ObservacionCobertura
+    // directamente) -- job.ts busca por id (findUnique), sin filtrar por
+    // estado. BORRADOR alcanza y mantiene el fixture 100% aislado de la
+    // fila real (nunca la toca, nunca depende de que exista).
     const definicionKpi = await tx.definicionKpi.create({
       data: {
         codigo: "COBERTURA",
         numero: 900_000 + Math.floor(Math.random() * 99_999),
-        estado: "PUBLICADA",
-        publicadaEn: new Date(),
+        estado: "BORRADOR",
         nombre: `Cobertura (prueba de integracion ${etiqueta})`,
         descripcion: "Definicion sintetica solo para pruebas de integracion -- nunca usada en produccion.",
         formula: "inventarioDisponible / consumoDiarioEsperado",
