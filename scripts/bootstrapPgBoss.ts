@@ -19,6 +19,13 @@ import "./_cargarEnv";
 import { PgBoss } from "pg-boss";
 import { Client } from "pg";
 import { COLA_PURGA_HUELLA_ORIGEN } from "../src/infra/jobs/purgaHuellaOrigenJob";
+// Incremento 4 Bloque B (import de CSV, Cobertura) -- exactamente la cola
+// que el comentario de cabecera de este script ya avisaba que faltaria
+// agregar aca. Confirmado real contra Postgres en Windows (2026-09-25):
+// boss.send(COLA_IMPORTACION_CSV, ...) fallaba con "Queue
+// procesar-importacion-csv does not exist" -- este script nunca la habia
+// creado, la Mac no tiene red a Neon para haberlo notado antes.
+import { COLA_IMPORTACION_CSV } from "../src/infra/kpis/cobertura/job";
 
 const PGBOSS_SCHEMA = "pgboss";
 
@@ -38,6 +45,9 @@ async function main() {
 
   console.log(`Creando la cola "${COLA_PURGA_HUELLA_ORIGEN}"...`);
   await boss.createQueue(COLA_PURGA_HUELLA_ORIGEN);
+
+  console.log(`Creando la cola "${COLA_IMPORTACION_CSV}"...`);
+  await boss.createQueue(COLA_IMPORTACION_CSV);
 
   await boss.stop({ graceful: false, timeout: 5000 });
 

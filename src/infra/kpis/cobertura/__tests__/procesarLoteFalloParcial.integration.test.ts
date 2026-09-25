@@ -144,15 +144,27 @@ describe("procesarLoteCobertura -- fallo a mitad de un lote, contra Postgres rea
 
     // Reintento completo (mismo criterio que un redelivery de pg-boss tras
     // el fallo: se vuelve a correr TODO el archivo desde el principio,
-    // nunca solo "lo que falto") -- lote 1 debe resolver en yaProcesadas
-    // (P2002, retry-safe, NUNCA insertadas de nuevo) y lote 2 esta vez sin
-    // fallo forzado, debe insertarse real.
+    // nunca solo "lo que falto") -- lote 1 debe resolver en sinCambios,
+    // NUNCA insertadas de nuevo. Corregido tras la primera corrida real en
+    // Windows: la expectativa original decia yaProcesadas (P2002), pero
+    // esa rama solo se alcanza si procesarLoteCobertura() llega a
+    // intentar el create() -- y no llega, porque encuentra antes una fila
+    // VIGENTE con la MISMA clave de negocio Y el MISMO contenidoHash (las
+    // filas del lote 1 no cambiaron entre la corrida original y este
+    // reintento), asi que corta por el camino "reintento identico -- no-op"
+    // (ver el comentario de procesarLoteCobertura en importar.ts) antes de
+    // siquiera intentar escribir. Mismo criterio que la prueba unitaria
+    // "no-op cuando ya existe una fila vigente con el MISMO contenidoHash"
+    // en importar.test.ts -- yaProcesadas es la ruta P2002 para una
+    // reconstruccion mas estrecha (mismo importId+numeroFila pero SIN una
+    // fila vigente que lo cubra por clave de negocio), no la ruta general
+    // de "reintentar el mismo archivo".
     const reintentoLote1 = await tenantTransaction(
       fixture.empresaId,
       (tx) => procesarLoteCobertura(tx, contexto, lote1),
       TX_OPTIONS_INTEGRACION,
     );
-    expect(reintentoLote1).toEqual({ insertadas: 0, corregidas: 0, sinCambios: 0, yaProcesadas: 2 });
+    expect(reintentoLote1).toEqual({ insertadas: 0, corregidas: 0, sinCambios: 2, yaProcesadas: 0 });
 
     const reintentoLote2 = await tenantTransaction(
       fixture.empresaId,
