@@ -1471,6 +1471,24 @@ model ImportacionCsv {
   confirmadaPor   Usuario?  @relation(fields: [confirmadaPorId], references: [id])
   confirmadaEn    DateTime?
 
+  // Marca de "terminado con exito" (Alex, 2026-09-25 -- "garantizar
+  // recuperacion" + "no dejar resultados parciales como definitivos").
+  // NUNCA se usa para DESCUBRIR trabajo pendiente entre tenants (RLS
+  // bloquea por diseno cualquier lectura cross-tenant de esta tabla con
+  // el rol de runtime -- ver prisma/rls.sql, "el rol de la app NUNCA debe
+  // tener BYPASSRLS" -- asi que el UNICO worklist confiable entre
+  // tenants es la cola de pg-boss, nunca un SELECT directo sobre esta
+  // tabla). Su unico proposito es distinguir, para una importacion YA
+  // confirmada (confirmadaEn no nulo), "en proceso/reintentando"
+  // (procesadaEn null) de "termino con exito" (procesadaEn seteado) --
+  // lo usa la UI para mostrar el estado real, y el propio job la revisa
+  // al empezar como salvaguarda extra (nunca vuelve a correr el retiro
+  // por alcance sobre una importacion que ya quedo procesadaEn). Un
+  // fallo definitivo (reintentos de pg-boss agotados) se refleja en
+  // estado=ERROR, con procesadaEn en null para siempre -- nunca se marca
+  // procesada una importacion que no termino con exito.
+  procesadaEn DateTime?
+
   observacionesCobertura ObservacionCobertura[]
 
   createdAt DateTime @default(now())
