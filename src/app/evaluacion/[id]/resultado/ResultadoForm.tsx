@@ -17,6 +17,12 @@ import {
   TEXTO_CONSENTIMIENTO_INVESTIGACION,
 } from "@/infra/public/textoConsentimiento";
 import type { HallazgoDetalle, HallazgoMacro } from "@/lib/evaluacionExpres/tipos";
+import {
+  banderaPais,
+  PAIS_TELEFONO_DEFECTO,
+  PAISES_TELEFONO,
+  paisTelefonoPorCodigo,
+} from "@/lib/evaluacionExpres/paisesTelefono";
 
 type EstadoResultado =
   | { fase: "cargando" }
@@ -132,6 +138,10 @@ export default function ResultadoForm({ evaluacionId }: { evaluacionId: string }
             Ver diagnóstico completo
           </button>
         ))}
+
+      <Link href="/" className="text-center text-sm text-slate-500 underline">
+        Volver a la página principal
+      </Link>
     </main>
   );
 }
@@ -147,6 +157,7 @@ function FormularioDesbloqueo({
   const [nombreCompleto, setNombreCompleto] = useState("");
   const [empresaNombre, setEmpresaNombre] = useState("");
   const [telefono, setTelefono] = useState("");
+  const [codigoPaisTelefono, setCodigoPaisTelefono] = useState(PAIS_TELEFONO_DEFECTO);
   const [aceptaDiagnostico, setAceptaDiagnostico] = useState(false);
   const [aceptaInvestigacion, setAceptaInvestigacion] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -157,11 +168,13 @@ function FormularioDesbloqueo({
     if (!aceptaDiagnostico) return;
     setEnviando(true);
     setError(null);
+    const telefonoRecortado = telefono.trim();
+    const indicativoPais = paisTelefonoPorCodigo(codigoPaisTelefono)?.indicativo ?? "";
     const resultado = await desbloquearDetalle(evaluacionId, {
       correo,
       nombreCompleto,
       empresaNombre,
-      telefono: telefono || undefined,
+      telefono: telefonoRecortado ? `${indicativoPais} ${telefonoRecortado}` : undefined,
       consentimientoDiagnostico: true,
       consentimientoInvestigacion: aceptaInvestigacion,
     });
@@ -207,15 +220,31 @@ function FormularioDesbloqueo({
           className="rounded border border-slate-300 px-3 py-2"
         />
       </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Teléfono (opcional)
-        <input
-          type="tel"
-          value={telefono}
-          onChange={(e) => setTelefono(e.target.value)}
-          className="rounded border border-slate-300 px-3 py-2"
-        />
-      </label>
+      <div className="flex flex-col gap-1 text-sm">
+        <label htmlFor="telefono-numero">Teléfono (opcional)</label>
+        <div className="flex gap-2">
+          <select
+            value={codigoPaisTelefono}
+            onChange={(e) => setCodigoPaisTelefono(e.target.value)}
+            aria-label="Código de país del teléfono"
+            className="w-28 shrink-0 rounded border border-slate-300 px-2 py-2 text-sm"
+          >
+            {PAISES_TELEFONO.map((pais) => (
+              <option key={pais.codigoIso2} value={pais.codigoIso2}>
+                {banderaPais(pais.codigoIso2)} {pais.indicativo}
+              </option>
+            ))}
+          </select>
+          <input
+            id="telefono-numero"
+            type="tel"
+            value={telefono}
+            onChange={(e) => setTelefono(e.target.value)}
+            placeholder="987 654 321"
+            className="flex-1 rounded border border-slate-300 px-3 py-2"
+          />
+        </div>
+      </div>
       <label className="flex items-start gap-2 text-xs text-slate-600">
         <input
           type="checkbox"

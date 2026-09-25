@@ -2647,3 +2647,14 @@ y confirmar manualmente que login y el dashboard cargan sin error. Recién con e
 | A — `postcss` (vía `next`, bundleado, build-time) | Pendiente — arreglo existe (`next@16.3.6`) pero es major | Evaluar junto con la migración completa a Next.js 16 (no programada todavía) |
 
 Ninguna de las tres cuentas como cerrada. Las tres siguen apareciendo en `npm audit` hasta que se aplique su arreglo real.
+
+## 22. UI — Evaluación exprés: código de país en teléfono + volver al inicio (2026-09-25)
+
+Pedido de Alex sobre `ResultadoForm.tsx` (pantalla "Tu primer plano preliminar", RF12/RF13):
+
+- **Selector de código de país con bandera en "Recibe el diagnóstico completo":** el campo `Teléfono (opcional)` ahora tiene, a la izquierda, un `<select>` con bandera + indicativo (ej. 🇵🇪 +51), por defecto Perú. Nuevo módulo `src/lib/evaluacionExpres/paisesTelefono.ts` — lista curada de 35 países (Latinoamérica completa + mercados con los que ChainPulse podría tener contacto comercial), no las ~195 del mundo; ampliarla es agregar una fila, no un cambio de arquitectura. La bandera se calcula del código ISO 3166-1 alpha-2 vía símbolos indicadores regionales Unicode (`banderaPais()`), no hay 35 emojis hardcodeados sueltos — 8 pruebas nuevas (`src/lib/evaluacionExpres/__tests__/paisesTelefono.test.ts`).
+  - **Aclaración importante, verificada contra el código:** esto NO reabre la decisión ya confirmada de `MVP-DEFINITIVO.md` Sección 6.1 ("país fijo en Perú, único aprobado" para el contexto/alcance de la evaluación, en `/evaluacion`). Son dos cosas distintas: el país de operación de la empresa evaluada sigue fijo en Perú sin selector; el código de país del teléfono es solo del dato de contacto de quien completa el formulario de desbloqueo, que puede escribir desde cualquier país.
+  - El backend no cambió: `telefono` sigue siendo `z.string().min(1).optional()` sin formato exigido (`POST .../unlock`). El cliente compone `"${indicativo} ${numero}"` (ej. `"+51 987654321"`) antes de enviarlo — sin migración de schema, sin tocar `EvaluacionExpresV2.telefono`.
+- **Botón "Volver a la página principal":** agregado al final de la pantalla de resultado (debajo del botón/formulario de desbloqueo), como link secundario a `/` con el mismo estilo ya usado en `src/app/page.tsx` (`text-sm text-slate-500 underline`) — visible siempre, con o sin el detalle desbloqueado.
+
+**Validado en este entorno:** typecheck limpio (mismos 5 falsos positivos conocidos), lint limpio, test unitario 292/292 en verde (284 + 8 nuevas de `paisesTelefono.test.ts`). Sin cambios de schema ni de backend — no depende de la validación Windows-only pendiente de la Sección 21.
