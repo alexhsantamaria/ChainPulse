@@ -224,4 +224,157 @@ describe("encolarImportacionCsv", () => {
       expect.objectContaining({ singletonKey: "import-1", retryLimit: expect.any(Number) }),
     );
   });
+
+  // Alex, 2026-09-25 (segunda ronda): "recuperacion garantizada... sin
+  // BYPASSRLS" se resolvio encolando DENTRO de la misma transaccion de
+  // Postgres que persiste la confirmacion (ver [id]/confirmar/route.ts,
+  // tenantTransaction() + fromPrisma(tx)) -- esta prueba fija el
+  // contrato que esa ruta necesita: pasar `{db: adaptador}` tiene que
+  // llegar tal cual a boss.send(), nunca perderse ni ser sobreescrito.
+  it("con opciones.db, lo pasa a boss.send() junto con singletonKey/retryLimit (para encolar dentro de una transaccion externa)", async () => {
+    const { encolarImportacionCsv, COLA_IMPORTACION_CSV } = await import("../job");
+    const boss = { send: vi.fn().mockResolvedValue("job-id") } as unknown as import("pg-boss").PgBoss;
+    const dbFalso = { executeSql: vi.fn() } as unknown as import("pg-boss").Db;
+    await encolarImportacionCsv(boss, { importId: "import-1", empresaId: "empresa-1" }, { db: dbFalso });
+    expect(boss.send).toHaveBeenCalledWith(
+      COLA_IMPORTACION_CSV,
+      { importId: "import-1", empresaId: "empresa-1" },
+      expect.objectContaining({ singletonKey: "import-1", retryLimit: expect.any(Number), db: dbFalso }),
+    );
+  });
+
+  it("sin opciones.db, no manda la clave db en absoluto (deja que PgBoss use su propio pool)", async () => {
+    const { encolarImportacionCsv, COLA_IMPORTACION_CSV } = await import("../job");
+    const boss = { send: vi.fn().mockResolvedValue("job-id") } as unknown as import("pg-boss").PgBoss;
+    await encolarImportacionCsv(boss, { importId: "import-1", empresaId: "empresa-1" });
+    const llamada = (boss.send as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(llamada).toBeDefined();
+    expect(llamada?.[2]).not.toHaveProperty("db");
+    void COLA_IMPORTACION_CSV;
+  });
+});
+
+describe("procesarUnaImportacionCsv -- fallos entre lotes y recuperacion", () => {
+  // Alex, 2026-09-25 (segunda ronda), punto 4: "agregá pruebas explícitas
+  // de caída entre lotes... singletonKey y procesadaEn son protecciones,
+  // pero no sustituyen esas pruebas."
+  it("un lote falla a mitad de camino -- nunca llega al retiro por alcance ni marca CONFIRMADA/procesadaEn", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    importarObservacionesCoberturaMock.mockRejectedValueOnce(new Error("timeout de Neon a mitad del lote"));
+    importacionCsvMock.findUnique.mockResolvedValue(
+      importacionBase({ estrategia: "REEMPLAZO_ALCANCE", alcanceFechaCorteInicio: new Date("2026-09-01"), alcanceFechaCorteFin: new Date("2026-09-30"), alcanceUbicaciones: ["LIMA"] }),
+    );
+    const { procesarUnaImportacionCsv } = await import("../job");
+    await expect(procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" })).rejects.toThrow("timeout de Neon a mitad del lote");
+    expect(retirarObservacionesFueraDeAlcanceMock).not.toHaveBeenCalled();
+    expect(importacionCsvMock.update).not.toHaveBeenCalled(); // nunca CONFIRMADA/procesadaEn a medias
+  });
+
+  it("procesarImportacionesCsv atrapa ese fallo y llama boss.fail() (nunca boss.complete()) -- pg-boss reintenta mas adelante", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    importarObservacionesCoberturaMock.mockRejectedValueOnce(new Error("conexion caida a mitad del lote"));
+    importacionCsvMock.findUnique.mockResolvedValue(importacionBase());
+    const { procesarImportacionesCsv, COLA_IMPORTACION_CSV } = await import("../job");
+    const boss = {
+      fetch: vi.fn().mockResolvedValue([{ id: "job-1", data: { importId: "import-1", empresaId: "empresa-1" } }]),
+      complete: vi.fn().mockResolvedValue(undefined),
+      fail: vi.fn().mockResolvedValue(undefined),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- solo los metodos de arriba hacen falta.
+    } as any;
+    await procesarImportacionesCsv(boss);
+    expect(boss.fail).toHaveBeenCalledWith(COLA_IMPORTACION_CSV, "job-1", { mensaje: "conexion caida a mitad del lote" });
+    expect(boss.complete).not.toHaveBeenCalled();
+  });
+
+  it("reintento tras un crash a mitad de camino: la segunda corrida (procesadaEn todavia null) reprocesa desde el principio sin duplicar el resultado final", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    // Primera corrida: el proceso "muere" a mitad del lote (lanza, nunca
+    // llega a escribir procesadaEn) -- simulado dejando findUnique
+    // devolviendo procesadaEn:null todavia para la segunda corrida.
+    importarObservacionesCoberturaMock.mockRejectedValueOnce(new Error("proceso terminado a mitad de camino"));
+    importacionCsvMock.findUnique.mockResolvedValue(importacionBase({ procesadaEn: null }));
+    const { procesarUnaImportacionCsv } = await import("../job");
+    await expect(procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" })).rejects.toThrow();
+    expect(importarObservacionesCoberturaMock).toHaveBeenCalledTimes(1);
+
+    // Segunda corrida (reintento de pg-boss): esta vez el lote completo
+    // funciona -- procesa una sola vez mas y cierra en CONFIRMADA.
+    importarObservacionesCoberturaMock.mockResolvedValueOnce({ insertadas: 1, corregidas: 0, sinCambios: 0, yaProcesadas: 0 });
+    await procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" });
+    expect(importarObservacionesCoberturaMock).toHaveBeenCalledTimes(2); // 1 fallida + 1 exitosa, nunca mas
+    expect(importacionCsvMock.update).toHaveBeenCalledTimes(1); // solo la escritura final exitosa, ninguna a medias
+    expect(importacionCsvMock.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ estado: "CONFIRMADA", procesadaEn: expect.any(Date) }) }),
+    );
+  });
+
+  it("caida DESPUES de publicar resultados (procesadaEn ya quedo escrito) pero ANTES de boss.complete() -- la redelivery es un no-op limpio, nunca reprocesa ni repite el retiro", async () => {
+    // Simula exactamente ese momento: la escritura de procesadaEn ya se
+    // vio en la base (la siguiente lectura la encuentra), pero pg-boss
+    // nunca se entero de que el job termino (crash justo despues del
+    // update, antes de que procesarImportacionesCsv llegara a
+    // boss.complete()) y lo vuelve a entregar.
+    importacionCsvMock.findUnique.mockResolvedValue(importacionBase({ procesadaEn: new Date("2026-09-25T10:00:00.000Z") }));
+    const { procesarImportacionesCsv, COLA_IMPORTACION_CSV } = await import("../job");
+    const boss = {
+      fetch: vi.fn().mockResolvedValue([{ id: "job-1", data: { importId: "import-1", empresaId: "empresa-1" } }]),
+      complete: vi.fn().mockResolvedValue(undefined),
+      fail: vi.fn().mockResolvedValue(undefined),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- solo los metodos de arriba hacen falta.
+    } as any;
+    await procesarImportacionesCsv(boss);
+    expect(importarObservacionesCoberturaMock).not.toHaveBeenCalled();
+    expect(retirarObservacionesFueraDeAlcanceMock).not.toHaveBeenCalled();
+    expect(importacionCsvMock.update).not.toHaveBeenCalled(); // no vuelve a escribir nada
+    expect(boss.complete).toHaveBeenCalledWith(COLA_IMPORTACION_CSV, "job-1"); // esta vez si se completa en pg-boss
+    expect(boss.fail).not.toHaveBeenCalled();
+  });
+
+  // Limite honesto de lo que una prueba con mocks puede probar (Alex
+  // pregunto especificamente por "ejecucion concurrente"): esto verifica
+  // que NUESTRO codigo no asume acceso exclusivo -- cada job que boss.fetch()
+  // entrega se procesa de forma independiente y solo se completa/falla el
+  // suyo. La garantia real de "pg-boss nunca entrega el mismo job a dos
+  // workers a la vez" es un lock a nivel de fila en Postgres
+  // (FOR UPDATE SKIP LOCKED dentro de pg-boss) -- eso NO se puede probar
+  // con mocks, ninguna prueba unitaria en la Mac lo demuestra; solo una
+  // prueba de integracion contra Postgres real (Windows) lo hace.
+  it("dos jobs entregados en el mismo fetch() se procesan de forma independiente -- un fallo en uno no afecta el resultado del otro", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    importacionCsvMock.findUnique.mockResolvedValueOnce(importacionBase({ id: "import-1" }));
+    importacionCsvMock.findUnique.mockResolvedValueOnce(importacionBase({ id: "import-2", procesadaEn: null }));
+    importarObservacionesCoberturaMock
+      .mockResolvedValueOnce({ insertadas: 1, corregidas: 0, sinCambios: 0, yaProcesadas: 0 })
+      .mockRejectedValueOnce(new Error("import-2 fallo, import-1 no deberia verse afectada"));
+    const { procesarImportacionesCsv, COLA_IMPORTACION_CSV } = await import("../job");
+    const boss = {
+      fetch: vi.fn().mockResolvedValue([
+        { id: "job-1", data: { importId: "import-1", empresaId: "empresa-1" } },
+        { id: "job-2", data: { importId: "import-2", empresaId: "empresa-1" } },
+      ]),
+      complete: vi.fn().mockResolvedValue(undefined),
+      fail: vi.fn().mockResolvedValue(undefined),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- solo los metodos de arriba hacen falta.
+    } as any;
+    const r = await procesarImportacionesCsv(boss);
+    expect(r).toEqual({ procesados: 2 });
+    expect(boss.complete).toHaveBeenCalledWith(COLA_IMPORTACION_CSV, "job-1");
+    expect(boss.fail).toHaveBeenCalledWith(COLA_IMPORTACION_CSV, "job-2", { mensaje: "import-2 fallo, import-1 no deberia verse afectada" });
+  });
 });

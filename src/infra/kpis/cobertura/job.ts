@@ -24,7 +24,7 @@
 // (ver importar.ts) y el retiro por alcance solo corre si TODOS los
 // batches de ESTA invocacion terminaron sin lanzar (nunca deja
 // resultados parciales como definitivos, Alex 2026-09-25).
-import type { PgBoss } from "pg-boss";
+import type { PgBoss, Db as PgBossDb } from "pg-boss";
 import Papa from "papaparse";
 import { prisma } from "../../prisma/client";
 import { tenantClient } from "../../prisma/tenantClient";
@@ -70,13 +70,27 @@ export interface MapeoColumnasPersistido {
  * singletonKey=importId evita que dos confirmaciones (doble click,
  * reintento de red del cliente) encolen dos jobs en paralelo para la
  * misma importacion.
+ *
+ * `db` (opcional): adaptador IDatabase de pg-boss (ver `pg-boss/adapters`,
+ * p.ej. `fromPrisma(tx)`) para que el INSERT del job corra DENTRO de una
+ * transaccion externa en vez del pool propio de PgBoss -- asi la ruta de
+ * confirmar puede persistir mapeo/estrategia/fuenteConsumo/periodo +
+ * estado=CONFIRMADA + encolar el job, todo en UNA sola transaccion
+ * atomica (ver tenantTransaction() en la ruta de confirmar). Sin `db`,
+ * usa el pool propio de PgBoss como siempre (p.ej. si algun dia se
+ * encola fuera de una transaccion de tenant).
  */
-export async function encolarImportacionCsv(boss: PgBoss, payload: PayloadImportacionCsv): Promise<string | null> {
+export async function encolarImportacionCsv(
+  boss: PgBoss,
+  payload: PayloadImportacionCsv,
+  opciones: { db?: PgBossDb } = {},
+): Promise<string | null> {
   return boss.send(COLA_IMPORTACION_CSV, payload, {
     singletonKey: payload.importId,
     retryLimit: 3,
     retryDelay: 30,
     retryBackoff: true,
+    ...(opciones.db ? { db: opciones.db } : {}),
   });
 }
 

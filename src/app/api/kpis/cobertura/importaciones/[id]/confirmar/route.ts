@@ -3,25 +3,51 @@
 // fuenteConsumo/periodo de referencia del consumo, y encola el
 // procesamiento. Incremento 4 Bloque B, vertical slice de Cobertura.
 //
-// Inmutabilidad tras confirmar (Alex, 2026-09-25): esta ruta SOLO acepta
-// una ImportacionCsv en estado PENDIENTE_REVISION sin confirmadaEn -- una
-// vez que estado pasa a CONFIRMADA (siempre junto con confirmadaEn/
-// confirmadaPorId, en la misma escritura, solo tras encolar con exito),
-// un segundo POST se rechaza con 409. No hay "reconfirmar con otros
-// valores" -- hace falta una importacion nueva.
+// Revision de Alex (2026-09-25, segunda ronda) que motiva el diseno de
+// abajo -- ver tambien claude/lecciones-aprendidas.md:
 //
-// Persistencia ANTES de encolar (Alex): mapeo/estrategia/alcance/
-// fuenteConsumo/periodo se guardan en una escritura separada, ANTES de
-// intentar encolar el job -- si falla el encolado (ver mas abajo,
-// reintentos), esos datos ya quedaron guardados y un segundo POST
-// (idempotente, misma validacion) puede reintentar solo el encolado sin
-// perder lo ya guardado.
+// 1. RECUPERACION ATOMICA (nunca "persistido pero no encolado"): la
+//    version anterior persistia primero y encolaba despues, con
+//    reintentos -- dejaba una ventana real entre ambas escrituras donde
+//    un crash del proceso perdia el encolado sin dejar rastro
+//    automatico de recuperacion. Ahora TODO (persistir mapeo/
+//    estrategia/alcance/fuenteConsumo/periodo + estado=CONFIRMADA + el
+//    INSERT del job de pg-boss) corre en UNA sola transaccion de
+//    Postgres via tenantTransaction() + el adaptador oficial
+//    `fromPrisma()` de pg-boss (boss.send(..., {db: fromPrisma(tx)}))
+//    -- si el proceso muere a mitad de camino, Postgres revierte TODO
+//    (la importacion queda exactamente como estaba, PENDIENTE_REVISION,
+//    nada encolado) y un reintento normal (mismo POST) no encuentra
+//    ningun estado intermedio que reconciliar. Nunca BYPASSRLS: la
+//    tabla importaciones_csv se escribe con `tx` (RLS normal via
+//    app.tenant_id), el INSERT del job va al schema "pgboss" (fuera de
+//    RLS) en la MISMA transaccion/conexion.
+// 2. REINTENTO IDEMPOTENTE: un segundo POST con los MISMOS valores sobre
+//    una importacion ya CONFIRMADA ya no devuelve 409 a ciegas --
+//    compara contra lo persistido (compararConfirmacionImportacionCsv.ts)
+//    y devuelve el estado existente sin repetir efectos. Solo un POST
+//    con valores DISTINTOS sobre una importacion ya confirmada es 409 --
+//    no hay "reconfirmar con otros valores", hace falta una importacion
+//    nueva.
+// 3. VISTA PREVIA DE RETIRO ATADA A LA ACEPTACION: `confirmarRetiro=true`
+//    solo no demuestra que el usuario vio ESTOS candidatos -- la vista
+//    previa (soloVistaPrevia=true) devuelve un `retiroHash`
+//    (hashVistaPreviaRetiroCobertura.ts) sobre el conjunto EXACTO de
+//    candidatas+alcance; la confirmacion real debe mandarlo de vuelta y
+//    se recalcula fresco contra la base al momento de confirmar -- si no
+//    coincide, algo cambio desde la vista previa y se exige una vista
+//    previa nueva (409 RETIRO_DESACTUALIZADO), nunca se confia en el
+//    booleano solo.
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { fromPrisma } from "pg-boss";
 import { requireAdmin } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
+import { tenantTransaction } from "@/infra/prisma/tenantTransaction";
 import { logError } from "@/infra/log";
 import { validarMapeoColumnas, detectarColumnasSospechosasDeConsumo, type MapeoColumnasCobertura } from "@/domain/mapeoColumnasCsv";
+import { calcularHashVistaPreviaRetiro, type CandidataRetiroParaHash } from "@/domain/hashVistaPreviaRetiroCobertura";
+import { confirmacionesCoinciden, type DatosConfirmacionCobertura } from "@/domain/compararConfirmacionImportacionCsv";
 import { claveNegocio } from "@/infra/kpis/cobertura/importar";
 import { encolarImportacionCsv, procesarImportacionesCsv, type MapeoColumnasPersistido } from "@/infra/kpis/cobertura/job";
 import { obtenerBoss } from "@/infra/jobs/pgBoss";
@@ -50,18 +76,21 @@ const confirmarSchema = z
     alcanceFechaCorteInicio: z.coerce.date().nullish(),
     alcanceFechaCorteFin: z.coerce.date().nullish(),
     alcanceUbicaciones: z.array(z.string().trim().min(1)).nullish(),
-    // El usuario vio la vista previa de retiro (candidatasRetiro de una
-    // llamada anterior con soloVistaPrevia=true) y la confirma -- Alex:
-    // "mostrar el alcance explícito y los registros que se retirarán
-    // antes de confirmar". Solo exigido para REEMPLAZO_ALCANCE.
+    // El usuario vio la vista previa de retiro (candidatasRetiro+retiroHash
+    // de una llamada anterior con soloVistaPrevia=true) y la confirma --
+    // Alex: "mostrar el alcance explícito y los registros que se
+    // retirarán antes de confirmar". Solo exigido para REEMPLAZO_ALCANCE.
     confirmarRetiro: z.boolean().default(false),
+    // Debe coincidir EXACTAMENTE con el retiroHash que devolvio la vista
+    // previa -- ver cabecera, punto 3. Solo exigido para REEMPLAZO_ALCANCE.
+    retiroHash: z.string().min(1).nullish(),
     fuenteConsumo: z.string().trim().min(1),
     periodoReferenciaConsumoInicio: z.coerce.date(),
     periodoReferenciaConsumoFin: z.coerce.date(),
     // true: solo calcula y devuelve la vista previa (mapeo valido,
-    // columnas sospechosas, candidatas a retiro) -- NUNCA persiste ni
-    // encola nada. Lo llama la UI antes de mostrar el boton final de
-    // "Confirmar".
+    // columnas sospechosas, candidatas a retiro + retiroHash) -- NUNCA
+    // persiste ni encola nada. Lo llama la UI antes de mostrar el boton
+    // final de "Confirmar".
     soloVistaPrevia: z.boolean().default(false),
   })
   .refine((d) => d.periodoReferenciaConsumoInicio <= d.periodoReferenciaConsumoFin, {
@@ -80,7 +109,13 @@ const confirmarSchema = z
   .refine((d) => !d.alcanceFechaCorteInicio || !d.alcanceFechaCorteFin || d.alcanceFechaCorteInicio <= d.alcanceFechaCorteFin, {
     message: "alcanceFechaCorteInicio debe ser anterior o igual a alcanceFechaCorteFin",
     path: ["alcanceFechaCorteInicio"],
+  })
+  .refine((d) => d.soloVistaPrevia || d.estrategia !== "REEMPLAZO_ALCANCE" || !!d.retiroHash, {
+    message: "REEMPLAZO_ALCANCE exige retiroHash (de una vista previa reciente) para confirmar de verdad",
+    path: ["retiroHash"],
   });
+
+type DatosConfirmar = z.infer<typeof confirmarSchema>;
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const resultadoSesion = await requireAdmin();
@@ -101,13 +136,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
   const datos = parsed.data;
 
-  // Inmutabilidad -- ver cabecera. Se chequea DESPUES de validar el body
-  // (para que un error de body siempre gane, mas facil de depurar) pero
-  // ANTES de tocar nada mas.
-  if (!datos.soloVistaPrevia && (importacion.estado !== "PENDIENTE_REVISION" || importacion.confirmadaEn)) {
-    return NextResponse.json({ ok: false, error: "YA_CONFIRMADA" }, { status: 409 });
-  }
-
   const mapeoPersistido = importacion.mapeoColumnas as unknown as MapeoColumnasPersistido | null;
   if (!mapeoPersistido) {
     logError("api/kpis/cobertura/importaciones/[id]/confirmar", new Error(`ImportacionCsv ${importId} sin mapeoColumnas persistido`));
@@ -127,96 +155,105 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return NextResponse.json({ ok: false, error: "COLUMNAS_SOSPECHOSAS_SIN_RESOLVER", columnas: sinResolver }, { status: 400 });
   }
 
-  // Candidatas a retiro -- SOLO se calculan si REEMPLAZO_ALCANCE. Requiere
-  // conocer que claves de negocio trae el archivo: se re-descarga+
-  // descifra+parsea aca (el objeto en R2 es inmutable desde la subida,
-  // nunca cambia) -- costo aceptable (archivo <=4MB) a cambio de nunca
-  // confiar en datos de fila que el cliente pudiera mandar en el body.
-  let candidatasRetiro: Array<{ id: string; sku: string; ubicacion: string; fechaCorte: Date }> = [];
-  if (datos.estrategia === "REEMPLAZO_ALCANCE") {
-    const clavesEnArchivo = await calcularClavesEnArchivo(sesion.empresaId, importId, importacion, datos.mapeoColumnas);
-    if (!clavesEnArchivo.ok) {
-      return NextResponse.json({ ok: false, error: clavesEnArchivo.error }, { status: 502 });
-    }
-    const vigentesEnAlcance = await cliente.observacionCobertura.findMany({
-      where: {
-        cadenaId: importacion.cadenaId,
-        fuente: "csv",
-        vigente: true,
-        fechaCorte: { gte: datos.alcanceFechaCorteInicio!, lte: datos.alcanceFechaCorteFin! },
-        ubicacion: { in: datos.alcanceUbicaciones! },
-      },
-      select: { id: true, sku: true, ubicacion: true, fechaCorte: true },
-    });
-    candidatasRetiro = vigentesEnAlcance.filter(
-      (fila: { sku: string; ubicacion: string; fechaCorte: Date }) =>
-        !clavesEnArchivo.claves.has(claveNegocio(fila.sku, fila.ubicacion, fila.fechaCorte)),
-    );
-  }
-
+  // --- Vista previa (nunca persiste ni encola nada) ---------------------
   if (datos.soloVistaPrevia) {
-    return NextResponse.json({ ok: true, vistaPrevia: true, mapeoValido: true, candidatasRetiro });
+    if (datos.estrategia !== "REEMPLAZO_ALCANCE") {
+      return NextResponse.json({ ok: true, vistaPrevia: true, mapeoValido: true, candidatasRetiro: [], retiroHash: null });
+    }
+    const vista = await calcularVistaPreviaRetiro(cliente, sesion.empresaId, importId, importacion, datos);
+    if (!vista.ok) return NextResponse.json({ ok: false, error: vista.error }, { status: 502 });
+    return NextResponse.json({
+      ok: true,
+      vistaPrevia: true,
+      mapeoValido: true,
+      candidatasRetiro: vista.candidatas,
+      retiroHash: vista.hash,
+    });
   }
 
-  if (datos.estrategia === "REEMPLAZO_ALCANCE" && !datos.confirmarRetiro) {
-    return NextResponse.json(
-      { ok: false, error: "DEBE_CONFIRMAR_RETIRO", candidatasRetiro },
-      { status: 400 },
-    );
+  // --- Reintento sobre una importacion ya confirmada: idempotencia ------
+  // (nunca recalcula candidatasRetiro aca -- si REEMPLAZO_ALCANCE ya
+  // corrio, el retiro ya se ejecuto y "candidatas ahora" ya no significa
+  // lo mismo que al momento de confirmar -- ver
+  // compararConfirmacionImportacionCsv.ts).
+  if (importacion.estado === "CONFIRMADA" && importacion.confirmadaEn) {
+    if (!mapeoPersistido.confirmado) {
+      // No deberia poder pasar (CONFIRMADA siempre se escribe junto con
+      // mapeoColumnas.confirmado) -- fallar cerrado en vez de asumir.
+      logError("api/kpis/cobertura/importaciones/[id]/confirmar", new Error(`ImportacionCsv ${importId} CONFIRMADA sin mapeoColumnas.confirmado`));
+      return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
+    }
+    const persistida = datosConfirmacionDesdeImportacion(importacion, mapeoPersistido.confirmado);
+    const nueva = datosConfirmacionDesdeBody(datos);
+    if (confirmacionesCoinciden(persistida, nueva)) {
+      return NextResponse.json({ ok: true, importId, yaConfirmada: true });
+    }
+    return NextResponse.json({ ok: false, error: "YA_CONFIRMADA_CON_OTROS_VALORES" }, { status: 409 });
+  }
+  if (importacion.estado !== "PENDIENTE_REVISION") {
+    // ERROR u otro estado -- esta ruta no es un mecanismo de reintento
+    // para esos casos (hace falta una importacion nueva).
+    return NextResponse.json({ ok: false, error: "ESTADO_NO_CONFIRMABLE", estado: importacion.estado }, { status: 409 });
   }
 
-  // 1. Persistir los datos confirmados -- ANTES de intentar encolar (ver
-  //    cabecera). estado/confirmadaEn/confirmadaPorId NO se tocan aca
-  //    todavia.
-  await cliente.importacionCsv.update({
-    where: { id: importId },
-    data: {
-      mapeoColumnas: { ...mapeoPersistido, confirmado: datos.mapeoColumnas } satisfies MapeoColumnasPersistido,
-      estrategia: datos.estrategia,
-      alcanceFechaCorteInicio: datos.alcanceFechaCorteInicio ?? null,
-      alcanceFechaCorteFin: datos.alcanceFechaCorteFin ?? null,
-      alcanceUbicaciones: datos.alcanceUbicaciones ?? null,
-      fuenteConsumo: datos.fuenteConsumo,
-      periodoReferenciaConsumoInicio: datos.periodoReferenciaConsumoInicio,
-      periodoReferenciaConsumoFin: datos.periodoReferenciaConsumoFin,
-    },
-  });
-
-  // 2. Encolar, con reintentos cortos -- "garantizar recuperacion si se
-  //    guarda la confirmacion pero falla el encolado" (Alex). Si los 3
-  //    intentos fallan, NO se marca CONFIRMADA -- los datos ya guardados
-  //    en el paso 1 quedan intactos y un nuevo POST a esta misma ruta
-  //    revalida todo de nuevo y reintenta encolar, sin perder nada.
-  const boss = await obtenerBoss();
-  let encolado = false;
-  let ultimoError: unknown;
-  for (let intento = 0; intento < 3 && !encolado; intento += 1) {
-    try {
-      await encolarImportacionCsv(boss, { importId, empresaId: sesion.empresaId });
-      encolado = true;
-    } catch (err) {
-      ultimoError = err;
+  // --- Primera confirmacion real (PENDIENTE_REVISION -> CONFIRMADA) -----
+  if (datos.estrategia === "REEMPLAZO_ALCANCE") {
+    const vista = await calcularVistaPreviaRetiro(cliente, sesion.empresaId, importId, importacion, datos);
+    if (!vista.ok) return NextResponse.json({ ok: false, error: vista.error }, { status: 502 });
+    if (!datos.confirmarRetiro) {
+      return NextResponse.json({ ok: false, error: "DEBE_CONFIRMAR_RETIRO", candidatasRetiro: vista.candidatas, retiroHash: vista.hash }, { status: 400 });
+    }
+    if (datos.retiroHash !== vista.hash) {
+      // Algo cambio desde la vista previa que el cliente mando (otra
+      // importacion se proceso, una correccion manual, etc.) -- nunca se
+      // confia en confirmarRetiro=true solo, hace falta una vista previa
+      // nueva.
+      return NextResponse.json({ ok: false, error: "RETIRO_DESACTUALIZADO", candidatasRetiro: vista.candidatas, retiroHash: vista.hash }, { status: 409 });
     }
   }
-  if (!encolado) {
-    logError("api/kpis/cobertura/importaciones/[id]/confirmar", ultimoError);
+
+  const boss = await obtenerBoss();
+
+  // Persistir + confirmar + encolar, TODOS en una sola transaccion
+  // atomica -- ver cabecera, punto 1. Si esto lanza (por cualquier
+  // motivo, incluido un crash a mitad de camino), Postgres revierte TODO
+  // y la importacion queda exactamente como estaba (PENDIENTE_REVISION);
+  // un reintento normal (mismo POST) no encuentra nada que reconciliar.
+  try {
+    await tenantTransaction(sesion.empresaId, async (tx) => {
+      await tx.importacionCsv.update({
+        where: { id: importId },
+        data: {
+          mapeoColumnas: { ...mapeoPersistido, confirmado: datos.mapeoColumnas } satisfies MapeoColumnasPersistido,
+          estrategia: datos.estrategia,
+          alcanceFechaCorteInicio: datos.alcanceFechaCorteInicio ?? null,
+          alcanceFechaCorteFin: datos.alcanceFechaCorteFin ?? null,
+          alcanceUbicaciones: datos.alcanceUbicaciones ?? null,
+          fuenteConsumo: datos.fuenteConsumo,
+          periodoReferenciaConsumoInicio: datos.periodoReferenciaConsumoInicio,
+          periodoReferenciaConsumoFin: datos.periodoReferenciaConsumoFin,
+          estado: "CONFIRMADA",
+          confirmadaPorId: sesion.usuarioId,
+          confirmadaEn: new Date(),
+        },
+      });
+      // fromPrisma(tx): adaptador OFICIAL de pg-boss (pg-boss/dist/adapters/prisma.ts)
+      // -- el INSERT del job corre con tx.$queryRawUnsafe DENTRO de esta
+      // misma transaccion/conexion, nunca en el pool propio de PgBoss.
+      await encolarImportacionCsv(boss, { importId, empresaId: sesion.empresaId }, { db: fromPrisma(tx) });
+    });
+  } catch (err) {
+    logError("api/kpis/cobertura/importaciones/[id]/confirmar", err);
     return NextResponse.json(
-      { ok: false, error: "NO_SE_PUDO_ENCOLAR", mensaje: "Los datos se guardaron. Volvé a confirmar para reintentar el procesamiento." },
+      { ok: false, error: "NO_SE_PUDO_CONFIRMAR", mensaje: "No se pudo guardar la confirmacion. Volvé a intentar." },
       { status: 502 },
     );
   }
 
-  // 3. Recien AHORA, junto con el encolado ya exitoso: CONFIRMADA +
-  //    confirmadaEn/confirmadaPorId, todos en la misma escritura.
-  await cliente.importacionCsv.update({
-    where: { id: importId },
-    data: { estado: "CONFIRMADA", confirmadaPorId: sesion.usuarioId, confirmadaEn: new Date() },
-  });
-
-  // 4. Disparo inmediato -- caso feliz, procesa en el mismo ciclo en vez
-  //    de esperar al cron de respaldo (run/route.ts). Si esto falla, no
-  //    es un error para el usuario -- el job YA esta encolado de forma
-  //    durable (paso 2), el cron lo toma en su proxima corrida.
+  // Disparo inmediato -- caso feliz, procesa en el mismo ciclo en vez de
+  // esperar al cron de respaldo (run/route.ts). Si esto falla, no es un
+  // error para el usuario -- el job YA quedo encolado de forma durable
+  // (misma transaccion de arriba), el cron lo toma en su proxima corrida.
   try {
     await procesarImportacionesCsv(boss, 1);
   } catch (err) {
@@ -224,6 +261,94 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   return NextResponse.json({ ok: true, importId });
+}
+
+/** Arma la forma comun de "datos de confirmacion" a partir de la fila
+ * de ImportacionCsv ya persistida (para comparar en la idempotencia). */
+function datosConfirmacionDesdeImportacion(
+  importacion: {
+    estrategia: string;
+    alcanceFechaCorteInicio: Date | null;
+    alcanceFechaCorteFin: Date | null;
+    alcanceUbicaciones: unknown;
+    fuenteConsumo: string | null;
+    periodoReferenciaConsumoInicio: Date | null;
+    periodoReferenciaConsumoFin: Date | null;
+  },
+  mapeoConfirmado: MapeoColumnasCobertura,
+): DatosConfirmacionCobertura {
+  return {
+    mapeoColumnas: mapeoConfirmado,
+    estrategia: importacion.estrategia as "CARGA_PARCIAL" | "REEMPLAZO_ALCANCE",
+    alcanceFechaCorteInicio: importacion.alcanceFechaCorteInicio,
+    alcanceFechaCorteFin: importacion.alcanceFechaCorteFin,
+    alcanceUbicaciones: (importacion.alcanceUbicaciones as string[] | null) ?? null,
+    // No pueden ser null aca: CONFIRMADA siempre se escribe junto con
+    // fuenteConsumo/periodo (ver el bloque de la transaccion) -- el "!"
+    // documenta esa invariante en vez de silenciarla con "?? valorFalso".
+    fuenteConsumo: importacion.fuenteConsumo!,
+    periodoReferenciaConsumoInicio: importacion.periodoReferenciaConsumoInicio!,
+    periodoReferenciaConsumoFin: importacion.periodoReferenciaConsumoFin!,
+  };
+}
+
+/** Arma la misma forma a partir del body ya validado por zod. */
+function datosConfirmacionDesdeBody(datos: DatosConfirmar): DatosConfirmacionCobertura {
+  return {
+    mapeoColumnas: datos.mapeoColumnas,
+    estrategia: datos.estrategia,
+    alcanceFechaCorteInicio: datos.alcanceFechaCorteInicio ?? null,
+    alcanceFechaCorteFin: datos.alcanceFechaCorteFin ?? null,
+    alcanceUbicaciones: datos.alcanceUbicaciones ?? null,
+    fuenteConsumo: datos.fuenteConsumo,
+    periodoReferenciaConsumoInicio: datos.periodoReferenciaConsumoInicio,
+    periodoReferenciaConsumoFin: datos.periodoReferenciaConsumoFin,
+  };
+}
+
+/** Candidatas a retiro (REEMPLAZO_ALCANCE) + su hash -- SIEMPRE
+ * recalculadas frescas contra la base y el archivo real en R2 al momento
+ * de la llamada, nunca contra datos que mande el cliente. Usada tanto
+ * por la vista previa como por la confirmacion real (que vuelve a
+ * calcular el hash para compararlo contra el que mando el cliente -- ver
+ * cabecera, punto 3). */
+async function calcularVistaPreviaRetiro(
+  cliente: ReturnType<typeof tenantClient>,
+  empresaId: string,
+  importId: string,
+  importacion: {
+    cadenaId: string;
+    objetoStorageKey: string;
+    cifradoClaveId: string | null;
+    cifradoDek: string | null;
+    cifradoDekIv: string | null;
+    cifradoDekAuthTag: string | null;
+  },
+  datos: DatosConfirmar,
+): Promise<{ ok: true; candidatas: CandidataRetiroParaHash[]; hash: string } | { ok: false; error: string }> {
+  const clavesEnArchivo = await calcularClavesEnArchivo(empresaId, importId, importacion, datos.mapeoColumnas);
+  if (!clavesEnArchivo.ok) return { ok: false, error: clavesEnArchivo.error };
+
+  const vigentesEnAlcance = await cliente.observacionCobertura.findMany({
+    where: {
+      cadenaId: importacion.cadenaId,
+      fuente: "csv",
+      vigente: true,
+      fechaCorte: { gte: datos.alcanceFechaCorteInicio!, lte: datos.alcanceFechaCorteFin! },
+      ubicacion: { in: datos.alcanceUbicaciones! },
+    },
+    select: { id: true, sku: true, ubicacion: true, fechaCorte: true },
+  });
+  const candidatas = vigentesEnAlcance.filter(
+    (fila: { sku: string; ubicacion: string; fechaCorte: Date }) =>
+      !clavesEnArchivo.claves.has(claveNegocio(fila.sku, fila.ubicacion, fila.fechaCorte)),
+  );
+  const hash = calcularHashVistaPreviaRetiro(candidatas, {
+    fechaCorteInicio: datos.alcanceFechaCorteInicio!,
+    fechaCorteFin: datos.alcanceFechaCorteFin!,
+    ubicaciones: datos.alcanceUbicaciones!,
+  });
+  return { ok: true, candidatas, hash };
 }
 
 /** Re-descarga+descifra+parsea el archivo y devuelve el conjunto de
