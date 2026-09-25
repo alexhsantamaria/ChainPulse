@@ -83,3 +83,41 @@ describe("validarMapeoColumnas", () => {
     expect(r.columnasDuplicadas).toEqual(["sku"]);
   });
 });
+
+describe("detectarColumnasSospechosasDeConsumo", () => {
+  const mapeoBase = {
+    sku: "sku",
+    ubicacion: "ubicacion",
+    fechaCorte: "fecha",
+    inventarioDisponible: "inventario",
+    unidadInventario: "unidad_inv",
+    consumoDiarioEsperado: "consumo",
+    unidadConsumoDiario: "unidad_cons",
+  };
+
+  it("detecta una columna de fuente de consumo que el archivo trae de mas (nunca se ignora en silencio)", async () => {
+    const { detectarColumnasSospechosasDeConsumo } = await import("../mapeoColumnasCsv");
+    const encabezados = [...Object.values(mapeoBase), "Fuente de Consumo"];
+    const r = detectarColumnasSospechosasDeConsumo(encabezados, mapeoBase);
+    expect(r).toEqual([{ encabezado: "Fuente de Consumo", campo: "fuenteConsumo" }]);
+  });
+
+  it("detecta una columna de periodo de referencia del consumo", async () => {
+    const { detectarColumnasSospechosasDeConsumo } = await import("../mapeoColumnasCsv");
+    const encabezados = [...Object.values(mapeoBase), "periodo_referencia_consumo_inicio"];
+    const r = detectarColumnasSospechosasDeConsumo(encabezados, mapeoBase);
+    expect(r).toEqual([{ encabezado: "periodo_referencia_consumo_inicio", campo: "periodoReferenciaConsumo" }]);
+  });
+
+  it("no marca como sospechosa una columna que YA esta mapeada a un campo del CSV", async () => {
+    const { detectarColumnasSospechosasDeConsumo } = await import("../mapeoColumnasCsv");
+    const r = detectarColumnasSospechosasDeConsumo(Object.values(mapeoBase), mapeoBase);
+    expect(r).toEqual([]);
+  });
+
+  it("sin columnas sospechosas, devuelve una lista vacia", async () => {
+    const { detectarColumnasSospechosasDeConsumo } = await import("../mapeoColumnasCsv");
+    const r = detectarColumnasSospechosasDeConsumo([...Object.values(mapeoBase), "notas"], mapeoBase);
+    expect(r).toEqual([]);
+  });
+});

@@ -70,7 +70,7 @@ export const CAMPOS_COBERTURA_CSV: readonly DefinicionCampoCoberturaCsv[] = [
  * multiples colapsados. Nunca se usa para el valor de una CELDA (eso lo
  * gobierna la regla de sku/ubicacion en interpretarFilaCoberturaCsv.ts,
  * que preserva ceros iniciales/guiones/espacios internos a proposito). */
-function normalizarEncabezado(valor: string): string {
+export function normalizarEncabezado(valor: string): string {
   return valor
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
@@ -139,3 +139,80 @@ export function validarMapeoColumnas(
     columnasDuplicadas,
   };
 }
+
+// -- Deteccion de columnas sospechosas de fuente/periodo de consumo --
+//
+// Decision de Alex (2026-09-25): fuenteConsumo y el periodo de
+// referencia del consumo se piden UNA SOLA VEZ en el formulario de
+// confirmacion, nunca como columna del CSV (ver cabecera). Pero si el
+// archivo TRAE una columna que se parece a uno de esos tres campos, sea
+// porque el usuario malentendio el formato o porque viene de un export
+// que los incluye, esa columna NUNCA debe ignorarse ni sobreescribirse
+// en silencio -- hay que detectarla y forzar una resolucion explicita
+// antes de confirmar (nunca asumir cual de los dos valores -- el del
+// formulario o el de la columna ignorada -- es el correcto).
+//
+// Alias deliberadamente MAS AMPLIOS que los de mapeoColumnas (incluyen
+// "origen"/"period[o]" sueltos) porque el costo de un falso positivo acá
+// (preguntarle al usuario "¿esta columna es de fuente/periodo de
+// consumo?" cuando en realidad no lo es) es bajo -- una confirmacion de
+// mas -- mientras que el costo de un falso negativo (una columna de
+// fuente/periodo real que pasa desapercibida) es alto -- un dato
+// silenciosamente ignorado, exactamente lo que Alex pidio evitar.
+const ALIAS_FUENTE_CONSUMO_SOSPECHOSOS = [
+  "fuente consumo",
+  "fuente de consumo",
+  "fuente del consumo",
+  "origen consumo",
+  "origen del consumo",
+  "consumo fuente",
+  "source consumption",
+];
+
+const ALIAS_PERIODO_CONSUMO_SOSPECHOSOS = [
+  "periodo consumo",
+  "periodo de consumo",
+  "periodo de referencia",
+  "periodo de referencia del consumo",
+  "periodo referencia consumo",
+  "periodo referencia consumo inicio",
+  "periodo referencia consumo fin",
+  "consumption period",
+  "inicio periodo consumo",
+  "fin periodo consumo",
+];
+
+export interface ColumnaSospechosa {
+  encabezado: string; // el encabezado original del archivo, sin normalizar
+  campo: "fuenteConsumo" | "periodoReferenciaConsumo";
+}
+
+/**
+ * Encabezados del archivo que NO forman parte del mapeo de
+ * CAMPOS_COBERTURA_CSV (serian ignorados por el resto del flujo) pero se
+ * parecen a fuenteConsumo o al periodo de referencia del consumo -- ver
+ * cabecera de esta seccion. El caller (la ruta de subir/previsualizar, y
+ * de nuevo la de confirmar -- nunca confiar solo en lo que mando el
+ * cliente) debe bloquear la confirmacion mientras esta lista no este
+ * vacia, salvo que el usuario la haya revisado explicitamente.
+ */
+export function detectarColumnasSospechosasDeConsumo(
+  encabezados: readonly string[],
+  mapeo: MapeoColumnasCobertura,
+): ColumnaSospechosa[] {
+  const columnasYaMapeadas = new Set(Object.values(mapeo).filter((c): c is string => c !== null));
+  const sospechosas: ColumnaSospechosa[] = [];
+
+  for (const encabezado of encabezados) {
+    if (columnasYaMapeadas.has(encabezado)) continue; // ya es sku/ubicacion/etc, no puede ser tambien fuente/periodo
+    const normalizado = normalizarEncabezado(encabezado);
+    if (ALIAS_FUENTE_CONSUMO_SOSPECHOSOS.includes(normalizado)) {
+      sospechosas.push({ encabezado, campo: "fuenteConsumo" });
+    } else if (ALIAS_PERIODO_CONSUMO_SOSPECHOSOS.includes(normalizado)) {
+      sospechosas.push({ encabezado, campo: "periodoReferenciaConsumo" });
+    }
+  }
+
+  return sospechosas;
+}
+
