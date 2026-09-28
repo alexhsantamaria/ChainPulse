@@ -31,6 +31,7 @@ import { tenantClient } from "../prisma/tenantClient";
 import { hashPassword } from "../auth/password";
 import { registrarEmpresaYAdmin, EmailYaRegistradoError } from "../auth/registro";
 import { verificarCodigoMfa } from "../auth/mfa";
+import { asegurarSecretoMfa } from "../auth/enrolamientoMfa";
 import { calcularCompletitud } from "../conexiones/completitud";
 import { abrirCiclo, YaHayCicloAbiertoError } from "../ciclos/abrirCiclo";
 import { cerrarCiclo, CicloNoAbiertoError as CicloNoAbiertoErrorCerrar } from "../ciclos/cerrarCiclo";
@@ -157,6 +158,80 @@ describe("Registro de cuenta (RF1) y activación de MFA (ADR-0003) — integraci
 
     expect(verificarCodigoMfa(admin.mfaSecret, "000000")).toBe(false);
     expect(verificarCodigoMfa(admin.mfaSecret, "")).toBe(false);
+  });
+  it("un RESPONSABLE promovido a ADMINISTRADOR por fuera del registro (p.ej. editando `rol` en Prisma Studio) puede enrolar MFA sin perder sus datos ni regenerar un secreto ya existente", async () => {
+    // Reproduce el caso real reportado: crearUsuarioResponsable()
+    // (aceptarInvitacion.ts) deja mfaSecret en null a proposito -- MFA
+    // para RESPONSABLE queda diferido. Si despues alguien cambia `rol` a
+    // ADMINISTRADOR por fuera de registrarEmpresaYAdmin() -- aca, un
+    // update() directo simula la edicion manual en Prisma Studio -- el
+    // usuario llega a /activar-mfa sin secreto ninguno.
+    const passwordHashResponsable = await hashPassword(`flujo-promocion-${randomUUID()}`);
+    const emailPromovido = `flujo-promocion-${randomUUID()}@chainpulse.test`;
+
+    const responsable = await tenantClient(empresaId).usuario.create({
+      data: {
+        empresaId,
+        email: emailPromovido,
+        nombre: "Responsable promovido (prueba)",
+        rol: "RESPONSABLE",
+        passwordHash: passwordHashResponsable,
+        // Mismo estado que deja crearUsuarioResponsable(): sin mfaSecret.
+      },
+    });
+    expect(responsable.mfaSecret).toBeNull();
+
+    // Simula la edicion manual en Prisma Studio: solo cambia `rol`, nada
+    // mas -- password/empresa/email quedan igual, es justo lo que la
+    // prueba verifica mas abajo.
+    const promovido = await tenantClient(empresaId).usuario.update({
+      where: { id: responsable.id },
+      data: { rol: "ADMINISTRADOR" },
+    });
+    expect(promovido.mfaSecret).toBeNull();
+    expect(promovido.mfaHabilitado).toBe(false);
+
+    // Primera llamada: no habia secreto, asegurarSecretoMfa() genera uno
+    // y lo persiste -- mismo camino que tomaria /activar-mfa hoy.
+    const secretoGenerado = await asegurarSecretoMfa(empresaId, promovido);
+    expect(secretoGenerado).toBeTruthy();
+
+    const trasGenerar = await tenantClient(empresaId).usuario.findUnique({ where: { id: promovido.id } });
+    expect(trasGenerar?.mfaSecret).toBe(secretoGenerado);
+    // No se marca habilitado solo por tener secreto -- falta el codigo TOTP.
+    expect(trasGenerar?.mfaHabilitado).toBe(false);
+    // Nada mas del usuario cambio: mismo email, mismo hash de password,
+    // misma empresa.
+    expect(trasGenerar?.email).toBe(emailPromovido);
+    expect(trasGenerar?.passwordHash).toBe(passwordHashResponsable);
+    expect(trasGenerar?.empresaId).toBe(empresaId);
+
+    // Segunda llamada (p.ej. el usuario recarga /activar-mfa antes de
+    // escanear el QR): el secreto NO se regenera -- mismo valor exacto.
+    const segundaLlamada = await asegurarSecretoMfa(empresaId, trasGenerar!);
+    expect(segundaLlamada).toBe(secretoGenerado);
+
+    // Recien un codigo TOTP valido activa MFA -- misma mutacion que hace
+    // src/app/api/mfa/activar/route.ts, reproducida aca (mismo criterio
+    // que la prueba "un código TOTP válido activa MFA..." de arriba).
+    const totp = new OTPAuth.TOTP({
+      issuer: "ChainPulse",
+      algorithm: "SHA1",
+      digits: 6,
+      period: 30,
+      secret: OTPAuth.Secret.fromBase32(secretoGenerado),
+    });
+    const codigoValido = totp.generate();
+    expect(verificarCodigoMfa(secretoGenerado, codigoValido)).toBe(true);
+
+    await tenantClient(empresaId).usuario.update({
+      where: { id: promovido.id },
+      data: { mfaHabilitado: true },
+    });
+
+    const activado = await tenantClient(empresaId).usuario.findUnique({ where: { id: promovido.id } });
+    expect(activado?.mfaHabilitado).toBe(true);
+    expect(activado?.mfaSecret).toBe(secretoGenerado);
   });
 });
 
