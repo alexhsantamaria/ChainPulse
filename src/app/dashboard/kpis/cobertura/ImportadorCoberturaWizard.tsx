@@ -10,7 +10,7 @@
 // paso 2, soloVistaPrevia:false para confirmar de verdad).
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { fetchJsonSeguro, type RespuestaApiBase } from "@/infra/http/fetchJsonSeguro";
 import { CAMPOS_COBERTURA_CSV, type MapeoColumnasCobertura, type CampoCoberturaCsv } from "@/domain/mapeoColumnasCsv";
@@ -59,6 +59,20 @@ interface RespuestaConfirmar extends RespuestaApiBase {
   candidatasRetiro?: CandidataRetiroUI[];
   retiroHash?: string | null;
   mensaje?: string;
+}
+
+// Estado real de una ImportacionCsv, consultado por polling en el paso
+// "resultado" (Alex, 2026-09-29: la pantalla decia "Importacion
+// confirmada" de forma estatica mientras el historial de abajo, que SI
+// consulta el estado real, ya mostraba "Error" para la misma
+// importacion -- ver GET .../importaciones/[id]/route.ts).
+interface RespuestaEstadoImportacion extends RespuestaApiBase {
+  importId?: string;
+  estado?: "PENDIENTE_REVISION" | "CONFIRMADA" | "DESCARTADA" | "ERROR";
+  procesadaEn?: string | null;
+  filasDetectadas?: number;
+  filasConError?: number;
+  erroresMuestra?: Array<{ numeroFila?: number; error: string }> | null;
 }
 
 // Mensajes por codigo de error -- la API los devuelve como string estable
@@ -127,11 +141,50 @@ export default function ImportadorCoberturaWizard({ cadenas }: { cadenas: Cadena
 
   const [resultadoImportId, setResultadoImportId] = useState<string | null>(null);
   const [yaConfirmadaAntes, setYaConfirmadaAntes] = useState(false);
+  const [estadoProcesamiento, setEstadoProcesamiento] = useState<RespuestaEstadoImportacion | null>(null);
 
   const alcanceUbicaciones = alcanceUbicacionesTexto
     .split(",")
     .map((u) => u.trim().toUpperCase())
     .filter((u) => u.length > 0);
+
+  // Paso "resultado" -- consulta el estado real de la importacion por
+  // polling en vez de confiar en un mensaje estatico (Alex, 2026-09-29:
+  // ver el comentario de RespuestaEstadoImportacion arriba). Se corta
+  // solo cuando el job termina (CONFIRMADA+procesadaEn, o ERROR) o tras
+  // MAX_INTENTOS -- nunca poll infinito; si se corta sin terminar, el
+  // mensaje de "procesando" sigue siendo honesto (no dice que fallo ni
+  // que tuvo exito) y el historial de abajo (page.tsx, que consulta
+  // fresco en cada visita) siempre tiene la ultima palabra.
+  useEffect(() => {
+    if (paso !== "resultado" || !resultadoImportId) return;
+    let cancelado = false;
+    let intentos = 0;
+    const MAX_INTENTOS = 20;
+    const INTERVALO_MS = 2500;
+
+    async function consultarEstado() {
+      const resultado = await fetchJsonSeguro<RespuestaEstadoImportacion>(
+        `/api/kpis/cobertura/importaciones/${resultadoImportId}`,
+      );
+      if (cancelado) return;
+      if (resultado.ok) {
+        setEstadoProcesamiento(resultado);
+        const terminado = resultado.estado === "ERROR" || (resultado.estado === "CONFIRMADA" && !!resultado.procesadaEn);
+        if (terminado) return;
+      }
+      intentos += 1;
+      if (intentos >= MAX_INTENTOS) return;
+      setTimeout(() => {
+        if (!cancelado) void consultarEstado();
+      }, INTERVALO_MS);
+    }
+
+    void consultarEstado();
+    return () => {
+      cancelado = true;
+    };
+  }, [paso, resultadoImportId]);
 
   async function handleSubir(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
@@ -236,6 +289,7 @@ export default function ImportadorCoberturaWizard({ cadenas }: { cadenas: Cadena
       }
       setResultadoImportId(resultado.importId ?? importId);
       setYaConfirmadaAntes(resultado.yaConfirmada === true);
+      setEstadoProcesamiento(null);
       setPaso("resultado");
     } finally {
       setCargando(false);
@@ -268,15 +322,49 @@ export default function ImportadorCoberturaWizard({ cadenas }: { cadenas: Cadena
     puedeVerVistaPrevia && candidatasRetiro !== null && (estrategia === "CARGA_PARCIAL" || confirmarRetiro);
 
   if (paso === "resultado") {
+    const terminoConError = estadoProcesamiento?.estado === "ERROR";
+    const terminoOk = estadoProcesamiento?.estado === "CONFIRMADA" && !!estadoProcesamiento.procesadaEn;
+    const siguePendiente = !terminoConError && !terminoOk;
+
+    const mensajePrincipal = terminoConError
+      ? "La importación terminó en error."
+      : terminoOk
+        ? "Importación procesada correctamente."
+        : yaConfirmadaAntes
+          ? "Esta importación ya estaba confirmada -- procesando en segundo plano."
+          : "Importación confirmada -- procesando en segundo plano.";
+
     return (
       <div className="flex flex-col gap-4 rounded border border-slate-200 p-4">
-        <p className="text-sm font-medium text-emerald-700">
-          {yaConfirmadaAntes ? "Esta importación ya estaba confirmada -- no se repitió nada." : "Importación confirmada."}
+        <p className={"text-sm font-medium " + (terminoConError ? "text-red-700" : "text-emerald-700")}>
+          {mensajePrincipal}
         </p>
-        <p className="text-sm text-slate-600">
-          El procesamiento corre en segundo plano (job de fondo) -- las observaciones de Cobertura van a aparecer a medida que
-          termine. Podés volver a esta página para subir otra importación.
-        </p>
+        {terminoConError && estadoProcesamiento?.erroresMuestra && estadoProcesamiento.erroresMuestra.length > 0 && (
+          <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+            <p className="font-medium">Motivo:</p>
+            <ul className="mt-1 list-disc pl-5">
+              {estadoProcesamiento.erroresMuestra.slice(0, 5).map((e, i) => (
+                <li key={i}>
+                  {e.numeroFila ? `Fila ${e.numeroFila}: ` : ""}
+                  {e.error}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {siguePendiente && (
+          <p className="text-sm text-slate-600">
+            El procesamiento corre en segundo plano (job de fondo) -- esta pantalla se actualiza sola apenas termine. También
+            podés volver a esta página para ver el historial.
+          </p>
+        )}
+        {terminoOk && (
+          <p className="text-sm text-slate-600">
+            {estadoProcesamiento?.filasConError
+              ? `${estadoProcesamiento.filasConError} de ${estadoProcesamiento.filasDetectadas} filas tuvieron error -- revisá el detalle en el historial.`
+              : "Podés volver a esta página para subir otra importación."}
+          </p>
+        )}
         {resultadoImportId && (
           <p className="text-xs text-slate-400">ID de importación: {resultadoImportId}</p>
         )}

@@ -56,6 +56,11 @@ const CSV_VALIDO = "sku,ubicacion,fecha,inventario,unidad_inv,consumo,unidad_con
 const CSV_CON_ERROR =
   "sku,ubicacion,fecha,inventario,unidad_inv,consumo,unidad_cons\nA-001,LIMA,2026-09-24,100,unidad,10,unidad\n,LIMA,2026-09-24,100,unidad,10,unidad\n";
 
+const CSV_CON_COLUMNA_SOSPECHOSA =
+  "sku,ubicacion,fecha,inventario,unidad_inv,consumo,unidad_cons,fuente consumo\n" +
+  "A-001,LIMA,2026-09-24,100,unidad,10,unidad,ERP mayo\n";
+
+
 const MAPEO_CONFIRMADO = {
   sku: "sku",
   ubicacion: "ubicacion",
@@ -140,6 +145,71 @@ describe("procesarUnaImportacionCsv", () => {
     await procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" });
     expect(importacionCsvMock.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ estado: "ERROR" }) }),
+    );
+  });
+
+  // Bug real encontrado por Alex (2026-09-25... reportado de nuevo el
+  // 2026-09-29, importacion b221c930-054e-...): la ruta de confirmar YA
+  // validaba `columnasSospechosasReconocidas` del body pero nunca la
+  // persistia -- este job volvia a detectar la misma columna sospechosa
+  // y, sin la lista persistida, la trataba SIEMPRE como no reconocida,
+  // aunque la confirmacion hubiera sido perfectamente valida. Las dos
+  // pruebas de abajo fijan el contrato correcto: reconocida -> procesa
+  // bien; NO reconocida -> sigue fallando (nunca se saca la validacion
+  // en si, solo se corrige contra que la compara -- pedido explicito de
+  // Alex).
+  it("columna sospechosa RECONOCIDA en sospechosasReconocidas -- procesa normalmente, no marca ERROR", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_CON_COLUMNA_SOSPECHOSA));
+    importacionCsvMock.findUnique.mockResolvedValue(
+      importacionBase({
+        mapeoColumnas: {
+          encabezados: [...Object.values(MAPEO_CONFIRMADO), "fuente consumo"],
+          propuesto: MAPEO_CONFIRMADO,
+          confirmado: MAPEO_CONFIRMADO,
+          sospechosasReconocidas: ["fuente consumo"],
+        },
+      }),
+    );
+    // La resolucion de DefinicionKpi ocurre DESPUES del chequeo de
+    // sospechosas (ver job.ts) -- sin este mock, procesarUnaImportacionCsv
+    // se detiene ahi con marcarError() y nunca llega a
+    // importarObservacionesCobertura, dando un falso negativo en este test.
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    const { procesarUnaImportacionCsv } = await import("../job");
+    await procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" });
+    expect(importarObservacionesCoberturaMock).toHaveBeenCalled();
+    expect(importacionCsvMock.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ estado: "ERROR" }) }),
+    );
+  });
+
+  it("columna sospechosa NO reconocida (sospechosasReconocidas ausente o sin incluirla) -- sigue marcando ERROR, defensa en profundidad intacta", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_CON_COLUMNA_SOSPECHOSA));
+    importacionCsvMock.findUnique.mockResolvedValue(
+      importacionBase({
+        mapeoColumnas: {
+          encabezados: [...Object.values(MAPEO_CONFIRMADO), "fuente consumo"],
+          propuesto: MAPEO_CONFIRMADO,
+          confirmado: MAPEO_CONFIRMADO,
+          // sospechosasReconocidas ausente a proposito -- mismo estado que
+          // tenia CUALQUIER ImportacionCsv confirmada antes de este fix.
+        },
+      }),
+    );
+    const { procesarUnaImportacionCsv } = await import("../job");
+    await procesarUnaImportacionCsv({ importId: "import-1", empresaId: "empresa-1" });
+    expect(importarObservacionesCoberturaMock).not.toHaveBeenCalled();
+    expect(importacionCsvMock.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          estado: "ERROR",
+          erroresMuestra: [{ error: expect.stringContaining("fuente consumo") }],
+        }),
+      }),
     );
   });
 

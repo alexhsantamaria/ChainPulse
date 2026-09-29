@@ -60,10 +60,27 @@ export interface PayloadImportacionCsv {
 // de UI. "encabezados" es la lista real de columnas del archivo (nunca
 // la manda el cliente en el body de confirmar -- se re-valida siempre
 // contra esto, persistido en la subida).
+//
+// "sospechosasReconocidas" (bug real encontrado por Alex 2026-09-25,
+// importacion b221c930-054e...): la ruta de confirmar YA validaba
+// `columnasSospechosasReconocidas` del body contra las sospechosas
+// detectadas (COLUMNAS_SOSPECHOSAS_SIN_RESOLVER si faltaba alguna) pero
+// nunca persistia esa lista -- solo la usaba en memoria para esa
+// respuesta HTTP y la descartaba. Este job vuelve a detectar las mismas
+// columnas sospechosas (misma regla, defensa en profundidad -- ver mas
+// abajo) pero, sin la lista persistida, no tenia forma de distinguir
+// "el usuario ya las reconocio" de "nunca se reviso" -- fallaba SIEMPRE
+// que detectaba una sospechosa, aunque la confirmacion hubiera sido
+// perfectamente valida. `?? []` cubre las ImportacionCsv confirmadas
+// antes de este fix (quedaron con este campo ausente, no vacio) --
+// para esas, el comportamiento visible no cambia (siguen fallando si
+// tenian alguna sospechosa sin resolver en su momento); solo las
+// confirmaciones nuevas quedan bien.
 export interface MapeoColumnasPersistido {
   encabezados: string[];
   propuesto: MapeoColumnasCobertura;
   confirmado: MapeoColumnasCobertura | null;
+  sospechosasReconocidas?: string[];
 }
 
 /**
@@ -186,14 +203,19 @@ export async function procesarUnaImportacionCsv({ importId, empresaId }: Payload
     return;
   }
   const sospechosas = detectarColumnasSospechosasDeConsumo(encabezadosReales, mapeoPersistido.confirmado);
-  if (sospechosas.length > 0) {
-    // Misma regla que la ruta de confirmar -- nunca se procesa un
-    // archivo con columnas de fuente/periodo sin resolver, ni siquiera
-    // si la ruta de confirmar las dejo pasar por algun bug.
+  const sospechosasReconocidas = mapeoPersistido.sospechosasReconocidas ?? [];
+  const sospechosasSinResolver = sospechosas.filter((s) => !sospechosasReconocidas.includes(s.encabezado));
+  if (sospechosasSinResolver.length > 0) {
+    // Misma regla que la ruta de confirmar (defensa en profundidad: si
+    // por algun bug la ruta de confirmar dejara pasar una sospechosa sin
+    // reconocer, esto la atrapa igual) -- pero a diferencia de antes,
+    // compara contra lo que el usuario reconocio realmente al confirmar
+    // (ver el comentario de MapeoColumnasPersistido), no contra "ninguna
+    // sospechosa detectada es aceptable".
     await marcarError(
       empresaId,
       importId,
-      `El archivo trae columna(s) que parecen fuente/periodo de consumo sin resolver: ${sospechosas.map((s) => s.encabezado).join(", ")}.`,
+      `El archivo trae columna(s) que parecen fuente/periodo de consumo sin resolver: ${sospechosasSinResolver.map((s) => s.encabezado).join(", ")}.`,
     );
     return;
   }

@@ -232,7 +232,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       await tx.importacionCsv.update({
         where: { id: importId },
         data: {
-          mapeoColumnas: { ...mapeoPersistido, confirmado: datos.mapeoColumnas } satisfies MapeoColumnasPersistido,
+          // sospechosasReconocidas: bug real encontrado por Alex
+          // (2026-09-25, importacion b221c930-...) -- esta ruta ya
+          // validaba columnasSospechosasReconocidas del body mas arriba
+          // (sinResolver) pero nunca lo persistia, asi que el job
+          // (job.ts, misma regla como defensa en profundidad) no tenia
+          // forma de saber que el usuario ya las habia reconocido y
+          // fallaba siempre que el archivo traia alguna. Ver el
+          // comentario de MapeoColumnasPersistido en job.ts.
+          mapeoColumnas: {
+            ...mapeoPersistido,
+            confirmado: datos.mapeoColumnas,
+            sospechosasReconocidas: datos.columnasSospechosasReconocidas,
+          } satisfies MapeoColumnasPersistido,
           estrategia: datos.estrategia,
           alcanceFechaCorteInicio: datos.alcanceFechaCorteInicio ?? null,
           alcanceFechaCorteFin: datos.alcanceFechaCorteFin ?? null,
