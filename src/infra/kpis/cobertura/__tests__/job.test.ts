@@ -624,3 +624,128 @@ describe("procesarUnaImportacionCsv -- fallos entre lotes y recuperacion", () =>
     expect(boss.fail).toHaveBeenCalledWith(COLA_IMPORTACION_CSV, "job-2", { mensaje: "import-2 fallo, import-1 no deberia verse afectada" });
   });
 });
+
+// Bug real encontrado por Alex (2026-09-29, importacion
+// 52aed226-1b0f-4550-bd30-fdd497ba0ed3): procesarImportacionesCsv(boss, 1)
+// (usada antes por el disparo inmediato de la ruta de confirmar) hace
+// boss.fetch() sobre TODA la cola compartida -- toma el job MAS VIEJO
+// por created_on, sin importar cual importacion disparo la llamada. Si
+// habia un reintento de OTRA importacion mas viejo esperando, ESE se
+// procesaba y el job recien encolado se quedaba esperando indefinidamente
+// (confirmado con pgboss.job real en Windows). procesarImportacionCsvPropia()
+// reemplaza a esa funcion en el disparo inmediato -- reclama por
+// singleton_key (el importId puntual), nunca por "el mas viejo".
+describe("procesarImportacionCsvPropia", () => {
+  // Fake de boss.getDb() -- solo necesita executeSql(), igual criterio que
+  // el fake `boss` de procesarImportacionesCsv() mas arriba (as any, solo
+  // los metodos que hacen falta).
+  function crearBossFake(executeSqlImpl: (text: string, values?: unknown[]) => Promise<{ rows: Array<{ id: string }> }>) {
+    const executeSqlMock = vi.fn(executeSqlImpl);
+    const completeMock = vi.fn().mockResolvedValue(undefined);
+    const failMock = vi.fn().mockResolvedValue(undefined);
+    const boss = {
+      getDb: () => ({ executeSql: executeSqlMock }),
+      complete: completeMock,
+      fail: failMock,
+      // Si procesarImportacionCsvPropia() alguna vez llamara a fetch()
+      // (el mecanismo generico "el mas viejo de la cola"), esto explota
+      // la prueba en vez de dejarlo pasar en silencio -- ver la prueba
+      // de abajo que se apoya en esto.
+      fetch: vi.fn(() => {
+        throw new Error("procesarImportacionCsvPropia() NUNCA debe llamar a boss.fetch() generico -- ver el comentario de la funcion en job.ts");
+      }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- solo los metodos de arriba hacen falta.
+    } as any;
+    return { boss, executeSqlMock, completeMock, failMock };
+  }
+
+  it("reclamo exitoso (1 fila afectada) -- nunca llama a boss.fetch(), reclama por singleton_key=importId, procesa y completa", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    importacionCsvMock.findUnique.mockResolvedValue(importacionBase({ id: "import-1" }));
+
+    const { procesarImportacionCsvPropia, COLA_IMPORTACION_CSV } = await import("../job");
+    const { boss, executeSqlMock, completeMock, failMock } = crearBossFake(async () => ({ rows: [{ id: "job-uuid-1" }] }));
+
+    const resultado = await procesarImportacionCsvPropia(boss, { importId: "import-1", empresaId: "empresa-1" });
+
+    expect(resultado).toEqual({ procesado: true });
+    // El reclamo se filtra por (name, singleton_key) -- nunca por
+    // ORDER BY/LIMIT como el fetch() generico (ver plans.js fetchNextJob).
+    expect(executeSqlMock).toHaveBeenCalledWith(expect.stringContaining("singleton_key = $2"), [COLA_IMPORTACION_CSV, "import-1"]);
+    expect(importarObservacionesCoberturaMock).toHaveBeenCalled();
+    expect(completeMock).toHaveBeenCalledWith(COLA_IMPORTACION_CSV, "job-uuid-1");
+    expect(failMock).not.toHaveBeenCalled();
+  });
+
+  it("reclamo vacio (0 filas afectadas -- el job ya estaba active/completed/failed, por ejemplo tomado antes por el cron de respaldo) -- no-op silencioso, nunca procesa ni completa/falla nada", async () => {
+    const { procesarImportacionCsvPropia } = await import("../job");
+    const { boss, completeMock, failMock } = crearBossFake(async () => ({ rows: [] }));
+
+    const resultado = await procesarImportacionCsvPropia(boss, { importId: "import-1", empresaId: "empresa-1" });
+
+    expect(resultado).toEqual({ procesado: false });
+    expect(importacionCsvMock.findUnique).not.toHaveBeenCalled();
+    expect(importarObservacionesCoberturaMock).not.toHaveBeenCalled();
+    expect(completeMock).not.toHaveBeenCalled();
+    expect(failMock).not.toHaveBeenCalled();
+  });
+
+  it("reclamo exitoso pero procesarUnaImportacionCsv lanza -- boss.fail con el mensaje real, nunca boss.complete", async () => {
+    // Mismo disparador que "sin confirmadaEn -- lanza" (arriba): la mas
+    // simple para hacer que procesarUnaImportacionCsv() lance de verdad
+    // sin mockear su interior.
+    importacionCsvMock.findUnique.mockResolvedValue(importacionBase({ confirmadaEn: null }));
+
+    const { procesarImportacionCsvPropia, COLA_IMPORTACION_CSV } = await import("../job");
+    const { boss, completeMock, failMock } = crearBossFake(async () => ({ rows: [{ id: "job-uuid-1" }] }));
+
+    const resultado = await procesarImportacionCsvPropia(boss, { importId: "import-1", empresaId: "empresa-1" });
+
+    expect(resultado).toEqual({ procesado: true }); // se reclamo y se INTENTO procesar -- "procesado" describe el intento, no el exito (mismo criterio que procesarImportacionesCsv(), que tambien completa "procesados" contando los que fallaron via boss.fail).
+    expect(completeMock).not.toHaveBeenCalled();
+    expect(failMock).toHaveBeenCalledWith(
+      COLA_IMPORTACION_CSV,
+      "job-uuid-1",
+      expect.objectContaining({ mensaje: expect.stringContaining("import-1") }),
+    );
+  });
+
+  it("un job MAS VIEJO de OTRA importacion, pendiente en la misma cola, no afecta el reclamo -- se reclama y procesa igual la importacion propia (regresion directa del bug real)", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    importacionCsvMock.findUnique.mockResolvedValue(importacionBase({ id: "import-1" }));
+
+    const { procesarImportacionCsvPropia, COLA_IMPORTACION_CSV } = await import("../job");
+    // El UPDATE real (ver job.ts) filtra por WHERE singleton_key = $2 --
+    // este fake reproduce esa semantica: solo devuelve una fila si el
+    // singleton_key pedido es el de ESTA importacion, nunca el de la
+    // importacion vieja/ajena ("import-viejo-pendiente") que en el bug
+    // real llevaba 22 minutos esperando su retryDelay en la misma cola.
+    const { boss, executeSqlMock, completeMock } = crearBossFake(async (_text, values) => {
+      const singletonKeyPedido = (values as unknown[])[1];
+      if (singletonKeyPedido === "import-1") return { rows: [{ id: "job-uuid-1" }] };
+      return { rows: [] }; // "import-viejo-pendiente" nunca se reclama desde aca.
+    });
+
+    const resultado = await procesarImportacionCsvPropia(boss, { importId: "import-1", empresaId: "empresa-1" });
+
+    expect(resultado).toEqual({ procesado: true });
+    expect(executeSqlMock).toHaveBeenCalledWith(expect.any(String), [COLA_IMPORTACION_CSV, "import-1"]);
+    // Nunca se pidio el job viejo -- la prueba en si misma demuestra que
+    // procesarImportacionCsvPropia() no tiene forma de tomar otro job:
+    // el unico singleton_key que aparece en cualquier llamada a
+    // executeSql es el de la importacion propia.
+    for (const llamada of executeSqlMock.mock.calls) {
+      expect((llamada[1] as unknown[])[1]).toBe("import-1");
+    }
+    expect(importarObservacionesCoberturaMock).toHaveBeenCalled();
+    expect(completeMock).toHaveBeenCalledWith(COLA_IMPORTACION_CSV, "job-uuid-1");
+  });
+});

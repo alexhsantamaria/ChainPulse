@@ -47,11 +47,11 @@ const logErrorMock = vi.fn();
 vi.mock("@/infra/log", () => ({ logError: (...args: unknown[]) => logErrorMock(...args) }));
 
 const encolarImportacionCsvMock = vi.fn().mockResolvedValue("pgboss-job-1");
-const procesarImportacionesCsvMock = vi.fn().mockResolvedValue({ procesados: 0 });
+const procesarImportacionCsvPropiaMock = vi.fn().mockResolvedValue({ procesado: false });
 vi.mock("@/infra/kpis/cobertura/job", () => ({
   COLA_IMPORTACION_CSV: "procesar-importacion-csv",
   encolarImportacionCsv: (...args: unknown[]) => encolarImportacionCsvMock(...args),
-  procesarImportacionesCsv: (...args: unknown[]) => procesarImportacionesCsvMock(...args),
+  procesarImportacionCsvPropia: (...args: unknown[]) => procesarImportacionCsvPropiaMock(...args),
 }));
 
 const obtenerBossMock = vi.fn().mockResolvedValue({ __boss: true });
@@ -137,7 +137,7 @@ beforeEach(() => {
   importacionCsvFindUniqueMock.mockResolvedValue(importacionBase());
   txImportacionCsvUpdateMock.mockResolvedValue(undefined);
   encolarImportacionCsvMock.mockResolvedValue("pgboss-job-1");
-  procesarImportacionesCsvMock.mockResolvedValue({ procesados: 0 });
+  procesarImportacionCsvPropiaMock.mockResolvedValue({ procesado: false });
   descargarObjetoMock.mockResolvedValue(Buffer.from("cifrado"));
   descifrarContenidoMock.mockReturnValue(Buffer.from(CSV_CON_UNA_FILA));
 });
@@ -340,7 +340,14 @@ describe("POST .../confirmar -- confirmacion real, atomicidad y disparo inmediat
       { importId: "import-1", empresaId: "empresa-1" },
       { db: expect.objectContaining({ executeSql: expect.any(Function) }) },
     );
-    expect(procesarImportacionesCsvMock).toHaveBeenCalledWith({ __boss: true }, 1);
+    // procesarImportacionCsvPropia() reclama el job de ESTA importacion
+    // puntualmente (importId+empresaId), nunca "el mas viejo de la cola"
+    // -- ver el comentario de esa funcion en job.ts para el bug real que
+    // motiva esto (Alex, 2026-09-29, importacion 52aed226-...).
+    expect(procesarImportacionCsvPropiaMock).toHaveBeenCalledWith(
+      { __boss: true },
+      { importId: "import-1", empresaId: "empresa-1" },
+    );
   });
 
   it("si el encolado (dentro de la transaccion) falla -- 502 NO_SE_PUDO_CONFIRMAR, se registra el error, nunca dispara el procesamiento inmediato", async () => {
@@ -351,7 +358,7 @@ describe("POST .../confirmar -- confirmacion real, atomicidad y disparo inmediat
     const json = await res.json();
     expect(json.error).toBe("NO_SE_PUDO_CONFIRMAR");
     expect(logErrorMock).toHaveBeenCalled();
-    expect(procesarImportacionesCsvMock).not.toHaveBeenCalled();
+    expect(procesarImportacionCsvPropiaMock).not.toHaveBeenCalled();
   });
 
   it("estado ERROR -- 409 ESTADO_NO_CONFIRMABLE, no es un flujo de reintento valido por esta ruta", async () => {

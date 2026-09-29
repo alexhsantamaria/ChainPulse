@@ -359,9 +359,28 @@ export interface ResultadoProcesarImportacionesCsv {
 
 /**
  * fetch/complete/fail sobre la cola de importaciones confirmadas --
- * llamado tanto por el disparo inmediato de la ruta de confirmar (caso
- * feliz, procesa en el mismo ciclo) como por el cron de respaldo
- * (src/app/api/internal/jobs/run/route.ts).
+ * SOLO el cron de respaldo (src/app/api/internal/jobs/run/route.ts) la
+ * llama hoy. Drena lo mas viejo de TODA la cola compartida, sin importar
+ * a que importacion pertenece -- correcto para un barrido general
+ * periodico, donde el orden entre importaciones distintas no importa
+ * (tarde o temprano procesa todo lo pendiente).
+ *
+ * Bug real encontrado por Alex (2026-09-29, importacion
+ * 52aed226-1b0f-4550-bd30-fdd497ba0ed3): el disparo inmediato de la ruta
+ * de confirmar usaba ESTA funcion con batchSize=1, pero boss.fetch()
+ * toma el job MAS VIEJO de la cola por created_on -- sin importar cual
+ * importacion disparo la llamada. Si en ese momento habia un job mas
+ * viejo esperando su retryDelay (el reintento de OTRA importacion), el
+ * disparo inmediato de ESTA importacion procesaba ESE job ajeno y dejaba
+ * el propio en "created" -- confirmado con pgboss.job real en Windows
+ * (job 27f5f447-..., created_on 19:56:41, nunca fetcheado; el job de
+ * otra importacion, creado 22 minutos antes y en "retry", arranco 0.6s
+ * despues de esta confirmacion). Localmente, sin cron de respaldo (ver
+ * el comentario de cabecera de /api/internal/jobs/run/route.ts: aca no
+ * hay Vercel Cron ni GitHub Actions), eso podia significar "nunca se
+ * procesa". El disparo inmediato ahora usa
+ * procesarImportacionCsvPropia() (mas abajo), que reclama EXCLUSIVAMENTE
+ * el job de la importacion que acaba de confirmar.
  */
 export async function procesarImportacionesCsv(boss: PgBoss, batchSize = 5): Promise<ResultadoProcesarImportacionesCsv> {
   const jobs = await boss.fetch<PayloadImportacionCsv>(COLA_IMPORTACION_CSV, { batchSize });
@@ -381,4 +400,73 @@ export async function procesarImportacionesCsv(boss: PgBoss, batchSize = 5): Pro
   }
 
   return { procesados: jobs.length };
+}
+
+// Schema de pg-boss -- ver src/infra/jobs/pgBoss.ts ("schema: PGBOSS_SCHEMA"
+// en la config del PgBoss compartido). Duplicado aca (pgBoss.ts no lo
+// exporta) porque procesarImportacionCsvPropia() necesita el nombre del
+// schema en SQL crudo -- si alguna vez cambia, actualizar los dos
+// lugares.
+const PGBOSS_SCHEMA = "pgboss";
+
+/**
+ * Reclama y procesa EXCLUSIVAMENTE el job de ESTA importacion
+ * (singleton_key = importId, ver encolarImportacionCsv()), sin pasar por
+ * boss.fetch() sobre la cola compartida -- ver el comentario de
+ * procesarImportacionesCsv() de arriba para el bug real que motiva esto.
+ *
+ * Reclamo atomico EQUIVALENTE al que hace pg-boss internamente en
+ * fetch() (mismo criterio: UPDATE ... WHERE state < 'active' ..., mismo
+ * calculo de retry_count -- ver fetchNextJob() en
+ * node_modules/pg-boss/dist/plans.js) pero filtrado por singleton_key en
+ * vez de "el mas viejo de toda la cola". Misma exclusividad que
+ * garantiza pg-boss: dos reclamos concurrentes sobre el MISMO job (sea
+ * este codigo o el fetch() generico del cron de respaldo corriendo al
+ * mismo tiempo) nunca ganan los dos -- el segundo UPDATE espera a que el
+ * primero confirme y su propio WHERE (state < 'active') ya no matchea,
+ * 0 filas afectadas. boss.complete()/boss.fail() se llaman igual que en
+ * procesarImportacionesCsv() para que el libro contable de pg-boss
+ * (retries, output, keep_until) quede identico a como lo dejaria un
+ * fetch() generico -- nunca se duplica logica de finalizacion.
+ *
+ * Nunca toca ningun otro job de la cola -- si el UPDATE no afecta
+ * ninguna fila (el job ya esta active/completed/failed/cancelled, por
+ * ejemplo porque el cron de respaldo lo tomo primero, o -- mas raro -- el
+ * INSERT de la misma transaccion de confirmar todavia no es visible para
+ * esta conexion), esto es un no-op silencioso: el job sigue disponible
+ * para el proximo intento, nunca un error.
+ */
+export async function procesarImportacionCsvPropia(
+  boss: PgBoss,
+  payload: PayloadImportacionCsv,
+): Promise<{ procesado: boolean }> {
+  const db = boss.getDb();
+  const reclamo = await db.executeSql(
+    `UPDATE ${PGBOSS_SCHEMA}.job SET
+       state = 'active',
+       started_on = ${PGBOSS_SCHEMA}.job_now(),
+       heartbeat_on = ${PGBOSS_SCHEMA}.job_now(),
+       retry_count = CASE WHEN started_on IS NOT NULL THEN retry_count + 1 ELSE retry_count END
+     WHERE name = $1
+       AND singleton_key = $2
+       AND state < 'active'
+       AND start_after <= ${PGBOSS_SCHEMA}.job_now()
+       AND NOT blocked
+     RETURNING id`,
+    [COLA_IMPORTACION_CSV, payload.importId],
+  );
+  const jobId = reclamo.rows[0]?.id as string | undefined;
+  if (!jobId) {
+    return { procesado: false };
+  }
+
+  try {
+    await procesarUnaImportacionCsv(payload);
+    await boss.complete(COLA_IMPORTACION_CSV, jobId);
+  } catch (err) {
+    await boss.fail(COLA_IMPORTACION_CSV, jobId, {
+      mensaje: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return { procesado: true };
 }

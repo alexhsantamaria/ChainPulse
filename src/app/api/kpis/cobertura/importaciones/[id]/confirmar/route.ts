@@ -49,7 +49,7 @@ import { validarMapeoColumnas, detectarColumnasSospechosasDeConsumo, type MapeoC
 import { calcularHashVistaPreviaRetiro, type CandidataRetiroParaHash } from "@/domain/hashVistaPreviaRetiroCobertura";
 import { confirmacionesCoinciden, type DatosConfirmacionCobertura } from "@/domain/compararConfirmacionImportacionCsv";
 import { claveNegocio } from "@/infra/kpis/cobertura/importar";
-import { encolarImportacionCsv, procesarImportacionesCsv, type MapeoColumnasPersistido } from "@/infra/kpis/cobertura/job";
+import { encolarImportacionCsv, procesarImportacionCsvPropia, type MapeoColumnasPersistido } from "@/infra/kpis/cobertura/job";
 import { obtenerBoss } from "@/infra/jobs/pgBoss";
 
 export const runtime = "nodejs";
@@ -275,8 +275,20 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   // esperar al cron de respaldo (run/route.ts). Si esto falla, no es un
   // error para el usuario -- el job YA quedo encolado de forma durable
   // (misma transaccion de arriba), el cron lo toma en su proxima corrida.
+  //
+  // procesarImportacionCsvPropia() (nunca procesarImportacionesCsv() con
+  // batchSize=1) -- bug real encontrado por Alex, 2026-09-29 (importacion
+  // 52aed226-1b0f-4550-bd30-fdd497ba0ed3): procesarImportacionesCsv()
+  // hace boss.fetch() sobre TODA la cola compartida, que toma el job MAS
+  // VIEJO por created_on sin importar cual importacion disparo la
+  // llamada -- si habia un reintento de OTRA importacion esperando,
+  // ESTE disparo inmediato lo procesaba a EL y dejaba el propio job
+  // esperando a que alguna confirmacion FUTURA lo alcanzara (localmente,
+  // sin cron de respaldo, eso podia ser "nunca"). Ver el comentario de
+  // procesarImportacionCsvPropia() en job.ts para el detalle completo y
+  // como se preserva la exclusividad de pg-boss.
   try {
-    await procesarImportacionesCsv(boss, 1);
+    await procesarImportacionCsvPropia(boss, { importId, empresaId: sesion.empresaId });
   } catch (err) {
     logError("api/kpis/cobertura/importaciones/[id]/confirmar (disparo inmediato)", err);
   }
