@@ -749,3 +749,432 @@ describe("procesarImportacionCsvPropia", () => {
     expect(completeMock).toHaveBeenCalledWith(COLA_IMPORTACION_CSV, "job-uuid-1");
   });
 });
+
+// Alex, 2026-09-29 (revision del script de desbloqueo puntual de
+// 52aed226-1b0f-4550-bd30-fdd497ba0ed3): "el reclamo debe incluir el
+// jobId exacto en el mismo UPDATE, junto con la cola, importId, empresa
+// y condiciones de elegibilidad. Si no coincide, debe afectar cero
+// filas. La comprobacion posterior no sustituye esa proteccion."
+//
+// Estas pruebas mockeadas cubren jobId/empresa incorrectos (la funcion
+// solo recibe UN valor de importId que alimenta tanto singleton_key como
+// data.importId, asi que un mock no puede desincronizar esos dos por su
+// cuenta) -- el caso "data.importId incorrecto pero singleton_key
+// coincide" (defensa en profundidad, ver el comentario de la funcion en
+// job.ts) solo se puede probar contra Postgres real, corrompiendo el
+// campo data.importId de forma independiente: ver
+// reclamarJobPorIdSoloConCoincidenciaExacta.integration.test.ts.
+describe("reclamarJobImportacionCsvPorId", () => {
+  // Mismo fake que crearBossFake() de procesarImportacionCsvPropia() mas
+  // arriba -- boss.fetch() explota si algo llega a llamarlo, para que
+  // cualquier regresion hacia el mecanismo generico "el mas viejo de la
+  // cola" reviente la prueba en vez de pasar en silencio.
+  function crearBossFake(executeSqlImpl: (text: string, values?: unknown[]) => Promise<{ rows: Array<{ id: string }> }>) {
+    const executeSqlMock = vi.fn(executeSqlImpl);
+    const completeMock = vi.fn().mockResolvedValue(undefined);
+    const failMock = vi.fn().mockResolvedValue(undefined);
+    const boss = {
+      getDb: () => ({ executeSql: executeSqlMock }),
+      complete: completeMock,
+      fail: failMock,
+      fetch: vi.fn(() => {
+        throw new Error("reclamarJobImportacionCsvPorId() NUNCA debe llamar a boss.fetch() generico -- ver el comentario de la funcion en job.ts");
+      }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- solo los metodos de arriba hacen falta.
+    } as any;
+    return { boss, executeSqlMock, completeMock, failMock };
+  }
+
+  it("jobId, cola, importId y empresa coinciden -- reclama exactamente ese job, procesa y completa (y el SQL incluye el chequeo de data.importId)", async () => {
+    const { descifrarContenido } = await import("../../../storage/cifradoObjeto");
+    (descifrarContenido as ReturnType<typeof vi.fn>).mockReturnValue(Buffer.from(CSV_VALIDO));
+    (await import("../../../prisma/client")).prisma.definicionKpi.findUnique = vi
+      .fn()
+      .mockResolvedValue({ id: "def-1", zonaHoraria: "America/Lima" });
+    importacionCsvMock.findUnique.mockResolvedValue(importacionBase({ id: "import-1" }));
+
+    const { reclamarJobImportacionCsvPorId, COLA_IMPORTACION_CSV } = await import("../job");
+    const { boss, executeSqlMock, completeMock, failMock } = crearBossFake(async (_text, values) => {
+      const [jobIdPedido, namePedido, singletonKeyPedido, empresaIdPedido] = values as unknown[];
+      if (jobIdPedido === "job-27f5f447" && namePedido === COLA_IMPORTACION_CSV && singletonKeyPedido === "import-1" && empresaIdPedido === "empresa-1") {
+        return { rows: [{ id: "job-27f5f447" }] };
+      }
+      return { rows: [] };
+    });
+
+    const resultado = await reclamarJobImportacionCsvPorId(boss, { importId: "import-1", empresaId: "empresa-1", jobId: "job-27f5f447" });
+
+    expect(resultado).toEqual({ procesado: true });
+    expect(executeSqlMock).toHaveBeenCalledWith(
+      expect.stringContaining("data ->> 'importId' = $3"),
+      ["job-27f5f447", COLA_IMPORTACION_CSV, "import-1", "empresa-1"],
+    );
+    expect(executeSqlMock).toHaveBeenCalledWith(expect.stringContaining("WHERE id = $1"), expect.any(Array));
+    expect(importarObservacionesCoberturaMock).toHaveBeenCalled();
+    expect(completeMock).toHaveBeenCalledWith(COLA_IMPORTACION_CSV, "job-27f5f447");
+    expect(failMock).not.toHaveBeenCalled();
+  });
+
+  it("jobId incorrecto -- el UPDATE no afecta ninguna fila, no reclama ningun job (ni siquiera el de la misma importacion/empresa)", async () => {
+    const { reclamarJobImportacionCsvPorId, COLA_IMPORTACION_CSV } = await import("../job");
+    // Simula la semantica real del WHERE id = $1: el unico jobId que
+    // matchea es "job-real", nunca "job-id-incorrecto" -- aunque cola,
+    // importId y empresa sean exactamente los correctos.
+    const { boss, executeSqlMock, completeMock, failMock } = crearBossFake(async (_text, values) => {
+      const jobIdPedido = (values as unknown[])[0];
+      if (jobIdPedido === "job-real") return { rows: [{ id: "job-real" }] };
+      return { rows: [] };
+    });
+
+    const resultado = await reclamarJobImportacionCsvPorId(boss, {
+      importId: "import-1",
+      empresaId: "empresa-1",
+      jobId: "job-id-incorrecto",
+    });
+
+    expect(resultado).toEqual({ procesado: false });
+    expect(executeSqlMock).toHaveBeenCalledWith(expect.any(String), ["job-id-incorrecto", COLA_IMPORTACION_CSV, "import-1", "empresa-1"]);
+    // La proteccion es el UPDATE en si -- nada de esto se llama si 0
+    // filas fueron afectadas, nunca una comprobacion posterior que lo
+    // sustituya.
+    expect(importacionCsvMock.findUnique).not.toHaveBeenCalled();
+    expect(importarObservacionesCoberturaMock).not.toHaveBeenCalled();
+    expect(completeMock).not.toHaveBeenCalled();
+    expect(failMock).not.toHaveBeenCalled();
+  });
+
+  it("empresaId incorrecto -- el UPDATE tampoco afecta ninguna fila, no reclama ningun job", async () => {
+    const { reclamarJobImportacionCsvPorId, COLA_IMPORTACION_CSV } = await import("../job");
+    const { boss, executeSqlMock, completeMock, failMock } = crearBossFake(async (_text, values) => {
+      const empresaIdPedido = (values as unknown[])[3];
+      if (empresaIdPedido === "empresa-real") return { rows: [{ id: "job-27f5f447" }] };
+      return { rows: [] };
+    });
+
+    const resultado = await reclamarJobImportacionCsvPorId(boss, {
+      importId: "import-1",
+      empresaId: "empresa-equivocada",
+      jobId: "job-27f5f447",
+    });
+
+    expect(resultado).toEqual({ procesado: false });
+    expect(executeSqlMock).toHaveBeenCalledWith(expect.any(String), ["job-27f5f447", COLA_IMPORTACION_CSV, "import-1", "empresa-equivocada"]);
+    expect(importacionCsvMock.findUnique).not.toHaveBeenCalled();
+    expect(completeMock).not.toHaveBeenCalled();
+    expect(failMock).not.toHaveBeenCalled();
+  });
+});
+
+// recuperarJobActivoVencidoPorId() nunca llama a boss.complete()/fail()/
+// fetch() -- es SOLO el UPDATE atomico (ver el comentario de la funcion
+// en job.ts: la transicion de estado ES el UPDATE, no hay paso
+// posterior). Estas pruebas con mock solo pueden verificar la FORMA del
+// SQL/parametros y el manejo de "0 filas afectadas" -- el WHERE en si
+// (vencimiento segun job_now(), retry_count < retry_limit, identidad)
+// solo se puede probar de verdad contra Postgres real, ver
+// recuperarJobActivoVencidoPorIdSoloVencidoYExacto.integration.test.ts.
+describe("recuperarJobActivoVencidoPorId", () => {
+  function crearExecuteSqlFake(impl: (text: string, values?: unknown[]) => Promise<{ rows: Array<{ id: string }> }>) {
+    const executeSqlMock = vi.fn(impl);
+    const boss = {
+      getDb: () => ({ executeSql: executeSqlMock }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- solo getDb() hace falta.
+    } as any;
+    return { boss, executeSqlMock };
+  }
+
+  it("jobId, cola, importId y empresa coinciden -- el UPDATE se ejecuta con las 6 precondiciones de fila y el mensaje como output", async () => {
+    const { recuperarJobActivoVencidoPorId, COLA_IMPORTACION_CSV } = await import("../job");
+    const { boss, executeSqlMock } = crearExecuteSqlFake(async (_text, values) => {
+      const [jobIdPedido, namePedido, singletonKeyPedido, empresaIdPedido] = values as unknown[];
+      if (jobIdPedido === "job-27f5f447" && namePedido === COLA_IMPORTACION_CSV && singletonKeyPedido === "import-1" && empresaIdPedido === "empresa-1") {
+        return { rows: [{ id: "job-27f5f447" }] };
+      }
+      return { rows: [] };
+    });
+
+    const resultado = await recuperarJobActivoVencidoPorId(
+      boss,
+      { importId: "import-1", empresaId: "empresa-1", jobId: "job-27f5f447" },
+      "recuperacion de prueba",
+    );
+
+    expect(resultado).toEqual({ recuperado: true });
+    const [sqlUsado, paramsUsados] = executeSqlMock.mock.calls[0] as [string, unknown[]];
+    expect(sqlUsado).toContain("state = 'active'");
+    expect(sqlUsado).toContain("policy = 'exclusive'");
+    expect(sqlUsado).toContain("retry_count < retry_limit");
+    expect(sqlUsado).toContain("started_on + expire_seconds * interval '1s'");
+    expect(sqlUsado).toContain("data ->> 'importId' = $3");
+    expect(sqlUsado).toContain("data ->> 'empresaId' = $4");
+    expect(sqlUsado).toContain("state = 'retry'");
+    expect(paramsUsados).toEqual([
+      "job-27f5f447",
+      COLA_IMPORTACION_CSV,
+      "import-1",
+      "empresa-1",
+      JSON.stringify({ mensaje: "recuperacion de prueba" }),
+    ]);
+  });
+
+  it("jobId incorrecto -- el UPDATE no afecta ninguna fila, recuperado=false", async () => {
+    const { recuperarJobActivoVencidoPorId } = await import("../job");
+    const { boss } = crearExecuteSqlFake(async (_text, values) => {
+      const jobIdPedido = (values as unknown[])[0];
+      if (jobIdPedido === "job-real") return { rows: [{ id: "job-real" }] };
+      return { rows: [] };
+    });
+
+    const resultado = await recuperarJobActivoVencidoPorId(
+      boss,
+      { importId: "import-1", empresaId: "empresa-1", jobId: "job-id-incorrecto" },
+      "mensaje",
+    );
+
+    expect(resultado).toEqual({ recuperado: false });
+  });
+
+  it("empresaId incorrecto -- el UPDATE no afecta ninguna fila, recuperado=false", async () => {
+    const { recuperarJobActivoVencidoPorId } = await import("../job");
+    const { boss } = crearExecuteSqlFake(async (_text, values) => {
+      const empresaIdPedido = (values as unknown[])[3];
+      if (empresaIdPedido === "empresa-real") return { rows: [{ id: "job-27f5f447" }] };
+      return { rows: [] };
+    });
+
+    const resultado = await recuperarJobActivoVencidoPorId(
+      boss,
+      { importId: "import-1", empresaId: "empresa-equivocada", jobId: "job-27f5f447" },
+      "mensaje",
+    );
+
+    expect(resultado).toEqual({ recuperado: false });
+  });
+
+  it("importId incorrecto (singleton_key y data.importId) -- el UPDATE no afecta ninguna fila, recuperado=false", async () => {
+    const { recuperarJobActivoVencidoPorId } = await import("../job");
+    const { boss } = crearExecuteSqlFake(async (_text, values) => {
+      const importIdPedido = (values as unknown[])[2];
+      if (importIdPedido === "import-real") return { rows: [{ id: "job-27f5f447" }] };
+      return { rows: [] };
+    });
+
+    const resultado = await recuperarJobActivoVencidoPorId(
+      boss,
+      { importId: "import-equivocado", empresaId: "empresa-1", jobId: "job-27f5f447" },
+      "mensaje",
+    );
+
+    expect(resultado).toEqual({ recuperado: false });
+  });
+});
+
+// verificarIndiceExclusividadDelJob() es de solo lectura (tableoid,
+// pg_index, pg_class -- todos catalogos del sistema, ninguno propio de
+// la app). CORREGIDO (Alex, 2026-09-30, tras verificar en Neon): la
+// version anterior asumia un nombre de indice fijo ("pgboss.job_i6"),
+// que solo es correcto sin particionado -- pg-boss particiona
+// pgboss.job por LIST (name), y una cola con partition:false (como
+// COLA_IMPORTACION_CSV) cae en la particion DEFAULT compartida
+// (pgboss.job_common en la base real de Alex), con el indice generado
+// por sustitucion textual, nunca con el nombre literal de la plantilla
+// -- confirmado en Neon: pgboss.job_common_i6 sobre pgboss.job_common,
+// con indisunique/indisvalid/indisready en true. Por eso esta funcion ya
+// no busca por nombre: lee tableoid de la fila real, y despues busca en
+// ESA tabla (buscarIndiceExclusividadEnTabla(), extraida por separado)
+// un indice cuya ESTRUCTURA matchee -- CORREGIDO OTRA VEZ (Alex,
+// 2026-09-30: "Falta comprobar las claves y el predicado del indice de
+// exclusividad, no solo dos coincidencias con ILIKE"): ya no basta con
+// que pg_get_indexdef() completo contenga las palabras "singleton_key" y
+// "exclusive" en cualquier parte -- eso tambien hace match con un
+// indice que NO protege nada (cubre solo state='created', o tiene una
+// columna clave extra). CORREGIDO UNA TERCERA VEZ (Alex, 2026-10-01:
+// "las regex aceptan condiciones adicionales que excluyan nuestro
+// job"): tampoco basta con que el predicado CONTENGA ambas condiciones
+// -- dos regex `~*` de presencia dejaban pasar un indice con una
+// condicion EXTRA (p.ej. `AND singleton_key = 'solo-otro-job'`), que
+// sigue mencionando "policy='exclusive'" y "state<='active'" pero en
+// realidad solo protege una fila puntual, no la cola completa. La
+// consulta ahora exige, columna por columna y contra el predicado
+// reconstruido (pg_get_expr()), IGUALDAD EXACTA (normalizada:
+// minusculas, espacios colapsados) con el texto que la version
+// instalada de pg-boss produce de verdad para esta cola -- no una
+// coincidencia de presencia. indnkeyatts=2, columna 1 = 'name', columna
+// 2 = exactamente la expresion COALESCE(singleton_key, ''::text), y el
+// predicado es exactamente `((state <= 'active'::pgboss.job_state) and
+// (policy = 'exclusive'::text))` (normalizado), ni una condicion de mas
+// ni de menos. Estas pruebas con mock solo verifican que interpreta
+// bien las distintas combinaciones de filas que devuelven esas dos
+// consultas (tabla no encontrada, indice ausente, no-unico, invalido,
+// no-listo, caso feliz) y que la segunda consulta tiene la forma
+// estructural esperada (indnkeyatts, pg_get_indexdef por columna,
+// regexp_replace + igualdad exacta sobre pg_get_expr -- nunca un ILIKE
+// ni una regex de presencia suelta, nunca un nombre de indice fijo).
+// Que el indice realmente exista, tenga esa estructura exacta y este
+// valido/listo en la base de verdad (Neon) -- y que un indice
+// estructuralmente distinto (solo 'created', con una columna clave de
+// mas, o con una condicion adicional que lo angoste a un solo job) sea
+// correctamente RECHAZADO -- es algo que solo se confirma contra
+// Postgres real: ver los tres escenarios negativos agregados en
+// recuperarJobActivoVencidoPorIdSoloVencidoYExacto.integration.test.ts
+// (tablas descartables en el schema pgboss), imposibles de probar con
+// sentido usando un mock.
+describe("verificarIndiceExclusividadDelJob", () => {
+  function crearExecuteSqlFake(
+    filaTabla: { tabla: string } | undefined,
+    filaIndice?: { nombre: string; definicion: string; unico: boolean; valido: boolean; listo: boolean },
+  ) {
+    let llamada = 0;
+    const executeSqlMock = vi.fn(async (_text: string, _values?: unknown[]) => {
+      llamada += 1;
+      if (llamada === 1) return { rows: filaTabla ? [filaTabla] : [] };
+      return { rows: filaIndice ? [filaIndice] : [] };
+    });
+    const boss = {
+      getDb: () => ({ executeSql: executeSqlMock }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- solo getDb() hace falta.
+    } as any;
+    return { boss, executeSqlMock };
+  }
+
+  it("el jobId no existe (sin fila en pgboss.job) -- tablaFisica null, resto en false/null, y NUNCA llega a buscar el indice", async () => {
+    const { verificarIndiceExclusividadDelJob } = await import("../job");
+    const { boss, executeSqlMock } = crearExecuteSqlFake(undefined);
+
+    const resultado = await verificarIndiceExclusividadDelJob(boss, "job-inexistente");
+
+    expect(resultado).toEqual({
+      tablaFisica: null,
+      indiceNombre: null,
+      indiceDefinicion: null,
+      existe: false,
+      unico: false,
+      valido: false,
+      listo: false,
+    });
+    expect(executeSqlMock).toHaveBeenCalledTimes(1);
+    const [sqlTabla, paramsTabla] = executeSqlMock.mock.calls[0] as [string, unknown[]];
+    expect(sqlTabla).toContain("tableoid");
+    expect(sqlTabla).toContain("regclass");
+    expect(paramsTabla).toEqual(["job-inexistente"]);
+  });
+
+  it("la tabla fisica se encuentra (tableoid) pero ningun indice en ella matchea singleton_key+exclusive -- existe=false", async () => {
+    const { verificarIndiceExclusividadDelJob } = await import("../job");
+    const { boss, executeSqlMock } = crearExecuteSqlFake({ tabla: "pgboss.job_common" }, undefined);
+
+    const resultado = await verificarIndiceExclusividadDelJob(boss, "job-27f5f447");
+
+    expect(resultado).toEqual({
+      tablaFisica: "pgboss.job_common",
+      indiceNombre: null,
+      indiceDefinicion: null,
+      existe: false,
+      unico: false,
+      valido: false,
+      listo: false,
+    });
+    const [sqlIndice, paramsIndice] = executeSqlMock.mock.calls[1] as [string, unknown[]];
+    expect(sqlIndice).toContain("pg_index");
+    expect(sqlIndice).toContain("pg_class");
+    expect(sqlIndice).toContain("indrelid");
+    expect(sqlIndice).toContain("indisunique");
+    expect(sqlIndice).toContain("indisvalid");
+    expect(sqlIndice).toContain("indisready");
+    expect(sqlIndice).not.toContain("job_i6"); // nunca por nombre fijo
+    // Estructural, no una coincidencia de texto suelta (Alex,
+    // 2026-09-30: "no solo dos coincidencias con ILIKE"): exactamente
+    // dos columnas clave, columna 1 y columna 2 verificadas por
+    // separado, y el predicado reconstruido via pg_get_expr() -- nunca
+    // un ILIKE sobre pg_get_indexdef() completo.
+    expect(sqlIndice).toContain("indnkeyatts");
+    expect(sqlIndice).toContain("pg_get_indexdef(i.indexrelid, 1, true)");
+    expect(sqlIndice).toContain("pg_get_indexdef(i.indexrelid, 2, true)");
+    expect(sqlIndice).toContain("pg_get_expr(i.indpred, i.indrelid)");
+    expect(sqlIndice).not.toContain("pg_get_indexdef(i.indexrelid) ILIKE");
+    // Igualdad EXACTA normalizada, no una regex de presencia suelta
+    // (Alex, 2026-10-01: "las regex aceptan condiciones adicionales que
+    // excluyan nuestro job") -- `~*` de presencia se reemplazo por
+    // `regexp_replace(...) = '<texto exacto normalizado>'`, que rechaza
+    // cualquier condicion de mas (ver la prueba "condicion adicional"
+    // contra Postgres real).
+    expect(sqlIndice).toContain("regexp_replace");
+    expect(sqlIndice).not.toContain("~*");
+    expect(sqlIndice).toContain("((state <= ''active''::pgboss.job_state) and (policy = ''exclusive''::text))");
+    expect(paramsIndice).toEqual(["pgboss.job_common"]);
+  });
+
+  it("el indice encontrado no es unico (indisunique=false) -- unico=false", async () => {
+    const { verificarIndiceExclusividadDelJob } = await import("../job");
+    const { boss } = crearExecuteSqlFake(
+      { tabla: "pgboss.job_common" },
+      { nombre: "job_common_i6", definicion: "CREATE INDEX ...", unico: false, valido: true, listo: true },
+    );
+
+    const resultado = await verificarIndiceExclusividadDelJob(boss, "job-27f5f447");
+
+    expect(resultado).toEqual({
+      tablaFisica: "pgboss.job_common",
+      indiceNombre: "job_common_i6",
+      indiceDefinicion: "CREATE INDEX ...",
+      existe: true,
+      unico: false,
+      valido: true,
+      listo: true,
+    });
+  });
+
+  it("el indice existe y es unico pero esta marcado invalido (CREATE INDEX CONCURRENTLY fallido) -- valido=false", async () => {
+    const { verificarIndiceExclusividadDelJob } = await import("../job");
+    const { boss } = crearExecuteSqlFake(
+      { tabla: "pgboss.job_common" },
+      { nombre: "job_common_i6", definicion: "CREATE UNIQUE INDEX ...", unico: true, valido: false, listo: true },
+    );
+
+    const resultado = await verificarIndiceExclusividadDelJob(boss, "job-27f5f447");
+
+    expect(resultado.existe).toBe(true);
+    expect(resultado.unico).toBe(true);
+    expect(resultado.valido).toBe(false);
+  });
+
+  it("el indice existe, es unico y valido pero todavia no esta listo (CREATE INDEX CONCURRENTLY en construccion) -- listo=false", async () => {
+    const { verificarIndiceExclusividadDelJob } = await import("../job");
+    const { boss } = crearExecuteSqlFake(
+      { tabla: "pgboss.job_common" },
+      { nombre: "job_common_i6", definicion: "CREATE UNIQUE INDEX ...", unico: true, valido: true, listo: false },
+    );
+
+    const resultado = await verificarIndiceExclusividadDelJob(boss, "job-27f5f447");
+
+    expect(resultado.listo).toBe(false);
+  });
+
+  it("caso feliz -- tabla, indice, definicion, unico/valido/listo todos correctos, misma forma que la base real de Alex (pgboss.job_common / pgboss.job_common_i6)", async () => {
+    const { verificarIndiceExclusividadDelJob } = await import("../job");
+    const { boss } = crearExecuteSqlFake(
+      { tabla: "pgboss.job_common" },
+      {
+        nombre: "job_common_i6",
+        definicion:
+          "CREATE UNIQUE INDEX job_common_i6 ON pgboss.job_common USING btree (name, COALESCE(singleton_key, ''::text)) WHERE ((state <= 'active'::pgboss.job_state) AND (policy = 'exclusive'::text))",
+        unico: true,
+        valido: true,
+        listo: true,
+      },
+    );
+
+    const resultado = await verificarIndiceExclusividadDelJob(boss, "job-27f5f447");
+
+    expect(resultado).toEqual({
+      tablaFisica: "pgboss.job_common",
+      indiceNombre: "job_common_i6",
+      indiceDefinicion:
+        "CREATE UNIQUE INDEX job_common_i6 ON pgboss.job_common USING btree (name, COALESCE(singleton_key, ''::text)) WHERE ((state <= 'active'::pgboss.job_state) AND (policy = 'exclusive'::text))",
+      existe: true,
+      unico: true,
+      valido: true,
+      listo: true,
+    });
+  });
+});
