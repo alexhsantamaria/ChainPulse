@@ -15,15 +15,25 @@
 // Windows, mismo criterio que `prisma generate`/`migrate`/`build` y que
 // aislamientoMultitenant.integration.test.ts.
 //
-// Nota sobre RESEND_API_KEY: abrirCiclo() intenta notificar por correo a
-// cada responsable elegible, pero atrapa cualquier error de envio sin
-// abortar la apertura del ciclo (ver abrirCiclo.ts). En modo sandbox de
-// Resend (sin dominio propio verificado), un envio a una direccion de
-// prueba como "...@chainpulse.test" va a fallar porque no es la cuenta
-// con la que se creo Resend -- por eso esta prueba no afirma un valor
-// exacto de "responsablesNotificados", solo que la apertura del ciclo en
-// si no se ve afectada por ese fallo.
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+// RONDA 16 (2026-10-07, sin tocar codigo productivo): esta prueba ya NO
+// depende de una llamada real a Resend. abrirCiclo() importa
+// enviarAvisoCicloAbierto desde "../email/resend" (src/infra/email/
+// resend.ts) -- se mockea ese modulo completo via vi.mock("@/infra/email/
+// resend", ...) (mismo alias que resuelve al mismo archivo que la ruta
+// relativa real, igual criterio ya usado en este proyecto para
+// @/infra/storage/r2 y @/infra/storage/cifradoObjeto en las pruebas de
+// cobertura). El doble (enviarAvisoCicloAbiertoMock) resuelve siempre
+// exitosamente por defecto, asi que "abre un ciclo y detecta al
+// responsable elegible" ahora puede afirmar el valor EXACTO de
+// responsablesNotificados (antes solo >= 0) y confirmar que
+// abrirCiclo() llamo al correo con los datos correctos -- sin abrir
+// ninguna conexion de red hacia Resend y sin necesitar RESEND_API_KEY
+// configurada. abrirCiclo.ts (codigo productivo) no se tocó: el
+// try/catch que ya tenia (RF5 no aborta la apertura si un correo falla)
+// sigue intacto y sigue siendo lo que esta prueba valida -- solo cambio
+// que ahora quien controla si "el correo" tiene exito o falla es este
+// archivo de prueba, nunca un servicio externo real.
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import * as OTPAuth from "otpauth";
 import { prisma } from "../prisma/client";
@@ -40,6 +50,16 @@ import {
   CicloNoAbiertoError as CicloNoAbiertoErrorRespuestas,
   ConexionNoAsignadaError,
 } from "../ciclos/registrarRespuestas";
+
+// RONDA 16 -- doble controlado para enviarAvisoCicloAbierto(), nunca el
+// SDK real de Resend. Resuelve exitosamente por defecto; si en el futuro
+// hiciera falta ejercitar el camino de fallo (abrirCiclo() atrapandolo
+// sin abortar), un it() puede sobreescribirlo con
+// mockRejectedValueOnce/mockImplementationOnce sin tocar este mock base.
+const enviarAvisoCicloAbiertoMock = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/infra/email/resend", () => ({
+  enviarAvisoCicloAbierto: (...args: unknown[]) => enviarAvisoCicloAbiertoMock(...args),
+}));
 
 // Neon "duerme" la base cuando esta inactiva un rato -- mismo margen que
 // aislamientoMultitenant.integration.test.ts para la primera conexion de
@@ -241,6 +261,7 @@ describe("CRUD de eslabones/conexiones (RF2/RF3) y ciclo de pulso completo (RF5-
   let eslabonDestinoId: string;
   let conexionId: string;
   let responsableId: string;
+  let responsableEmail: string;
   let cicloId: string;
 
   beforeAll(async () => {
@@ -276,6 +297,7 @@ describe("CRUD de eslabones/conexiones (RF2/RF3) y ciclo de pulso completo (RF5-
       },
     });
     responsableId = responsable.id;
+    responsableEmail = responsable.email;
   }, 60000);
 
   afterAll(async () => {
@@ -343,9 +365,15 @@ describe("CRUD de eslabones/conexiones (RF2/RF3) y ciclo de pulso completo (RF5-
       const resultado = await abrirCiclo(empresaId);
       cicloId = resultado.cicloId;
       expect(resultado.totalResponsables).toBe(1);
-      // Ver nota sobre RESEND_API_KEY al inicio del archivo: no se afirma
-      // un valor exacto de responsablesNotificados, solo que no revienta.
-      expect(resultado.responsablesNotificados).toBeGreaterThanOrEqual(0);
+      // RONDA 16 -- ya no depende de Resend real (ver cabecera del
+      // archivo): con el doble resolviendo siempre exitosamente, el
+      // valor es determinista y exacto, no solo "no revienta".
+      expect(resultado.responsablesNotificados).toBe(1);
+      expect(enviarAvisoCicloAbiertoMock).toHaveBeenCalledTimes(1);
+      expect(enviarAvisoCicloAbiertoMock).toHaveBeenCalledWith({
+        email: responsableEmail,
+        nombre: "Responsable de prueba",
+      });
     });
 
     it("no permite abrir un segundo ciclo mientras el primero sigue abierto", async () => {
