@@ -1025,6 +1025,7 @@ describe("verificarIndiceExclusividadDelJob", () => {
     filaIndice?: { nombre: string; definicion: string; unico: boolean; valido: boolean; listo: boolean },
   ) {
     let llamada = 0;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- firma fake de executeSql(): _text/_values deben existir para que la forma coincida con la real, pero este mock no necesita leerlos.
     const executeSqlMock = vi.fn(async (_text: string, _values?: unknown[]) => {
       llamada += 1;
       if (llamada === 1) return { rows: filaTabla ? [filaTabla] : [] };
