@@ -6,9 +6,9 @@
 // (/api/cadenas/:id/nodos, /api/cadenas/:id/conexiones), nunca por esta
 // pagina (mismo patron de "Server Component solo resuelve datos
 // iniciales" que ciclos/[id]/responder le pasa "asignaciones" al form).
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireSessionOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import MapaCadenaCanvas from "./MapaCadenaCanvas";
 
@@ -28,13 +28,14 @@ export default async function CadenaMapaPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireSessionOrRedirect()
+  // reemplaza el auth() + chequeo manual de antes -- misma redireccion a
+  // /login, ahora con la verificacion de sesion vigente incluida.
+  const sesion = await requireSessionOrRedirect();
 
   const { id } = await params;
-  const client = tenantClient(session.user.empresaId);
+  const client = tenantClient(sesion.empresaId);
 
   const cadena = await client.cadena.findUnique({
     where: { id },

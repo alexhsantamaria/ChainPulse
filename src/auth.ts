@@ -34,6 +34,7 @@ import { verifyPassword } from "@/infra/auth/password";
 import { verificarCodigoMfa } from "@/infra/auth/mfa";
 import { estaBloqueado, registrarIntentoFallido, resetearIntentos } from "@/infra/auth/rateLimit";
 import { conPisoDeTiempo, PISO_TIEMPO_AUTENTICACION_MS } from "@/infra/timing";
+import { leerSessionVersionParaLogin } from "@/infra/auth/sessionVerification";
 
 async function autorizar(credentials: Partial<Record<string, unknown>> | undefined) {
   const email = typeof credentials?.email === "string" ? credentials.email.trim().toLowerCase() : "";
@@ -64,6 +65,26 @@ async function autorizar(credentials: Partial<Record<string, unknown>> | undefin
 
   await resetearIntentos(usuario.empresaId, usuario.id);
 
+  // Mecanismo acotado de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8) -- PREPARADO PARA
+  // REVISION, no aplicado todavia. Lectura aparte de login_lookup() a
+  // proposito: evita tocar esa funcion SECURITY DEFINER (y su
+  // redeploy manual en Neon, ya documentado como un paso facil de
+  // olvidar) solo para agregarle una columna que no es un secreto y que
+  // ya se puede leer con tenantClient() normal, una vez resuelto el
+  // tenant.
+  //
+  // Correccion acotada (Alex, 2026-10-04): si esta lectura falla o no
+  // encuentra la fila, leerSessionVersionParaLogin() devuelve null (ya no
+  // un valor por defecto) -- aca eso bloquea el login, sin emitir un JWT
+  // cuyo sessionVersion no se pudo confirmar contra la base. Misma
+  // respuesta generica (null, "credenciales invalidas" para el cliente)
+  // que el resto de las ramas de autorizar(), sin distinguir el motivo
+  // real; sigue corriendo dentro de conPisoDeTiempo(), asi que esta rama
+  // tampoco agrega una diferencia de tiempo observable (R5-2).
+  const sessionVersion = await leerSessionVersionParaLogin(usuario.id, usuario.empresaId);
+  if (sessionVersion === null) return null;
+
   return {
     id: usuario.id,
     email: usuario.email,
@@ -76,6 +97,7 @@ async function autorizar(credentials: Partial<Record<string, unknown>> | undefin
     // completado la activacion de MFA, sin depender de que el cliente
     // efectivamente siga el redirect de /registro a /activar-mfa.
     mfaHabilitado: usuario.mfaHabilitado,
+    sessionVersion,
   };
 }
 

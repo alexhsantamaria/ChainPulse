@@ -4,26 +4,27 @@
 // ciclos anteriores por conexion (RF9). El administrador puede marcar una
 // recomendacion como ejecutada (RNF9); el boton solo se muestra a
 // ADMINISTRADOR.
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireSessionOrRedirect } from "@/infra/auth/session";
 import { obtenerResultadosCiclo } from "@/infra/ciclos/resultados";
 import MarcarEjecutadaBoton from "./MarcarEjecutadaBoton";
 
 export default async function ResultadosCicloPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireSessionOrRedirect()
+  // reemplaza el auth() + chequeo manual de antes -- misma redireccion a
+  // /login, ahora con la verificacion de sesion vigente incluida.
+  const sesion = await requireSessionOrRedirect();
 
   const { id } = await params;
-  const datos = await obtenerResultadosCiclo(session.user.empresaId, id);
+  const datos = await obtenerResultadosCiclo(sesion.empresaId, id);
   if (!datos) {
     notFound();
   }
 
   const idsDebiles = new Set(datos.resultadoCiclo?.eslabonesMasDebilesIds ?? []);
-  const esAdmin = session.user.rol === "ADMINISTRADOR";
+  const esAdmin = sesion.rol === "ADMINISTRADOR";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-12">

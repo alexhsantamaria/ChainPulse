@@ -9,31 +9,39 @@
 // aca tambien cuenta como intento fallido -- esta ruta exige sesion
 // valida, pero un token de sesion robado igual podria usarse para
 // fuerza-brutear el codigo de activacion sin este limite.
+//
+// Correccion acotada (Alex, 2026-10-04, autorizada sobre
+// diagnostico-eliminacion-cuenta-prueba.md Seccion 10 /
+// revocacion-sesion-despliegue.md): esta ruta seguia con su propio chequeo
+// manual de sesion (`session?.user?.empresaId` + `.email`), sin pasar por
+// requireSession() -- era la unica ruta que quedaba fuera del mecanismo de
+// revocacion de sesiones (ver el comentario de session.ts, R5-12: "estos
+// dos helpers son el unico lugar que arma la respuesta 401/403"). Un JWT de
+// un usuario eliminado o con la sesion revocada seguia pudiendo activar
+// MFA. Corregido usando requireSession(), que ya decodifica el JWT,
+// verifica sessionVersion contra la base (fail-closed,
+// verificarSesionVigente() en sessionVerification.ts) y devuelve el mismo
+// 401 generico sin distinguir el motivo al cliente (ELIMINADA / REVOCADA /
+// ERROR_VERIFICACION) -- sin exigir que mfaHabilitado ya sea true, ese
+// chequeo (usuario.mfaSecret) sigue igual mas abajo, sin cambios.
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { requireSession } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import { verificarCodigoMfa } from "@/infra/auth/mfa";
 import { estaBloqueado, registrarIntentoFallido } from "@/infra/auth/rateLimit";
 import { logError } from "@/infra/log";
 
 export async function POST(request: Request) {
-  const session = await auth();
-  if (!session?.user?.empresaId || !session.user.email) {
-    // El chequeo de "email" (ademas de "empresaId") es lo que le falta al
-    // comentario de arriba (R5-9): sin el, TypeScript infiere
-    // session.user.email como string | null | undefined mas abajo (mismo
-    // tipo que expone next-auth) y el "where: { email }" de Prisma no lo
-    // acepta -- ver el mismo patron ya usado en
-    // src/app/activar-mfa/page.tsx.
-    return NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 });
-  }
+  const resultadoSesion = await requireSession();
+  if ("respuesta" in resultadoSesion) return resultadoSesion.respuesta;
+  const { sesion } = resultadoSesion;
 
   try {
     const body = await request.json().catch(() => null);
     const codigo = typeof body?.codigo === "string" ? body.codigo.trim() : "";
 
-    const usuario = await tenantClient(session.user.empresaId).usuario.findFirst({
-      where: { email: session.user.email },
+    const usuario = await tenantClient(sesion.empresaId).usuario.findFirst({
+      where: { email: sesion.email },
     });
 
     if (!usuario || !usuario.mfaSecret) {
@@ -45,11 +53,11 @@ export async function POST(request: Request) {
     }
 
     if (!verificarCodigoMfa(usuario.mfaSecret, codigo)) {
-      await registrarIntentoFallido(session.user.empresaId, usuario.id);
+      await registrarIntentoFallido(sesion.empresaId, usuario.id);
       return NextResponse.json({ ok: false, error: "CODIGO_INVALIDO" }, { status: 400 });
     }
 
-    await tenantClient(session.user.empresaId).usuario.update({
+    await tenantClient(sesion.empresaId).usuario.update({
       where: { id: usuario.id },
       data: { mfaHabilitado: true },
     });

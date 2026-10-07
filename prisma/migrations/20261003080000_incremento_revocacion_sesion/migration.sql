@@ -1,0 +1,11 @@
+-- Mecanismo acotado de revocacion de sesiones (Alex, 2026-10-03,
+-- diagnostico-eliminacion-cuenta-prueba.md Seccion 8). Columna nueva,
+-- NOT NULL con DEFAULT, puramente aditiva -- no migra datos existentes,
+-- no toca RLS/GRANT (usuarios ya esta cubierta por el GRANT existente de
+-- chainpulse_app; esta columna no es un secreto, se lee via tenantClient()
+-- normal, sin necesitar una funcion SECURITY DEFINER nueva).
+--
+-- PREPARADA, NO APLICADA: no se corrio "prisma migrate dev/deploy" contra
+-- ninguna base real. Falta autorizacion explicita aparte para aplicarla
+-- (ver procedimiento de despliegue en el PR/diff que acompaña esto).
+ALTER TABLE "usuarios" ADD COLUMN "sessionVersion" INTEGER NOT NULL DEFAULT 1;

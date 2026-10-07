@@ -1,7 +1,7 @@
 // Pagina — completa o corrige los datos de criticidad de una conexion (RF3).
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireSessionOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import ConexionForm from "../../ConexionForm";
 
@@ -10,13 +10,14 @@ export default async function EditarConexionPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireSessionOrRedirect()
+  // reemplaza el auth() + chequeo manual de antes -- misma redireccion a
+  // /login, ahora con la verificacion de sesion vigente incluida.
+  const sesion = await requireSessionOrRedirect();
 
   const { id } = await params;
-  const conexion = await tenantClient(session.user.empresaId).conexion.findUnique({
+  const conexion = await tenantClient(sesion.empresaId).conexion.findUnique({
     where: { id },
     include: { origen: true, destino: true },
   });

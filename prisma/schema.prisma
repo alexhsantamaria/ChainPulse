@@ -310,6 +310,19 @@ model Usuario {
   intentosFallidos Int       @default(0)
   bloqueadoHasta   DateTime?
 
+  // Mecanismo acotado de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8) -- NO aplicado
+  // todavia a ninguna base real, preparado para revision. Se incrementa
+  // SOLO cuando se revoca puntualmente la sesion de este usuario (no hay
+  // endpoint ni UI generica para eso en este alcance); el valor de login
+  // vigente al momento de emitir el JWT viaja como claim "sessionVersion"
+  // (ver auth.config.ts) y src/infra/auth/sessionVerification.ts compara
+  // ambos en cada request. Un JWT emitido ANTES de este campo no lleva el
+  // claim -- se trata como si llevara el valor por defecto de abajo (ver
+  // comentario de sessionVersionEfectiva() en sessionVerification.ts), asi
+  // que desplegar esto no desloguea a nadie por si solo.
+  sessionVersion Int @default(1)
+
   // RF4: un Responsable queda limitado a las conexiones de su propio eslabon.
   eslabonId String?
   eslabon   Eslabon?   @relation(fields: [eslabonId], references: [id])

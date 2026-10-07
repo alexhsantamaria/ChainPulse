@@ -1,17 +1,17 @@
 // Pagina — lista y declara los eslabones de la cadena (RF2).
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireSessionOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import NuevoEslabonForm from "./NuevoEslabonForm";
 
 export default async function EslabonesPage() {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireSessionOrRedirect()
+  // reemplaza el auth() + chequeo manual de antes -- misma redireccion a
+  // /login, ahora con la verificacion de sesion vigente incluida.
+  const sesion = await requireSessionOrRedirect();
 
-  const eslabones = await tenantClient(session.user.empresaId).eslabon.findMany({
+  const eslabones = await tenantClient(sesion.empresaId).eslabon.findMany({
     orderBy: { createdAt: "asc" },
   });
 
@@ -39,7 +39,7 @@ export default async function EslabonesPage() {
                     proveedor externo
                   </span>
                 )}
-                {session.user.rol === "ADMINISTRADOR" && (
+                {sesion.rol === "ADMINISTRADOR" && (
                   <Link
                     href={`/dashboard/eslabones/${eslabon.id}/invitar`}
                     className="text-xs text-slate-500 underline hover:text-slate-700"
