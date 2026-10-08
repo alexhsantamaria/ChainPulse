@@ -207,6 +207,71 @@
 --      confiable de que paso es el estado real de la base (pg_policy,
 --      pg_proc, information_schema.role_table_grants, etc.), igual que
 --      ya hace el verificador de drift.
+--
+-- CORRECCION (Alex, 2026-10-08, predeploy real contra una rama "data and
+-- schema" de produccion -- 106 chequeos: 103 OK, 3 divergentes). La
+-- migracion aborto con applied_steps_count=0 (produccion no tocada,
+-- transaccion revertida completa) por UNA sola causa real: la
+-- Seccion C encontro login_lookup(text) ya existente, con identidad y
+-- contenido idénticos a lo esperado EN TODO salvo su volatilidad
+-- declarada (VOLATILE, 'v', en vez de STABLE, 's'). Las otras 2
+-- divergencias reportadas por el predeploy (politicas RLS ausentes en
+-- metricas_cuestionario y recomendaciones_ejecutadas, Seccion B) NO son
+-- un defecto de la Seccion B -- esas dos politicas se habrian creado en
+-- la MISMA corrida (Seccion B ya usa el patron crear-si-falta) de no
+-- haber abortado despues, en la Seccion C; al revertirse toda la
+-- transaccion, tambien se revirtio esa creacion todavia no commiteada.
+-- Es decir: arreglar unicamente la Seccion C (ver mas abajo) resuelve
+-- las 3 divergencias en la misma corrida, sin tocar la Seccion B.
+--
+-- La Seccion C ahora distingue la volatilidad del resto de los
+-- atributos que verifica (cuerpo, SECURITY DEFINER, search_path,
+-- propietario, grants): si TODO lo demas coincide exactamente y la
+-- UNICA divergencia es volatilidad VOLATILE encontrada donde se espera
+-- STABLE, ejecuta `ALTER FUNCTION login_lookup(text) STABLE` (nunca
+-- DROP+CREATE -- preserva el oid de la funcion) y se re-verifica antes
+-- de continuar. Si ya es STABLE, no hace nada. Si cualquier OTRO
+-- atributo diverge -- o si la volatilidad encontrada no es ni 's' ni
+-- 'v' (p. ej. IMMUTABLE) -- sigue abortando exactamente como antes, sin
+-- excepcion. La correccion/normalizacion y las 2 politicas RLS de la
+-- Seccion B siguen corriendo dentro de la MISMA transaccion
+-- BEGIN/COMMIT de todo este archivo: se confirman o se revierten
+-- juntas, nunca por separado -- sin esto no cambia.
+--
+-- Impacto sobre una reconstruccion desde cero (base vacia, sin
+-- login_lookup todavia): NULO -- v_conteo = 0 sigue creando la funcion
+-- como STABLE desde el primer momento (sin cambios en esa rama), asi
+-- que la rama de normalizacion de esta correccion nunca se alcanza en
+-- ese escenario. Solo se activa cuando login_lookup YA existe con
+-- volatilidad VOLATILE y el resto de su identidad/contenido coincide
+-- exactamente -- el escenario real encontrado en el predeploy.
+--
+-- PRECISION SOBRE EL HISTORIAL DE ESTE ARCHIVO (correccion de
+-- documentacion pedida por Alex, 2026-10-08, segunda revision): este
+-- archivo SI se aplico con exito, mas de una vez, contra branches
+-- temporales descartables usados para validacion (p. ej. la Ronda 13,
+-- 2026-10-06, contra chainpulse_reconstruccion_r12 -- ver la cabecera
+-- de loginLookupIdentidadRonda11.integration.test.ts, que cita esa
+-- evidencia explicitamente). Lo que NUNCA ocurrio es que este archivo
+-- se mergeara a la rama principal ni se aplicara contra produccion. El
+-- intento de predeploy de esta correccion (2026-10-08, contra una rama
+-- "data and schema" de produccion) es distinto de esos branches
+-- descartables previos y quedo revertido con applied_steps_count=0, sin
+-- tocar produccion. La distincion que importa para decidir si corregir
+-- este archivo en el lugar es segura no es "¿se aplico alguna vez, en
+-- algun lugar?" (si, en branches descartables) sino "¿quedo aplicado en
+-- algun entorno que esta migracion, al editarse, dejaria en un estado
+-- inconsistente con su propio historial de _prisma_migrations?" -- y la
+-- respuesta a esa pregunta es no: los branches descartables de
+-- validacion, por definicion, no persisten (se descartan despues de
+-- usarse) y no comparten _prisma_migrations con ningun entorno real que
+-- siga existiendo hoy; produccion nunca llego a aplicarlo.
+--
+-- SEGUNDA REVISION (Alex, 2026-10-08): el ALTER FUNCTION se calcifica a
+-- "public.login_lookup(text)" (antes sin calificar) y la re-verificacion
+-- posterior al ALTER pasa de buscar por proname (busqueda global de
+-- catalogo) a buscar por "WHERE oid = v_oid" con INTO STRICT -- ver el
+-- detalle en los comentarios inline de la Seccion C, mas abajo.
 
 BEGIN;
 
@@ -423,6 +488,21 @@ DECLARE
   v_proconfig text[];
   v_owner text;
   v_execute_grantees text[];
+  -- Normalizacion de volatilidad (Alex, 2026-10-08, sobre el hallazgo
+  -- del predeploy real contra una rama "data and schema" de produccion:
+  -- 106 chequeos, 103 OK, 3 divergentes -- dos politicas RLS ausentes
+  -- (Secciones A/B, ya resueltas por su propio patron crear-si-falta,
+  -- sin cambios) mas login_lookup con volatilidad VOLATILE en vez de
+  -- STABLE). v_otros_divergen separa "todo lo que esta migracion NUNCA
+  -- auto-corrige" (cuerpo/SECURITY DEFINER/search_path/propietario/
+  -- grants) de la volatilidad, que es ahora el UNICO atributo que esta
+  -- migracion puede corregir ella misma -- ver el IF mas abajo.
+  -- v_oid_post_alter/v_provolatile_post_alter son la re-verificacion
+  -- posterior al ALTER FUNCTION (nunca asumir que hizo lo pedido en
+  -- silencio, mismo criterio que el resto de esta migracion).
+  v_otros_divergen boolean;
+  v_oid_post_alter oid;
+  v_provolatile_post_alter "char";
   -- RONDA 12: corregido tras ejecucion real contra PostgreSQL 18.6 (ver
   -- diagnostico de Alex, 2026-10-06, 106 chequeos: 105 OK + 1
   -- divergencia). information_schema.routine_privileges cataloga a
@@ -537,7 +617,12 @@ $BODY$;
       RAISE EXCEPTION 'RECONSTRUCCION_AUTH_DIVERGENTE: login_lookup existe pero el tipo de alguno de sus argumentos/columnas de retorno no coincide con lo esperado (comparacion por OID de tipo via to_regtype, no por texto formateado). Abortando sin modificar nada -- revisar manualmente antes de reintentar.';
     END IF;
 
-    -- Identidad confirmada -- ahora comparar contenido.
+    -- Identidad confirmada -- ahora comparar contenido. La volatilidad
+    -- (provolatile) se evalua POR SEPARADO del resto (v_otros_divergen,
+    -- Alex 2026-10-08): es el UNICO atributo que esta migracion puede
+    -- corregir ella misma, y solo en el caso exacto VOLATILE->STABLE
+    -- con todo lo demas identico -- nunca si cualquier otro atributo
+    -- tambien diverge, nunca para otro valor de volatilidad inesperado.
     SELECT prosrc, prosecdef, provolatile, proconfig,
            (SELECT rolname FROM pg_roles WHERE oid = proowner)
       INTO v_prosrc_actual, v_prosecdef, v_provolatile, v_proconfig, v_owner
@@ -547,16 +632,83 @@ $BODY$;
       FROM information_schema.routine_privileges
       WHERE routine_schema = 'public' AND routine_name = 'login_lookup' AND privilege_type = 'EXECUTE';
 
-    IF regexp_replace(v_prosrc_actual, '\s+', ' ', 'g') IS DISTINCT FROM regexp_replace(v_prosrc_esperado, '\s+', ' ', 'g')
-       OR v_prosecdef IS DISTINCT FROM true
-       OR v_provolatile IS DISTINCT FROM 's'
-       OR v_proconfig IS NULL
-       OR NOT ('search_path=public' = ANY (v_proconfig))
-       OR v_owner IS DISTINCT FROM 'neondb_owner'
-       OR v_execute_grantees IS DISTINCT FROM v_execute_grantees_esperado THEN
-      RAISE EXCEPTION 'RECONSTRUCCION_AUTH_DIVERGENTE: login_lookup(text) tiene la identidad esperada pero difiere en contenido (cuerpo, volatilidad, SECURITY DEFINER, search_path, propietario o permisos de EXECUTE). Propietario encontrado: % (se espera neondb_owner -- chainpulse_app NUNCA puede ser propietaria de esta funcion, ver Seccion 0 y el chequeo de membresia: no tiene ni ownership ni herencia del rol propietario). SECURITY DEFINER encontrado: %. Volatilidad encontrada: % (se espera s=STABLE). search_path encontrado: %. EXECUTE otorgado a: % (se espera exactamente %, nunca PUBLIC ni un tercer rol -- el propietario conserva EXECUTE inherente sobre su propia funcion, eso no es un GRANT adicional que REVOKE ALL FROM PUBLIC pueda quitar). Abortando sin modificar nada -- revisar manualmente antes de reintentar.',
-        v_owner, v_prosecdef, v_provolatile, v_proconfig, v_execute_grantees, v_execute_grantees_esperado;
+    v_otros_divergen :=
+      regexp_replace(v_prosrc_actual, '\s+', ' ', 'g') IS DISTINCT FROM regexp_replace(v_prosrc_esperado, '\s+', ' ', 'g')
+      OR v_prosecdef IS DISTINCT FROM true
+      OR v_proconfig IS NULL
+      OR NOT ('search_path=public' = ANY (v_proconfig))
+      OR v_owner IS DISTINCT FROM 'neondb_owner'
+      OR v_execute_grantees IS DISTINCT FROM v_execute_grantees_esperado;
+
+    IF v_otros_divergen THEN
+      RAISE EXCEPTION 'RECONSTRUCCION_AUTH_DIVERGENTE: login_lookup(text) tiene la identidad esperada pero difiere en contenido (cuerpo, SECURITY DEFINER, search_path, propietario o permisos de EXECUTE -- la volatilidad se evalua aparte, ver mas abajo, y no es la causa de este abort). Propietario encontrado: % (se espera neondb_owner -- chainpulse_app NUNCA puede ser propietaria de esta funcion, ver Seccion 0 y el chequeo de membresia: no tiene ni ownership ni herencia del rol propietario). SECURITY DEFINER encontrado: %. search_path encontrado: %. EXECUTE otorgado a: % (se espera exactamente %, nunca PUBLIC ni un tercer rol -- el propietario conserva EXECUTE inherente sobre su propia funcion, eso no es un GRANT adicional que REVOKE ALL FROM PUBLIC pueda quitar). Volatilidad encontrada (informativo): %. Abortando sin modificar nada -- revisar manualmente antes de reintentar.',
+        v_owner, v_prosecdef, v_proconfig, v_execute_grantees, v_execute_grantees_esperado, v_provolatile;
+
+    ELSIF v_provolatile IS DISTINCT FROM 's' THEN
+      -- Todo lo demas coincide (v_otros_divergen = false) -- la UNICA
+      -- divergencia restante es la volatilidad. Autocorreccion
+      -- autorizada SOLO para el caso real encontrado en el predeploy
+      -- (VOLATILE, 'v'); cualquier otro valor que no sea 's' ni 'v'
+      -- (p. ej. IMMUTABLE, 'i') no tiene autorizacion de
+      -- autocorreccion y sigue abortando -- "cualquier otro atributo"
+      -- de esta seccion incluye un valor de volatilidad inesperado que
+      -- no sea exactamente la transicion VOLATILE->STABLE ya validada.
+      IF v_provolatile IS DISTINCT FROM 'v' THEN
+        RAISE EXCEPTION 'RECONSTRUCCION_AUTH_DIVERGENTE: login_lookup(text) coincide en cuerpo/SECURITY DEFINER/search_path/propietario/grants, pero su volatilidad declarada (%) no es ni "s" (STABLE, lo esperado) ni "v" (VOLATILE, el unico caso con autocorreccion autorizada) -- un valor de volatilidad inesperado (p. ej. IMMUTABLE) no se corrige automaticamente. Abortando sin modificar nada -- revisar manualmente antes de reintentar.',
+          v_provolatile;
+      END IF;
+
+      -- ALTER FUNCTION modifica el renglon de pg_proc EN EL LUGAR --
+      -- nunca recrea la funcion, nunca cambia su oid (v_oid), nunca
+      -- toca cuerpo/SECURITY DEFINER/search_path/propietario/grants
+      -- (ya verificados identicos arriba, v_otros_divergen = false) --
+      -- el unico catalogo que cambia es pg_proc.provolatile. Corre
+      -- dentro de la misma transaccion BEGIN/COMMIT de todo este
+      -- archivo: si cualquier seccion posterior (D o E) abortara, este
+      -- ALTER se revierte junto con las politicas RLS de la Seccion B,
+      -- igual que exige el punto 5 de la correccion de Alex
+      -- (2026-10-08) -- RLS y normalizacion de volatilidad se
+      -- confirman o revierten juntas, nunca por separado. Calificado con
+      -- "public." (correccion de Alex, 2026-10-08, segunda revision) --
+      -- v_esquema = 'public' ya esta confirmado en este punto, pero el
+      -- DDL no debe depender de que el search_path de la conexion
+      -- resuelva "login_lookup" contra el mismo esquema que ya se
+      -- verifico, igual que exige el resto de esta migracion para toda
+      -- escritura (ver la correccion de la Seccion D en la cabecera,
+      -- Ronda 9: "lectura fija a public, escritura dependiente de
+      -- search_path" fue exactamente el defecto que se corrigio ahi).
+      ALTER FUNCTION public.login_lookup(text) STABLE;
+
+      -- Re-verificacion explicita -- nunca asumir que el ALTER hizo lo
+      -- pedido en silencio (mismo criterio "verificar, nunca asumir" de
+      -- toda esta migracion). Correccion de Alex (2026-10-08, segunda
+      -- revision): filtra por WHERE oid = v_oid, NUNCA por proname --
+      -- proname es la busqueda GLOBAL del catalogo que esta misma
+      -- Seccion C ya evita mas arriba al identificar la funcion por
+      -- primera vez (ver el conteo inicial con STRICT sobre esquema +
+      -- nombre); repetirla aca por proname reabriria la misma ambiguedad
+      -- que ese chequeo inicial existe para cerrar. INTO STRICT exige
+      -- EXACTAMENTE una fila con ese oid exacto: si esa fila ya no
+      -- existiera (ALTER FUNCTION nunca deberia poder provocar esto --
+      -- nunca dropea ni recrea -- pero esta migracion no asume, verifica
+      -- cada postcondicion igual que cada precondicion), Postgres lanza
+      -- no_data_found ANTES de llegar a esta linea -- esa excepcion en si
+      -- misma ya es la prueba de que el oid NO se conservo, sin necesitar
+      -- ninguna comparacion adicional de oid contra oid.
+      SELECT oid, provolatile INTO STRICT v_oid_post_alter, v_provolatile_post_alter
+        FROM pg_proc WHERE oid = v_oid;
+
+      IF v_provolatile_post_alter IS DISTINCT FROM 's' THEN
+        RAISE EXCEPTION 'RECONSTRUCCION_AUTH_NORMALIZACION_FALLIDA: tras ALTER FUNCTION public.login_lookup(text) STABLE, la re-verificacion por oid (% -- la misma fila preservada, confirmada por INTO STRICT) encontro volatilidad % en vez de la esperada s. Abortando -- la transaccion de esta migracion revierte el ALTER junto con todo lo demas.',
+          v_oid, v_provolatile_post_alter;
+      END IF;
+
+      RAISE NOTICE 'RECONSTRUCCION_AUTH_NORMALIZADO: login_lookup(text) existia con volatilidad VOLATILE y el resto de su identidad/contenido coincidia exactamente con lo esperado -- normalizada a STABLE via ALTER FUNCTION public.login_lookup(text) (oid % preservado, confirmado por INTO STRICT sobre WHERE oid = %, nunca recreada).', v_oid, v_oid;
+
     END IF;
+    -- Si v_provolatile ya era 's': ninguna rama de arriba se ejecuta,
+    -- sin ALTER ni RAISE -- "si ya es STABLE, no haga cambios" (punto 4
+    -- de la correccion de Alex, 2026-10-08).
 
   END IF;
 END;
