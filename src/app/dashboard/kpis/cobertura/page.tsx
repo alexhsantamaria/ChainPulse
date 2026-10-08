@@ -8,9 +8,8 @@
 // del paso 1) y el historial de importaciones ya existentes, y se los
 // pasa al asistente cliente -- mismo patron que cadenas/[id]/page.tsx
 // ("Server Component solo resuelve datos iniciales").
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireAdminOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import ImportadorCoberturaWizard from "./ImportadorCoberturaWizard";
 
@@ -26,15 +25,14 @@ function formatearFechaHora(fecha: Date): string {
 }
 
 export default async function ImportadorCoberturaPage() {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
-  if (session.user.rol !== "ADMINISTRADOR") {
-    redirect("/dashboard");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireAdminOrRedirect()
+  // reemplaza el auth() + los dos chequeos manuales de antes (sesion y
+  // rol) -- misma redireccion a /login o /dashboard segun el caso, ahora
+  // con la verificacion de sesion vigente incluida.
+  const sesion = await requireAdminOrRedirect();
 
-  const client = tenantClient(session.user.empresaId);
+  const client = tenantClient(sesion.empresaId);
   const [cadenas, importaciones] = await Promise.all([
     client.cadena.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, nombre: true } }),
     client.importacionCsv.findMany({

@@ -1,7 +1,7 @@
 // Pagina — el administrador invita a un responsable para este eslabon (RF4).
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireAdminOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import InvitarResponsableForm from "./InvitarResponsableForm";
 
@@ -10,16 +10,15 @@ export default async function InvitarResponsablePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
-  if (session.user.rol !== "ADMINISTRADOR") {
-    redirect("/dashboard");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireAdminOrRedirect()
+  // reemplaza el auth() + los dos chequeos manuales de antes (sesion y
+  // rol) -- misma redireccion a /login o /dashboard segun el caso, ahora
+  // con la verificacion de sesion vigente incluida.
+  const sesion = await requireAdminOrRedirect();
 
   const { id } = await params;
-  const eslabon = await tenantClient(session.user.empresaId).eslabon.findUnique({ where: { id } });
+  const eslabon = await tenantClient(sesion.empresaId).eslabon.findUnique({ where: { id } });
   if (!eslabon) {
     notFound();
   }

@@ -37,6 +37,17 @@ export const authConfig = {
         // de sesion en caliente que este proyecto no tiene en ningun otro
         // lado.
         token.mfaHabilitado = user.mfaHabilitado;
+        // Mecanismo acotado de revocacion de sesiones (Alex, 2026-10-03,
+        // diagnostico-eliminacion-cuenta-prueba.md Seccion 8) -- PREPARADO
+        // PARA REVISION, no aplicado todavia. Mismo criterio que
+        // mfaHabilitado arriba: se fija solo en el login, con el valor
+        // vigente en ese momento (user.sessionVersion, leido en
+        // autorizar() via leerSessionVersionParaLogin()). Un JWT emitido
+        // antes de este campo no trae esta propiedad en absoluto -- ver
+        // sessionVerification.ts (SESSION_VERSION_POR_DEFECTO) para como
+        // se trata esa ausencia, a proposito, para no desloguear a nadie
+        // al desplegar esto.
+        token.sessionVersion = user.sessionVersion;
       }
       return token;
     },
@@ -46,6 +57,7 @@ export const authConfig = {
       session.user.rol = token.rol;
       session.user.eslabonId = token.eslabonId;
       session.user.mfaHabilitado = token.mfaHabilitado;
+      session.user.sessionVersion = token.sessionVersion;
       return session;
     },
   },

@@ -1,20 +1,21 @@
 // Pagina — genera el QR de MFA para el administrador en sesion (RF1, ADR-0003).
 import { redirect } from "next/navigation";
 import QRCode from "qrcode";
-import { auth } from "@/auth";
+import { requireSessionOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import { construirOtpauthUrl } from "@/infra/auth/mfa";
 import { asegurarSecretoMfa } from "@/infra/auth/enrolamientoMfa";
 import ActivarMfaForm from "./ActivarMfaForm";
 
 export default async function ActivarMfaPage() {
-  const session = await auth();
-  if (!session?.user?.email) {
-    redirect("/login");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireSessionOrRedirect()
+  // reemplaza el auth() + chequeo manual de antes -- misma redireccion a
+  // /login, ahora con la verificacion de sesion vigente incluida.
+  const sesion = await requireSessionOrRedirect();
 
-  const usuario = await tenantClient(session.user.empresaId).usuario.findFirst({
-    where: { email: session.user.email },
+  const usuario = await tenantClient(sesion.empresaId).usuario.findFirst({
+    where: { email: sesion.email },
   });
 
   if (!usuario) {
@@ -39,7 +40,7 @@ export default async function ActivarMfaPage() {
   // secreto de forma idempotente -- ver el comentario de esa funcion.
   // mfaHabilitado sigue en false hasta que /api/mfa/activar valide un
   // codigo TOTP real; esta pagina nunca lo marca en true.
-  const secreto = await asegurarSecretoMfa(session.user.empresaId, usuario);
+  const secreto = await asegurarSecretoMfa(sesion.empresaId, usuario);
 
   const otpauthUrl = construirOtpauthUrl(usuario.email, secreto);
   const qrDataUrl = await QRCode.toDataURL(otpauthUrl);

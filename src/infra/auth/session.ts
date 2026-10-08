@@ -6,8 +6,24 @@
 // vez de `empresaId`, ver R5-9). Estos dos helpers son el unico lugar que
 // arma la respuesta 401/403, para que una futura ruta no pueda repetir el
 // mismo desvio por accidente.
+//
+// Mecanismo acotado de revocacion de sesiones (Alex, 2026-10-03,
+// diagnostico-eliminacion-cuenta-prueba.md Seccion 8) -- PREPARADO PARA
+// REVISION, no aplicado todavia (la migracion que agrega la columna que
+// esto necesita esta preparada, no ejecutada contra ninguna base real).
+// requireSession()/requireAdmin() ahora, ademas de decodificar el JWT,
+// verifican contra la base que el usuario siga existiendo y que su
+// sessionVersion siga coincidiendo (verificarSesionVigente(), fail-closed
+// -- ver el comentario de ese archivo). Se agregan tambien
+// requireSessionOrRedirect()/requireAdminOrRedirect(): la misma
+// verificacion para Server Components (paginas), que no pueden usar
+// NextResponse (necesitan redirect()) -- cierra la brecha de los 13
+// page.tsx que llamaban auth() directamente y quedaban fuera de
+// requireSession()/requireAdmin().
+import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { verificarSesionVigente } from "./sessionVerification";
 
 export interface SesionValida {
   usuarioId: string;
@@ -48,6 +64,17 @@ export async function requireSession(): Promise<ResultadoSesion> {
   const session = await auth();
   const sesion = session?.user ? aSesionValida(session.user) : null;
   if (!sesion) return { respuesta: SIN_SESION() };
+
+  // No distingue al cliente el motivo (eliminada/revocada/error de
+  // verificacion) -- mismo criterio de no-enumeracion que el resto de
+  // este modulo (ver R5-2 en auth.ts): siempre el mismo 401 generico.
+  const resultado = await verificarSesionVigente(
+    sesion.usuarioId,
+    sesion.empresaId,
+    session!.user.sessionVersion,
+  );
+  if (!resultado.vigente) return { respuesta: SIN_SESION() };
+
   return { sesion };
 }
 
@@ -57,4 +84,37 @@ export async function requireAdmin(): Promise<ResultadoSesion> {
   if ("respuesta" in resultado) return resultado;
   if (resultado.sesion.rol !== "ADMINISTRADOR") return { respuesta: NO_AUTORIZADO() };
   return resultado;
+}
+
+/**
+ * Equivalente a requireSession() para Server Components (paginas): no
+ * puede devolver NextResponse (un Server Component necesita redirect()),
+ * asi que hace la misma validacion y, si falla, redirige directamente en
+ * vez de devolver un resultado para que el caller decida -- mismo patron
+ * que los 13 page.tsx ya usaban a mano con auth() + redirect("/login"),
+ * ahora centralizado y con la verificacion de sesion vigente incluida.
+ */
+export async function requireSessionOrRedirect(rutaSinSesion = "/login"): Promise<SesionValida> {
+  const session = await auth();
+  const sesion = session?.user ? aSesionValida(session.user) : null;
+  if (!sesion) redirect(rutaSinSesion);
+
+  const resultado = await verificarSesionVigente(
+    sesion.usuarioId,
+    sesion.empresaId,
+    session!.user.sessionVersion,
+  );
+  if (!resultado.vigente) redirect(rutaSinSesion);
+
+  return sesion;
+}
+
+/** Equivalente a requireAdmin() para Server Components -- ver requireSessionOrRedirect(). */
+export async function requireAdminOrRedirect(
+  rutaNoAutorizado = "/dashboard",
+  rutaSinSesion = "/login",
+): Promise<SesionValida> {
+  const sesion = await requireSessionOrRedirect(rutaSinSesion);
+  if (sesion.rol !== "ADMINISTRADOR") redirect(rutaNoAutorizado);
+  return sesion;
 }

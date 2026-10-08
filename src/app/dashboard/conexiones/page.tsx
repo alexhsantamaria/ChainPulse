@@ -1,17 +1,17 @@
 // Pagina — lista y declara conexiones entre eslabones (RF2/RF3).
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireSessionOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import ConexionForm from "./ConexionForm";
 
 export default async function ConexionesPage() {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireSessionOrRedirect()
+  // reemplaza el auth() + chequeo manual de antes -- misma redireccion a
+  // /login, ahora con la verificacion de sesion vigente incluida.
+  const sesion = await requireSessionOrRedirect();
 
-  const client = tenantClient(session.user.empresaId);
+  const client = tenantClient(sesion.empresaId);
   const [eslabones, conexiones] = await Promise.all([
     client.eslabon.findMany({ orderBy: { createdAt: "asc" } }),
     client.conexion.findMany({

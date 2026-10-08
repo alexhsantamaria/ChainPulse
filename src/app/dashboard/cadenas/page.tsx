@@ -2,19 +2,19 @@
 // Seccion 14.1). Cada Cadena es el alcance de una evaluacion (producto o
 // servicio concreto + periodo) dentro de la Empresa -- ver
 // PLAN-DE-TRABAJO.md "Incremento 3 -- Mapa y profundidad".
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireSessionOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import NuevaCadenaForm from "./NuevaCadenaForm";
 
 export default async function CadenasPage() {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireSessionOrRedirect()
+  // reemplaza el auth() + chequeo manual de antes -- misma redireccion a
+  // /login, ahora con la verificacion de sesion vigente incluida.
+  const sesion = await requireSessionOrRedirect();
 
-  const cadenas = await tenantClient(session.user.empresaId).cadena.findMany({
+  const cadenas = await tenantClient(sesion.empresaId).cadena.findMany({
     orderBy: { createdAt: "asc" },
     // Punto D de la revision externa del 2026-09-22: dos cadenas con el
     // mismo nombre/producto eran indistinguibles en esta lista -- se

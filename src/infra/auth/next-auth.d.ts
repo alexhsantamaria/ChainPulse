@@ -20,6 +20,10 @@ declare module "next-auth" {
       rol: RolUsuario;
       eslabonId: string | null;
       mfaHabilitado: boolean;
+      // Mecanismo acotado de revocacion de sesiones (Alex, 2026-10-03,
+      // diagnostico-eliminacion-cuenta-prueba.md Seccion 8) -- preparado
+      // para revision, no aplicado todavia.
+      sessionVersion: number;
     } & DefaultSession["user"];
   }
 
@@ -28,6 +32,7 @@ declare module "next-auth" {
     rol: RolUsuario;
     eslabonId?: string | null;
     mfaHabilitado: boolean;
+    sessionVersion: number;
   }
 }
 
@@ -39,6 +44,10 @@ declare module "@auth/core/types" {
       rol: RolUsuario;
       eslabonId: string | null;
       mfaHabilitado: boolean;
+      // Mecanismo acotado de revocacion de sesiones (Alex, 2026-10-03,
+      // diagnostico-eliminacion-cuenta-prueba.md Seccion 8) -- preparado
+      // para revision, no aplicado todavia.
+      sessionVersion: number;
     } & DefaultSession["user"];
   }
 
@@ -47,6 +56,7 @@ declare module "@auth/core/types" {
     rol: RolUsuario;
     eslabonId?: string | null;
     mfaHabilitado: boolean;
+    sessionVersion: number;
   }
 }
 
@@ -56,6 +66,7 @@ declare module "next-auth/jwt" {
     rol: RolUsuario;
     eslabonId: string | null;
     mfaHabilitado: boolean;
+    sessionVersion: number;
   }
 }
 
@@ -65,5 +76,6 @@ declare module "@auth/core/jwt" {
     rol: RolUsuario;
     eslabonId: string | null;
     mfaHabilitado: boolean;
+    sessionVersion: number;
   }
 }

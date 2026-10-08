@@ -31,8 +31,23 @@
 // Corre SOLO con `npm run test:integration` en Windows -- misma guardia
 // que las demas pruebas de integracion de Cobertura, ver
 // entornoPruebasIntegracionCobertura.ts.
+//
+// RONDA 14 (2026-10-07, seguridad del arnes de pruebas -- hallazgo de la
+// revision de solo lectura de Ronda 13): esta prueba encolaba el job
+// "importIdViejo" (linea de abajo) y nunca lo borraba ni cerraba la
+// instancia de pg-boss -- cada corrida dejaba una fila huerfana en
+// pgboss.job (estado 'created') y una conexion sin cerrar. Corregido:
+// limpieza puntual del job (mismo mecanismo exacto que
+// confirmarAtomicidad.integration.test.ts, DELETE acotado por
+// name+singleton_key, nunca un batch) en un `finally` propio del test, y
+// cierre de pg-boss encadenado en `finally` dentro de afterAll -- ambos
+// corren aunque la aserción o el fixture fallen, y cerrarBoss() es
+// idempotente (no-op si nunca se obtuvo boss), asi que es seguro
+// llamarla siempre.
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { obtenerBoss, cerrarBoss } from "../../../jobs/pgBoss";
+import { encolarImportacionCsv, COLA_IMPORTACION_CSV } from "../job";
 import {
   requerirEntornoDePruebasConfirmado,
   crearFixtureCobertura,
@@ -76,24 +91,43 @@ vi.mock("@/infra/storage/cifradoObjeto", () => ({
 }));
 
 let fixture: FixtureCoberturaIntegracion;
+let boss: Awaited<ReturnType<typeof obtenerBoss>> | undefined;
+
+// RONDA 14 -- limpieza puntual del job que esta prueba encola: mismo
+// mecanismo y mismo nombre de funcion que
+// confirmarAtomicidad.integration.test.ts, DELETE acotado por
+// name+singleton_key=importId, nunca un batch ni "todo lo que devolvio
+// un fetch()". No-op si boss todavia no se obtuvo (nada que borrar).
+async function borrarJobDePrueba(importId: string): Promise<void> {
+  if (!boss) return;
+  await boss.getDb().executeSql(`DELETE FROM pgboss.job WHERE name = $1 AND singleton_key = $2`, [COLA_IMPORTACION_CSV, importId]);
+}
 
 beforeAll(async () => {
   requerirEntornoDePruebasConfirmado();
   fixture = await crearFixtureCobertura("no-depende-de-otra-confirmacion");
 }, 30000);
 
+// RONDA 14 -- cierre garantizado: el cierre de pg-boss corre en su propio
+// `finally`, encadenado antes del borrado del fixture, para que un fallo
+// en uno de los dos pasos nunca salte al otro. cerrarBoss() es
+// idempotente (no-op si nunca se obtuvo boss), asi que es seguro
+// llamarla siempre, incluso si beforeAll fallo antes de crear el
+// fixture.
 afterAll(async () => {
-  if (fixture) await borrarFixtureCobertura(fixture);
+  try {
+    await cerrarBoss();
+  } finally {
+    if (fixture) await borrarFixtureCobertura(fixture);
+  }
 });
 
 describe("el disparo inmediato de una confirmacion procesa SU PROPIO job, sin depender de otra confirmacion", () => {
   it("con un job MAS VIEJO de otra importacion ya pendiente en la misma cola, la importacion de esta prueba se procesa igual -- y el job viejo queda intacto, nunca reclamado", async () => {
     const { tenantTransaction } = await import("../../../prisma/tenantTransaction");
     const { tenantClient } = await import("../../../prisma/tenantClient");
-    const { obtenerBoss } = await import("../../../jobs/pgBoss");
-    const { encolarImportacionCsv, COLA_IMPORTACION_CSV } = await import("../job");
 
-    const boss = await obtenerBoss();
+    boss = await obtenerBoss();
 
     // 1. Job VIEJO de otra importacion (nunca creada como ImportacionCsv
     //    real a proposito -- si por algun bug ESTE test lo tocara, el
@@ -105,6 +139,7 @@ describe("el disparo inmediato de una confirmacion procesa SU PROPIO job, sin de
     //    esta prueba, asi que su created_on queda mas viejo (mismo
     //    ordenamiento que uso boss.fetch() en el bug real).
     const importIdViejo = `import-viejo-pendiente-${randomUUID()}`;
+    try {
     await encolarImportacionCsv(boss, { importId: importIdViejo, empresaId: fixture.empresaId });
 
     // 2. La importacion REAL de esta prueba -- PENDIENTE_REVISION, con
@@ -189,5 +224,12 @@ describe("el disparo inmediato de una confirmacion procesa SU PROPIO job, sin de
     expect(filaJobViejo.rows[0].state).toBe("created");
     expect(filaJobViejo.rows[0].started_on).toBeNull();
     expect(filaJobViejo.rows[0].retry_count).toBe(0);
+    } finally {
+      // RONDA 14 -- limpieza garantizada del job viejo/ajeno que esta
+      // prueba encolo, acotada por name+singleton_key=importIdViejo --
+      // corre aunque una aserción de arriba haya fallado. Nunca toca
+      // otros jobs (nunca boss.fetch(), ver cabecera de este archivo).
+      await borrarJobDePrueba(importIdViejo);
+    }
   }, 30000);
 });

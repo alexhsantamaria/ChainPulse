@@ -4,21 +4,19 @@
 // No es un sistema de analitica de producto -- son consultas agregadas
 // simples sobre toda la empresa, sin filtros ni series temporales (ver
 // requirements.md, RNF9). Solo administrador.
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireAdminOrRedirect } from "@/infra/auth/session";
 import { obtenerMetricasAgregadas } from "@/infra/ciclos/metricasAgregadas";
 
 export default async function MetricasPage() {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
-  if (session.user.rol !== "ADMINISTRADOR") {
-    redirect("/dashboard");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireAdminOrRedirect()
+  // reemplaza el auth() + los dos chequeos manuales de antes (sesion y
+  // rol) -- misma redireccion a /login o /dashboard segun el caso, ahora
+  // con la verificacion de sesion vigente incluida.
+  const sesion = await requireAdminOrRedirect();
 
-  const metricas = await obtenerMetricasAgregadas(session.user.empresaId);
+  const metricas = await obtenerMetricasAgregadas(sesion.empresaId);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-12">

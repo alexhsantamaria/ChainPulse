@@ -1,18 +1,18 @@
 // Pagina — lista los ciclos de pulso, permite abrir/cerrar/responder
 // (RF5-RF7) y muestra el historico de ciclos anteriores con su indice de
 // integracion y la tendencia entre ciclos (RF9).
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireSessionOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import AbrirCicloBoton from "./AbrirCicloBoton";
 import CerrarCicloBoton from "./CerrarCicloBoton";
 
 export default async function CiclosPage() {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireSessionOrRedirect()
+  // reemplaza el auth() + chequeo manual de antes -- misma redireccion a
+  // /login, ahora con la verificacion de sesion vigente incluida.
+  const sesion = await requireSessionOrRedirect();
 
   // RF9 -- el include de resultadoCiclo funciona bajo tenantClient()
   // porque CicloPulso (el modelo de la consulta) esta tenant-scoped: fija
@@ -20,7 +20,7 @@ export default async function CiclosPage() {
   // propia politica RLS que filtra por ese mismo valor via ciclos_pulso
   // (prisma/rls.sql) -- no hace falta una consulta ni un set_config
   // manual aparte, a diferencia de infra/ciclos/resultados.ts.
-  const ciclos = await tenantClient(session.user.empresaId).cicloPulso.findMany({
+  const ciclos = await tenantClient(sesion.empresaId).cicloPulso.findMany({
     orderBy: { abiertoEn: "desc" },
     include: { resultadoCiclo: { select: { indiceIntegracion: true, ruleVersion: true } } },
   });
@@ -57,7 +57,7 @@ export default async function CiclosPage() {
         </p>
       </div>
 
-      {session.user.rol === "ADMINISTRADOR" && !hayCicloAbierto && <AbrirCicloBoton />}
+      {sesion.rol === "ADMINISTRADOR" && !hayCicloAbierto && <AbrirCicloBoton />}
 
       {tendenciaIndice.length > 1 && (
         <div className="rounded border border-slate-200 p-4">
@@ -87,7 +87,7 @@ export default async function CiclosPage() {
                 </p>
               </div>
               <span className="flex items-center gap-3">
-                {ciclo.estado === "ABIERTO" && session.user.rol === "RESPONSABLE" && session.user.eslabonId && (
+                {ciclo.estado === "ABIERTO" && sesion.rol === "RESPONSABLE" && sesion.eslabonId && (
                   <Link
                     href={`/dashboard/ciclos/${ciclo.id}/responder`}
                     className="text-xs text-slate-500 underline hover:text-slate-700"
@@ -95,7 +95,7 @@ export default async function CiclosPage() {
                     Responder cuestionario
                   </Link>
                 )}
-                {ciclo.estado === "ABIERTO" && session.user.rol === "ADMINISTRADOR" && (
+                {ciclo.estado === "ABIERTO" && sesion.rol === "ADMINISTRADOR" && (
                   <CerrarCicloBoton cicloId={ciclo.id} />
                 )}
                 {ciclo.estado === "CERRADO" && (

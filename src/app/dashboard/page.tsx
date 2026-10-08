@@ -4,19 +4,19 @@
 // conexiones) -- los cuatro valores por conexion, el eslabon mas debil y
 // el indice de integracion (RF9 completo) llegan cuando exista al menos
 // un ciclo de pulso cerrado (RF5-RF7, proximo paso segun README).
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireSessionOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import CerrarSesionBoton from "./CerrarSesionBoton";
 
 export default async function DashboardPage() {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireSessionOrRedirect()
+  // reemplaza el auth() + chequeo manual de antes -- misma redireccion a
+  // /login, ahora con la verificacion de sesion vigente incluida.
+  const sesion = await requireSessionOrRedirect();
 
-  const client = tenantClient(session.user.empresaId);
+  const client = tenantClient(sesion.empresaId);
   const [eslabones, conexiones] = await Promise.all([
     client.eslabon.findMany(),
     client.conexion.findMany(),
@@ -28,8 +28,8 @@ export default async function DashboardPage() {
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 px-4 py-12">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Panel de {session.user.name}</h1>
-          <p className="text-sm text-slate-500">{session.user.email}</p>
+          <h1 className="text-2xl font-semibold">Panel de {sesion.nombre}</h1>
+          <p className="text-sm text-slate-500">{sesion.email}</p>
         </div>
         <CerrarSesionBoton />
       </div>
@@ -72,7 +72,7 @@ export default async function DashboardPage() {
             Declarar una cadena y ver su mapa de nodos y conexiones →
           </p>
         </Link>
-        {session.user.rol === "ADMINISTRADOR" && (
+        {sesion.rol === "ADMINISTRADOR" && (
           <Link
             href="/dashboard/metricas"
             className="rounded border border-slate-200 p-4 hover:border-slate-400 sm:col-span-2"
@@ -83,7 +83,7 @@ export default async function DashboardPage() {
             </p>
           </Link>
         )}
-        {session.user.rol === "ADMINISTRADOR" && (
+        {sesion.rol === "ADMINISTRADOR" && (
           <Link
             href="/dashboard/kpis/cobertura"
             className="rounded border border-slate-200 p-4 hover:border-slate-400 sm:col-span-2"

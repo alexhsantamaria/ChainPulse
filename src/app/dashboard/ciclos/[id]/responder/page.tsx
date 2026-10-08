@@ -1,22 +1,25 @@
 // Pagina — un responsable completa el cuestionario del ciclo abierto (RF6).
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { requireSessionOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import { obtenerAsignacionesResponsable } from "@/infra/ciclos/registrarRespuestas";
 import ResponderCuestionarioForm from "./ResponderCuestionarioForm";
 
 export default async function ResponderCicloPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session?.user?.empresaId) {
-    redirect("/login");
-  }
-  if (session.user.rol !== "RESPONSABLE" || !session.user.eslabonId) {
+  // Mecanismo de revocacion de sesiones (Alex, 2026-10-03,
+  // diagnostico-eliminacion-cuenta-prueba.md Seccion 8): requireSessionOrRedirect()
+  // reemplaza el auth() + chequeo manual de antes -- misma redireccion a
+  // /login, ahora con la verificacion de sesion vigente incluida. El
+  // chequeo de rol/eslabon de abajo es logica propia de esta pagina (RF6),
+  // no cambia.
+  const sesion = await requireSessionOrRedirect();
+  if (sesion.rol !== "RESPONSABLE" || !sesion.eslabonId) {
     redirect("/dashboard/ciclos");
   }
 
   const { id } = await params;
-  const ciclo = await tenantClient(session.user.empresaId).cicloPulso.findUnique({ where: { id } });
+  const ciclo = await tenantClient(sesion.empresaId).cicloPulso.findUnique({ where: { id } });
   if (!ciclo) {
     notFound();
   }
@@ -25,10 +28,10 @@ export default async function ResponderCicloPage({ params }: { params: Promise<{
   }
 
   const asignaciones = await obtenerAsignacionesResponsable({
-    empresaId: session.user.empresaId,
+    empresaId: sesion.empresaId,
     cicloPulsoId: id,
-    eslabonId: session.user.eslabonId,
-    responsableId: session.user.id,
+    eslabonId: sesion.eslabonId,
+    responsableId: sesion.usuarioId,
   });
 
   return (
