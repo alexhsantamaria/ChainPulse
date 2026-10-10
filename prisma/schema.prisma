@@ -1356,6 +1356,20 @@ model ObservacionKpi {
   denominador   Float?
   fuente        String // "manual" | "pegado" | "csv" -- Bloque B define los flujos reales, hoy es solo el rotulo de origen
   estado        EstadoDato @default(DECLARADO)
+  // Version de regla del motor que produjo valor/numerador/denominador
+  // (src/engine/kpis/constantes.ts: RULE_VERSION_KPIS, hoy "kpis-v1") --
+  // obligatoria desde el dia uno, SIN default a nivel de base de datos
+  // (piloto OTIF, Alex 2026-10-09): la verificacion de solo lectura en
+  // produccion contra neondb_owner, con cobertura RLS demostrada
+  // (rolbypassrls=true), confirmo 0 filas existentes en esta tabla -- no
+  // hay ningun dato legado al que haya que reconstruirle una version, asi
+  // que no hace falta backfill ni DEFAULT transitorio (ver migracion
+  // 20261009180000_observacion_kpi_rule_version). Toda escritura nueva
+  // debe declararla explicitamente (confirmarObservacionOtif() siempre la
+  // toma de ResultadoCalculoKpi.ruleVersion, nunca de un valor fijo en el
+  // codigo de aplicacion -- si el motor sube de version, las filas nuevas
+  // lo reflejan solas).
+  ruleVersion   String
 
   createdAt DateTime @default(now())
 
