@@ -87,7 +87,7 @@ const CSV_VALIDO =
 vi.mock("@/infra/storage/cifradoObjeto", () => ({
   obtenerClaveMaestraPorId: vi.fn().mockReturnValue(Buffer.alloc(32)),
   desenvolverDek: vi.fn().mockReturnValue(Buffer.alloc(32)),
-  descifrarContenido: vi.fn().mockReturnValue(Buffer.from(CSV_VALIDO)),
+  descifrarContenido: vi.fn().mockImplementation(() => Buffer.from(CSV_VALIDO)),
 }));
 
 let fixture: FixtureCoberturaIntegracion;
