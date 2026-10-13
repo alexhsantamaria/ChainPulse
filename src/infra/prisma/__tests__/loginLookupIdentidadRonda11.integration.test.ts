@@ -271,6 +271,7 @@ describe("Ronda 11 -- identidad real de login_lookup() y normalizacion del verif
       client = await conectarComoNeondbOwner();
       await client.query('DROP TABLE IF EXISTS public._test_grants_ronda11');
       await client.query('CREATE TABLE public._test_grants_ronda11 (id text PRIMARY KEY)');
+      await client.query('REVOKE ALL PRIVILEGES ON TABLE public._test_grants_ronda11 FROM chainpulse_app');
       await client.query('GRANT SELECT, INSERT ON public._test_grants_ronda11 TO chainpulse_app');
     }, 30000);
 
@@ -328,6 +329,7 @@ describe("Ronda 11 -- identidad real de login_lookup() y normalizacion del verif
       client = await conectarComoNeondbOwner();
       await client.query('DROP TABLE IF EXISTS public._test_grants_ronda11');
       await client.query('CREATE TABLE public._test_grants_ronda11 (id text PRIMARY KEY)');
+      await client.query('REVOKE ALL PRIVILEGES ON TABLE public._test_grants_ronda11 FROM chainpulse_app');
       await client.query('GRANT SELECT, INSERT ON public._test_grants_ronda11 TO chainpulse_app');
     }, 30000);
 
