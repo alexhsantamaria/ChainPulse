@@ -158,7 +158,7 @@ async function crearFixture(nombreEmpresa: string): Promise<Fixture> {
       },
     });
     const cicloPulso = await tx.cicloPulso.create({
-      data: { empresaId, conexionId: conexion.id, estado: "ABIERTO" },
+      data: { empresaId, estado: "ABIERTO" },
     });
     // Esquema real confirmado (prisma/schema.prisma, model ConsentimientoCuenta):
     // usuarioId/finalidad/textoVersion/textoSnapshot son obligatorios
@@ -349,10 +349,9 @@ describe("reconstruccion del entorno vacio -- aislamiento completo (SELECT/INSER
         tx.respuestaCruda.create({
           data: {
             conexionId: tenantA.conexionId,
+            cicloPulsoId: tenantA.cicloPulsoId,
             responsableId: tenantA.adminId,
-            dependenciaPercibida: "ALTA",
-            impactoPercibido: "ALTO",
-            tieneAlternativaPercibida: false,
+            valor: 1,
           },
         }),
       );
