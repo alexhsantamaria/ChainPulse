@@ -2,6 +2,14 @@
 
 Producto SaaS multi-empresa que detecta dónde existe descoordinación entre áreas, procesos, personas y sistemas de una organización, identifica el eslabón más débil del flujo y recomienda qué mejorar primero, con seguimiento de avance en el tiempo.
 
+> **Nota de vigencia (2026-10-14):** la narración histórica de este README describe en detalle el
+> avance hasta el 2026-09-29 y no constituye por sí sola el estado completo actual. El historial de Git
+> y la documentación versionada incluyen trabajo posterior, entre otros: endurecimiento de RLS, MFA y
+> revocación de sesiones (ver `docs/engineering/LESSONS_LEARNED_SESSION_RLS_MFA.md`), el piloto OTIF en
+> producción, y documentación operativa de pg-boss (ver
+> `docs/engineering/DEUDA_TECNICA_JOBS_PGBOSS_HUERFANOS.md`). Antes de planificar trabajo nuevo, debe
+> contrastarse este resumen con el código, los ADR y el historial vigente del repositorio.
+
 ## Estado
 
 Fase 4 del prompt maestro de Bigdevelopment — en construcción. **Alcance de aquí en adelante definido por [`MVP-DEFINITIVO.md`](./MVP-DEFINITIVO.md)** (v1.3): reconcilia la especificación V2 con lo ya construido, sin tocar el Incremento 1. Hoja de ruta completa **aprobada por Alex — Incrementos 2 a 7, incluyendo Market Signals** (aprobado el 2026-09-15). Las dos decisiones que solo Alex podía tomar (países iniciales, catálogo de KPIs) ya están confirmadas. Se completó además una revisión de viabilidad técnica en cuatro rondas — Ronda 1 (arquitectura, herramientas, seguridad, DDD + auditoría), Ronda 2 (las mismas 4 dimensiones más un quinto agente de implementación/developer, cada una con su plan de trabajo detallado por incremento), Ronda 3 (Calidad 1/QA, Calidad 2/código, Finanzas/costos + auditoría de consolidación) y Ronda 4 (cierre de brechas: con las decisiones de Alex del 2026-09-16 ya fijas, se resolvieron con diseños concretos casi todos los ítems abiertos, y se aplicó al repo CI, pre-commit hook, `docs/PATRONES.md` y cobertura de tests) — veredicto: viable con condiciones, ninguna cambia el alcance. El plan de tareas concreto hasta terminar el proyecto, con los planes detallados por dimensión y los hallazgos de las 4 rondas, está en [`PLAN-DE-TRABAJO.md`](./PLAN-DE-TRABAJO.md) (v4.0). `requirements.md`, ADR-0001, ADR-0002 y ADR-0003 siguen aprobados y consistentes entre sí (ver Sección 12 de `requirements.md` para la revisión final de viabilidad, GO para Fase 4). Scaffolding completo: proyecto Next.js + TypeScript + Tailwind + Prisma, el modelo de datos completo (`prisma/schema.prisma`), el motor v1 (`src/engine/`, funcion pura, sin Prisma ni Next — ADR-0002) con **34/34 pruebas unitarias pasando** (salud, criticidad, riesgo, RF7 con desempate determinista, RF16, cobertura RF10), el middleware de aislamiento multi-tenant (`src/infra/prisma/tenantClient.ts`) y las políticas RLS (`prisma/rls.sql`).

@@ -4,6 +4,13 @@ Fecha: 2026-09-15
 Estado: **Hoja de ruta completa aprobada por Alex — Incrementos 2 a 7, incluyendo Market Signals (aprobado el 2026-09-15).** Las dos decisiones pendientes de la Sección 13 quedaron confirmadas ese mismo día (países = Perú; KPIs = los 10 del catálogo inicial de V2). Cada pieza de construcción listada abajo queda marcada `[ ]` — sin construir, pendiente de confirmación puntual — hasta que se marque `[x]` al validarla, mismo criterio ya usado en todo el proyecto (nada se construye sin visto bueno explícito). Ver Addendum de la Sección 17: antes de escribir código se está ejecutando una revisión de viabilidad (arquitectura, herramientas, seguridad, DDD) más auditoría final.
 Versión: 1.3
 
+> **Nota de vigencia del checklist (2026-10-14):** el estado visual de las casillas no ha sido
+> reconciliado todavía con todo el código actualmente fusionado. Existen componentes implementados cuya
+> casilla puede continuar sin marcar. Por tanto, `[ ]` no demuestra por sí solo ausencia de
+> implementación, y `[x]` debe reservarse para elementos cuya implementación y validación hayan sido
+> confirmadas expresamente — cualquier reclasificación de una casilla requiere validación expresa del
+> propietario del documento. Ninguna casilla fue modificada al añadir esta nota.
+
 ## 0. Qué es este documento y qué no es
 
 Este es el documento único que define, de aquí en adelante, **qué es el MVP de ChainPulse**: qué ya existe y no se toca, qué se construye a continuación y en qué orden, y **el contenido completo** de la especificación V2 (`CHAINPULSE_ESPECIFICACION_FUNCIONAL_TECNICA_V2.md`, subida por Alex el 2026-09-15), incorporado íntegro a pedido explícito de Alex — no solo un resumen. Es la fuente única de verdad para "qué construir": cuando haya una diferencia de alcance entre este documento y `requirements.md` o los ADR, gana este documento.
