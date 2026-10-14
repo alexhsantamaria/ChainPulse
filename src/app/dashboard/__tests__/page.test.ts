@@ -20,7 +20,11 @@ import { join } from "node:path";
 const RUTA_PANEL = join(__dirname, "../page.tsx");
 
 describe("DashboardPage -- navegabilidad hacia OTIF (piloto)", () => {
-  const codigoFuente = readFileSync(RUTA_PANEL, "utf-8");
+  // Normaliza CRLF/CR a LF antes de comparar: el contenido y la estructura
+  // esperada no cambian, solo se vuelve insensible al estilo de fin de linea
+  // del checkout (Git en Windows puede materializar el archivo con CRLF sin
+  // que exista ninguna regla de normalizacion en el repositorio).
+  const codigoFuente = readFileSync(RUTA_PANEL, "utf-8").replace(/\r\n?/g, "\n");
 
   it("existe un enlace visible hacia /dashboard/kpis/otif desde el panel", () => {
     expect(codigoFuente).toContain('href="/dashboard/kpis/otif"');

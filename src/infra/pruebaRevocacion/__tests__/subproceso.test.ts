@@ -6,6 +6,7 @@
 // package.json estan ambas inyectadas -- ninguna prueba lanza un
 // subproceso real ni toca node_modules.
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { dirname, join } from "node:path";
 
 const logErrorMock = vi.fn();
 vi.mock("../../log", () => ({ logError: (...args: unknown[]) => logErrorMock(...args) }));
@@ -15,12 +16,20 @@ beforeEach(() => {
 });
 
 const OPCIONES = { directorioProyecto: "/proyecto", rutaEsquema: "/proyecto/prisma/schema.prisma" };
-const RUTA_CLI_RESUELTA = "/proyecto/node_modules/prisma/build/index.js";
+// Mismos valores simulados que consume resolverEntradaCliPrisma(): la ruta del
+// package.json resuelto y el "bin" relativo que declara. RUTA_CLI_RESUELTA se
+// construye con join/dirname de node:path -- las mismas funciones que usa la
+// implementacion real -- para que la asercion compare contra lo que esa
+// implementacion realmente produce en cada plataforma (POSIX o Windows), en
+// vez de un literal fijo de una sola plataforma.
+const RUTA_PACKAGE_JSON_SIMULADA = "/proyecto/node_modules/prisma/package.json";
+const BIN_RELATIVO_SIMULADO = "build/index.js";
+const RUTA_CLI_RESUELTA = join(dirname(RUTA_PACKAGE_JSON_SIMULADA), BIN_RELATIVO_SIMULADO);
 
 function depsResolucionOk(rutaCli: string = RUTA_CLI_RESUELTA) {
   return {
-    resolverPackageJson: vi.fn().mockReturnValue("/proyecto/node_modules/prisma/package.json"),
-    leerArchivo: vi.fn().mockReturnValue(JSON.stringify({ bin: { prisma: "build/index.js" } })),
+    resolverPackageJson: vi.fn().mockReturnValue(RUTA_PACKAGE_JSON_SIMULADA),
+    leerArchivo: vi.fn().mockReturnValue(JSON.stringify({ bin: { prisma: BIN_RELATIVO_SIMULADO } })),
   };
 }
 
@@ -36,8 +45,8 @@ describe("resolverEntradaCliPrisma", () => {
   it('tambien acepta "bin" como string plano (algunos paquetes lo declaran asi)', async () => {
     const { resolverEntradaCliPrisma } = await import("../subproceso");
     const deps = {
-      resolverPackageJson: vi.fn().mockReturnValue("/proyecto/node_modules/prisma/package.json"),
-      leerArchivo: vi.fn().mockReturnValue(JSON.stringify({ bin: "build/index.js" })),
+      resolverPackageJson: vi.fn().mockReturnValue(RUTA_PACKAGE_JSON_SIMULADA),
+      leerArchivo: vi.fn().mockReturnValue(JSON.stringify({ bin: BIN_RELATIVO_SIMULADO })),
     };
     const ruta = resolverEntradaCliPrisma("ctx", deps);
     expect(ruta).toBe(RUTA_CLI_RESUELTA);
