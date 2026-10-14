@@ -50,6 +50,10 @@ Se adopta la **Opción A**, con dos ajustes concretos resueltos el 2026-09-16 ba
 
 **Reversibilidad:** alta. Pasar a Vercel Pro (Cron de 1 minuto, `maxDuration` extendido) es un cambio de configuración, no de arquitectura — se revisa este ADR y se sube de plan cuando (a) un job futuro necesite latencia menor a un día que la mitigación fire-and-forget no alcance a cubrir, o (b) el volumen de tráfico lo justifique económicamente, evaluado mes a mes según ya confirmó Alex (H14). Migrar de la Opción A a la Opción B (worker externo persistente) tampoco exige rediseñar los jobs ya escritos: `purgarHuellasOrigen()` y el resto de los handlers son funciones puras sobre un cliente de Prisma/PgBoss pasado por parámetro, desacopladas de cómo se disparan.
 
+## Nota de seguimiento (2026-10-14)
+
+La ausencia de un mecanismo de mantenimiento/expiración ejecutado por ChainPulse bajo `supervise: false` ya produjo un caso real, observado en una rama temporal de verificación (no en producción): dos jobs de la cola `procesar-importacion-csv` quedaron en estado `active` y no volvieron a ser elegibles durante el período observado. Cierre de esa investigación: `docs/engineering/DEUDA_TECNICA_JOBS_PGBOSS_HUERFANOS.md`. Esta nota no reabre ni modifica la decisión de este ADR (Opción A, `supervise: false`) — registra un hallazgo operativo retrospectivo pendiente de su propia decisión de diseño si se corrige el mecanismo de mantenimiento.
+
 ## Estado de aprobación
 
 Aceptado por Alex: elección de `pg-boss` sobre Postgres/Neon el 2026-09-15; Opción A del worker (Vercel Cron + `boss.fetch()` por lotes), en plan Hobby con respaldo de GitHub Actions cada 15 minutos, el 2026-09-16, dentro de la restricción de presupuesto $0/mes evaluada mes a mes. Ya implementado y validado contra Neon real (`PLAN-DE-TRABAJO.md`, Bloque A del Incremento 2, incluyendo despliegue real en Vercel el 2026-09-16); este documento formaliza por escrito una decisión que faltaba como ADR propio (R5-10, Ronda 5).
