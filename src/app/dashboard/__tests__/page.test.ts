@@ -43,3 +43,34 @@ describe("DashboardPage -- navegabilidad hacia OTIF (piloto)", () => {
     );
   });
 });
+
+describe("DashboardPage -- navegabilidad hacia Fill Rate (piloto, Incremento 4 Bloque B, Alex 2026-10-14)", () => {
+  // Mismo patron exacto que el bloque de OTIF arriba -- guardia de
+  // regresion para el mismo defecto de navegabilidad (Preview del commit
+  // dab005f, 2026-10-10), ahora aplicado al siguiente KPI.
+  const codigoFuente = readFileSync(RUTA_PANEL, "utf-8").replace(/\r\n?/g, "\n");
+
+  it("existe un enlace visible hacia /dashboard/kpis/fill-rate desde el panel", () => {
+    expect(codigoFuente).toContain('href="/dashboard/kpis/fill-rate"');
+  });
+
+  it("el enlace tiene una etiqueta clara para declarar Fill Rate", () => {
+    expect(codigoFuente).toContain("Declarar Fill Rate (piloto)");
+  });
+
+  it("el enlace a Fill Rate, igual que el de OTIF y Cobertura, queda reservado a ADMINISTRADOR", () => {
+    // Verbatim: la guardia de rol envuelve directamente al <Link> de Fill
+    // Rate, igual que ya ocurre con el de OTIF un bloque antes -- no un
+    // enlace sin proteger agregado despues de la guardia.
+    expect(codigoFuente).toContain(
+      '{sesion.rol === "ADMINISTRADOR" && (\n          <Link\n            href="/dashboard/kpis/fill-rate"',
+    );
+  });
+
+  it("el enlace a Fill Rate aparece DESPUES del bloque de OTIF (orden de incrementos, nunca antes)", () => {
+    const indiceOtif = codigoFuente.indexOf('href="/dashboard/kpis/otif"');
+    const indiceFillRate = codigoFuente.indexOf('href="/dashboard/kpis/fill-rate"');
+    expect(indiceOtif).toBeGreaterThan(-1);
+    expect(indiceFillRate).toBeGreaterThan(indiceOtif);
+  });
+});

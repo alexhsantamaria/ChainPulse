@@ -105,6 +105,17 @@ export default async function DashboardPage() {
             </p>
           </Link>
         )}
+        {sesion.rol === "ADMINISTRADOR" && (
+          <Link
+            href="/dashboard/kpis/fill-rate"
+            className="rounded border border-slate-200 p-4 hover:border-slate-400 sm:col-span-2"
+          >
+            <p className="text-sm text-slate-500">Declarar Fill Rate (piloto)</p>
+            <p className="mt-2 text-sm text-slate-600">
+              Declarar observaciones de Fill Rate (manual o pegado) y ver el historial declarado →
+            </p>
+          </Link>
+        )}
       </div>
 
       {eslabones.length === 0 && (

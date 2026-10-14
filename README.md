@@ -6,7 +6,8 @@ Producto SaaS multi-empresa que detecta dónde existe descoordinación entre ár
 > avance hasta el 2026-09-29 y no constituye por sí sola el estado completo actual. El historial de Git
 > y la documentación versionada incluyen trabajo posterior, entre otros: endurecimiento de RLS, MFA y
 > revocación de sesiones (ver `docs/engineering/LESSONS_LEARNED_SESSION_RLS_MFA.md`), el piloto OTIF en
-> producción, y documentación operativa de pg-boss (ver
+> producción, el flujo de declaración de Fill Rate (captura manual o pegado, cálculo server-side y
+> aislamiento multi-tenant), y documentación operativa de pg-boss (ver
 > `docs/engineering/DEUDA_TECNICA_JOBS_PGBOSS_HUERFANOS.md`). Antes de planificar trabajo nuevo, debe
 > contrastarse este resumen con el código, los ADR y el historial vigente del repositorio.
 
