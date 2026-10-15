@@ -72,6 +72,15 @@ export default async function DashboardPage() {
             Declarar una cadena y ver su mapa de nodos y conexiones →
           </p>
         </Link>
+        <Link
+          href="/dashboard/consultas"
+          className="rounded border border-slate-200 p-4 hover:border-slate-400 sm:col-span-2"
+        >
+          <p className="text-sm text-slate-500">Consultas</p>
+          <p className="mt-2 text-sm text-slate-600">
+            Elegí una de las 6 preguntas del catálogo y obtené una respuesta determinista sobre tus datos →
+          </p>
+        </Link>
         {sesion.rol === "ADMINISTRADOR" && (
           <Link
             href="/dashboard/metricas"
