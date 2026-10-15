@@ -78,6 +78,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   "ObservacionKpi",
   "ObservacionCobertura",
   "ImportacionCsv",
+  "ConsultaLog",
 ]);
 
 export function uncapitalize(model: string): string {
