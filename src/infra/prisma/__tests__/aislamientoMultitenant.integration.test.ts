@@ -3,7 +3,9 @@
 // realista (shape de las dos empresas piloto: usuario administrador,
 // eslabones, una conexion completa, un ciclo cerrado con respuesta y
 // resultados, y — desde el Incremento 3 — una Cadena con sus Nodos,
-// ConexionCadena/Flujos y un HallazgoCadena). Verifica las DOS capas
+// ConexionCadena/Flujos y un HallazgoCadena; desde Incremento 5 (I5-28),
+// tambien un ConsultaLog del catalogo cerrado de consultas
+// deterministicas). Verifica las DOS capas
 // independientes que exige ADR-0001 ("cinturon y tirantes"):
 //   1. tenantClient() (src/infra/prisma/tenantClient.ts) -- filtro de
 //      tenant a nivel de aplicacion.
@@ -29,6 +31,7 @@ import { tenantClient } from "../tenantClient";
 import { hashPassword } from "@/infra/auth/password";
 import { RULE_VERSION } from "@/engine/constantes";
 import { crearCadenaCompleta } from "../../mapa/crearCadenaCompleta";
+import { RULE_VERSION_CONSULTAS } from "@/infra/queries/catalogo";
 
 // Neon "duerme" la base cuando esta inactiva un rato -- la primera
 // conexion de la corrida puede tardar bastante mas que el default de
@@ -50,6 +53,8 @@ interface TenantFixture {
   nodoDestinoId: string;
   conexionCadenaId: string;
   hallazgoCadenaId: string;
+  // Incremento 5 (I5-28) -- ver crearFixtureConsultaLog() abajo.
+  consultaLogId: string;
 }
 
 async function crearFixtureTenant(nombreEmpresa: string): Promise<TenantFixture> {
@@ -140,8 +145,36 @@ async function crearFixtureTenant(nombreEmpresa: string): Promise<TenantFixture>
   }, TX_OPTIONS);
 
   const mapa = await crearFixtureMapa(empresaId);
+  const consultaLogId = await crearFixtureConsultaLog(empresaId, base.adminId, mapa.cadenaId);
 
-  return { ...base, ...mapa };
+  return { ...base, ...mapa, consultaLogId };
+}
+
+// Incremento 5 (I5-28) -- un registro de auditoria de consulta (misma
+// tabla que registrarConsulta() escribe en produccion, ver
+// src/infra/queries/registrarConsulta.ts), creado a mano aca con los
+// mismos campos que un resultado real de DEPENDENCIA_CRITICA (sin
+// periodo, resultadoOk=true, sin numerador/denominador -- esa pregunta
+// no tiene magnitud numerica, ver engine/queries/dependenciaCritica.ts).
+async function crearFixtureConsultaLog(empresaId: string, usuarioId: string, cadenaId: string): Promise<string> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+  const consultaLog = await bajoTenant(empresaId, (tx: any) =>
+    tx.consultaLog.create({
+      data: {
+        empresaId,
+        usuarioId,
+        cadenaId,
+        catalogoId: "DEPENDENCIA_CRITICA",
+        periodoInicio: null,
+        periodoFin: null,
+        resultadoOk: true,
+        numerador: null,
+        denominador: null,
+        ruleVersion: RULE_VERSION_CONSULTAS,
+      },
+    }),
+  );
+  return consultaLog.id as string;
 }
 
 // Incremento 3 (Mapa y profundidad) -- poblado en una transaccion aparte
@@ -218,6 +251,11 @@ async function borrarFixtureTenant(empresaId: string): Promise<void> {
     // cascadea). Se borran a mano primero para no depender del orden en
     // que Postgres resuelve los dos caminos de cascade. RLS ya acota este
     // delete al tenant activo, sin necesidad de un where explicito.
+    // consultas_log (Incremento 5, I5-28) NO necesita borrado manual aca:
+    // sus 3 FK (empresaId/usuarioId/cadenaId) son las 3 ON DELETE CASCADE
+    // (ver migration.sql de 20261015060000) -- cascadea solo con borrar
+    // Empresa, sin el problema de RESTRICT que si tienen las dos tablas
+    // de abajo.
     await tx.respuestaCruda.deleteMany({});
     // Mismo hallazgo, misma causa, tabla nueva del Incremento 3:
     // conexiones_cadena -> nodos es ON DELETE RESTRICT (migracion
@@ -343,6 +381,15 @@ describe("RNF1 — aislamiento multi-tenant (integración contra Neon real)", ()
       expect(ids).toContain(tenantA.hallazgoCadenaId);
       expect(ids).not.toContain(tenantB.hallazgoCadenaId);
     });
+
+    it("findMany de ConsultaLog bajo el tenant A nunca incluye un registro del tenant B (I5-28)", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const consultas = await (tenantClient(tenantA.empresaId) as any).consultaLog.findMany();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const ids = consultas.map((cl: any) => cl.id as string);
+      expect(ids).toContain(tenantA.consultaLogId);
+      expect(ids).not.toContain(tenantB.consultaLogId);
+    });
   });
 
   describe("capa 2 — RLS bloquea aunque el código de aplicación se olvide del filtro", () => {
@@ -423,6 +470,14 @@ describe("RNF1 — aislamiento multi-tenant (integración contra Neon real)", ()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
       const eslabones = await sinTenantFijado((tx: any) => tx.eslabon.findMany());
       expect(eslabones).toHaveLength(0);
+    });
+
+    it("pedir explícitamente el id de un ConsultaLog de otro tenant devuelve null bajo RLS (I5-28)", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
+      const consultaLog = await bajoTenant(tenantA.empresaId, (tx: any) =>
+        tx.consultaLog.findUnique({ where: { id: tenantB.consultaLogId } }),
+      );
+      expect(consultaLog).toBeNull();
     });
   });
 });
