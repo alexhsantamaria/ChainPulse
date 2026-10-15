@@ -40,6 +40,9 @@ export type DimensionDiagnosticoV2 =
 
 export type EstadoEvidenciaV2 = "DECLARADO" | "CONFIRMADO_POR_OTROS" | "VERIFICADO_CON_DATOS";
 
+// I2-34: Macro omite deliberadamente sourceQuestionIds/ruleVersion -- es
+// minimizacion previa al desbloqueo/consentimiento (RF23), no una brecha.
+// Debe seguir siendo un subconjunto literal de Detalle, nunca datos distintos.
 export interface HallazgoMacro {
   dimension: DimensionDiagnosticoV2;
   status: string;
@@ -51,6 +54,8 @@ export interface HallazgoDetalle extends HallazgoMacro {
   confidenceCoverage: number;
   missingEvidence: string[];
   nextCheck: string | null;
+  sourceQuestionIds: string[];
+  ruleVersion: string;
 }
 
 export interface DatosDesbloqueo {

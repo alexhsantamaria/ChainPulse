@@ -3,6 +3,8 @@
 // mas campos solo si detalleDesbloqueado=true (ver .../unlock/route.ts).
 import { NextResponse } from "next/server";
 import { prisma } from "@/infra/prisma/client";
+import * as Sentry from "@sentry/nextjs";
+import { logError } from "@/infra/log";
 import { obtenerIndiceOpcionQ1 } from "@/infra/public/obtenerIndiceQ1";
 import { ordenarHallazgosPersistidos } from "@/infra/public/ordenarHallazgosPersistidos";
 import { formatearHallazgoMacro, formatearHallazgoDetalle } from "@/infra/public/formatearHallazgo";
@@ -24,11 +26,23 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const q1IndiceOpcion = await obtenerIndiceOpcionQ1(prisma, id);
   const ordenados = ordenarHallazgosPersistidos(evaluacion.hallazgos, q1IndiceOpcion);
 
-  return NextResponse.json({
-    ok: true,
-    detalleDesbloqueado: evaluacion.detalleDesbloqueado,
-    hallazgos: evaluacion.detalleDesbloqueado
-      ? ordenados.map(formatearHallazgoDetalle)
-      : ordenados.map(formatearHallazgoMacro),
-  });
+  // I2-34: formatearHallazgoDetalle puede lanzar TrazabilidadHallazgoInvalidaError
+  // si la trazabilidad persistida esta ausente o corrupta (ver
+  // formatearHallazgo.ts). Ese fallo se convierte aqui en la respuesta
+  // controlada estandar del proyecto -- nunca en una promesa rechazada ni
+  // en una respuesta parcial. Macro nunca lanza (no lee esos campos), asi
+  // que este try/catch no cambia su comportamiento.
+  try {
+    return NextResponse.json({
+      ok: true,
+      detalleDesbloqueado: evaluacion.detalleDesbloqueado,
+      hallazgos: evaluacion.detalleDesbloqueado
+        ? ordenados.map(formatearHallazgoDetalle)
+        : ordenados.map(formatearHallazgoMacro),
+    });
+  } catch (err) {
+    Sentry.captureException(err);
+    logError("api/public/evaluations/[id]/result GET", err);
+    return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
+  }
 }
