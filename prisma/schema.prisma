@@ -280,6 +280,7 @@ model Empresa {
   observacionesKpi ObservacionKpi[]
   observacionesCobertura ObservacionCobertura[]
   importacionesCsv       ImportacionCsv[]
+  consultasLog ConsultaLog[]
 
   @@map("empresas")
 }
@@ -334,6 +335,7 @@ model Usuario {
   recomendacionesEjecutadas  RecomendacionEjecutada[]
   consentimientosCuenta      ConsentimientoCuenta[]
   importacionesCsvConfirmadas ImportacionCsv[]
+  consultasLog ConsultaLog[]
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -1018,6 +1020,7 @@ model Cadena {
   observacionesKpi ObservacionKpi[]
   observacionesCobertura ObservacionCobertura[]
   importacionesCsv       ImportacionCsv[]
+  consultasLog ConsultaLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1657,4 +1660,44 @@ model ObservacionCobertura {
   // depender de adivinar el truncamiento de Prisma.
   @@index([cadenaId, sku, ubicacion, fechaCorte, fuente, vigente], map: "idx_observaciones_cobertura_vigente_lookup")
   @@map("observaciones_cobertura")
+}
+
+// Incremento 5 -- Consultas deterministicas mediante catalogo cerrado
+// (I5-13, "Registro auditable de cada consulta"). Autorizado por Alex
+// (Seccion 8 de la autorizacion): SOLO se crea el archivo de migracion,
+// SIN ejecutarla contra ninguna base (sin prisma migrate dev/deploy, sin
+// Neon). Mismo patron append-only que ConsentimientoCuenta: solo
+// `createdAt`, nunca `updatedAt` -- una fila de auditoria nunca se edita.
+// Guarda UNICAMENTE lo necesario (Seccion 8): nunca texto libre (este
+// producto no lo usa -- catalogo cerrado, I5-07 permanece NI), nunca el
+// cuerpo completo de la respuesta (solo una referencia/resumen seguro).
+model ConsultaLog {
+  id        String  @id @default(cuid())
+  empresaId String
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  usuarioId String
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  cadenaId  String
+  cadena    Cadena  @relation(fields: [cadenaId], references: [id], onDelete: Cascade)
+
+  catalogoId      String // uno de CatalogoConsultaId (src/domain/queries/tipos.ts) -- nunca SQL ni texto libre
+  periodoInicio   DateTime?
+  periodoFin      DateTime?
+  // Resultado minimizado: nunca el cuerpo completo de RespuestaConsulta
+  // (podria incluir strings descriptivos largos) -- solo si hubo datos
+  // suficientes y, si los hubo, los campos numericos crudos (nunca el
+  // texto de hecho/interpretacion/accion, que se puede re-derivar
+  // ejecutando la misma consulta con el mismo ruleVersion, I5-26).
+  resultadoOk     Boolean
+  numerador       Float?
+  denominador     Float?
+  ruleVersion     String
+
+  createdAt DateTime @default(now())
+
+  @@index([empresaId])
+  @@index([cadenaId])
+  @@index([usuarioId])
+  @@index([catalogoId])
+  @@map("consultas_log")
 }
