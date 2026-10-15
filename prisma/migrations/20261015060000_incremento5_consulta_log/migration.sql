@@ -8,6 +8,17 @@
 -- aplicarse. CREATE TABLE puro: ninguna migracion de datos, no existen
 -- filas previas.
 
+-- Correccion (auditoria previa al merge, sin ejecutar nada): todo el
+-- DDL de este archivo se envuelve explicitamente en BEGIN/COMMIT.
+-- Prisma 6 + PostgreSQL no garantiza automaticamente que
+-- `prisma migrate deploy` aplique este archivo dentro de una unica
+-- transaccion implicita salvo que el propio archivo la declare; este
+-- archivo no contiene sentencias no transaccionales (no hay
+-- CREATE INDEX CONCURRENTLY ni similares), por lo que envolverlo es
+-- seguro y atomico: todo se aplica o nada se aplica.
+
+BEGIN;
+
 -- CreateTable
 CREATE TABLE "consultas_log" (
     "id" TEXT NOT NULL,
@@ -34,6 +45,21 @@ ALTER TABLE "consultas_log" ADD CONSTRAINT "consultas_log_usuarioId_fkey" FOREIG
 
 -- AddForeignKey
 ALTER TABLE "consultas_log" ADD CONSTRAINT "consultas_log_cadenaId_fkey" FOREIGN KEY ("cadenaId") REFERENCES "cadenas"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- NOTA (auditoria previa al merge): las 3 FK anteriores usan
+-- ON DELETE CASCADE. Esto significa que "consultas_log" NO es
+-- append-only en sentido absoluto: si se borra la empresa, el
+-- usuario o la cadena referenciada, las filas de auditoria
+-- correspondientes se eliminan en cascada junto con ellas, en lugar
+-- de preservarse indefinidamente. Esta es la misma convencion ya
+-- usada en las demas FK de este archivo y es coherente con que hoy
+-- no existe ningun flujo de borrado fisico de empresas/usuarios/
+-- cadenas en el codigo de la aplicacion -- pero si ese borrado se
+-- implementara en el futuro, el historial de auditoria de las
+-- consultas de esa empresa/usuario/cadena desaparecera con ella.
+-- Mantener CASCADE (en vez de, por ejemplo, SET NULL o RESTRICT) es
+-- una decision que Alex debe confirmar o cambiar explicitamente; no
+-- se modifica en esta correccion sin esa justificacion explicita.
 
 -- CreateIndex
 CREATE INDEX "consultas_log_empresaId_idx" ON "consultas_log"("empresaId");
@@ -67,3 +93,5 @@ CREATE POLICY tenant_isolation_consultas_log ON "consultas_log"
 -- primera es que el codigo de aplicacion (registrarConsulta.ts) nunca
 -- expone un update/delete sobre este modelo.
 GRANT SELECT, INSERT ON "consultas_log" TO chainpulse_app;
+
+COMMIT;
