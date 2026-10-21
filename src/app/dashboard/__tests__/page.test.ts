@@ -74,3 +74,34 @@ describe("DashboardPage -- navegabilidad hacia Fill Rate (piloto, Incremento 4 B
     expect(indiceFillRate).toBeGreaterThan(indiceOtif);
   });
 });
+
+
+describe("DashboardPage -- navegabilidad hacia Consultas (Incremento 5, catálogo cerrado)", () => {
+  // Mismo patron de guardia de regresion que los bloques de arriba, con
+  // una diferencia deliberada: Consultas NO esta reservado a
+  // ADMINISTRADOR (catalogo.ts: "disponible para ADMINISTRADOR y
+  // RESPONSABLE" -- una consulta es de solo lectura, sin el riesgo de
+  // corromper datos que tiene declarar un KPI).
+  const codigoFuente = readFileSync(RUTA_PANEL, "utf-8").replace(/\r\n?/g, "\n");
+
+  it("existe un enlace visible hacia /dashboard/consultas desde el panel", () => {
+    expect(codigoFuente).toContain('href="/dashboard/consultas"');
+  });
+
+  it("el enlace tiene una etiqueta clara (Consultas)", () => {
+    expect(codigoFuente).toContain("Consultas");
+  });
+
+  it("el enlace a Consultas NO esta envuelto en la guardia de ADMINISTRADOR (disponible para ambos roles)", () => {
+    const indiceEnlace = codigoFuente.indexOf('href="/dashboard/consultas"');
+    expect(indiceEnlace).toBeGreaterThan(-1);
+    // Busca hacia atras, desde el enlace, el ultimo "{sesion.rol ===" que
+    // lo precede y el ultimo "</Link>" que cierra un bloque anterior --
+    // si el cierre de Link queda MAS CERCA que la guardia de rol, el
+    // enlace no esta anidado dentro de ella.
+    const textoAntes = codigoFuente.slice(0, indiceEnlace);
+    const ultimaGuardiaRol = textoAntes.lastIndexOf('{sesion.rol === "ADMINISTRADOR" && (');
+    const ultimoCierreLink = textoAntes.lastIndexOf("</Link>");
+    expect(ultimoCierreLink).toBeGreaterThan(ultimaGuardiaRol);
+  });
+});
