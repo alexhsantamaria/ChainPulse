@@ -55,6 +55,7 @@ import {
   resumenUrl,
   verificarDestinoEfectivo,
   verificarRolConexion,
+  verificarRolConexionAdministrativa,
   type ClienteSoloLecturaRol,
   type FilaMigracion,
 } from "../pruebaRevocacion/destinoPrueba";
@@ -133,7 +134,7 @@ export async function orquestarValidacionRamaTemporalRf24(
   try {
     const rolApp = await verificarRolConexion(prismaApp as ClienteSoloLecturaRol, `${contexto}:app`, ROL_APP_ESPERADO);
     verificarDestinoEfectivo(rolApp, destinoApp, `${contexto}:app`);
-    const rolAdmin = await verificarRolConexion(prismaAdmin as ClienteSoloLecturaRol, `${contexto}:admin`, ROL_ADMIN_ESPERADO);
+    const rolAdmin = await verificarRolConexionAdministrativa(prismaAdmin as ClienteSoloLecturaRol, `${contexto}:admin`, ROL_ADMIN_ESPERADO);
     verificarDestinoEfectivo(rolAdmin, destinoAdmin, `${contexto}:admin`);
 
     let filas: FilaMigracion[];

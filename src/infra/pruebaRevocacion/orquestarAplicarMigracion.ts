@@ -17,6 +17,7 @@ import {
   resumenUrl,
   verificarDestinoEfectivo,
   verificarRolConexion,
+  verificarRolConexionAdministrativa,
   type ClienteSoloLecturaRol,
   type FilaMigracion,
 } from "./destinoPrueba";
@@ -81,7 +82,7 @@ export async function orquestarAplicarMigracion(
   try {
     const rolApp = await verificarRolConexion(prismaApp, "aplicar-migracion:app", ROL_APP_ESPERADO);
     verificarDestinoEfectivo(rolApp, destinoApp, "aplicar-migracion:app");
-    const rolAdmin = await verificarRolConexion(prismaAdmin, "aplicar-migracion:admin", ROL_ADMIN_ESPERADO);
+    const rolAdmin = await verificarRolConexionAdministrativa(prismaAdmin, "aplicar-migracion:admin", ROL_ADMIN_ESPERADO);
     verificarDestinoEfectivo(rolAdmin, destinoAdmin, "aplicar-migracion:admin");
 
     let filas: FilaMigracion[];

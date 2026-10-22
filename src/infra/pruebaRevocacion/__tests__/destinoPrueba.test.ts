@@ -184,6 +184,53 @@ describe("verificarRolConexion", () => {
   });
 });
 
+describe("verificarRolConexionAdministrativa", () => {
+  function clienteMock(filaRol: unknown[], filaAtributos: unknown[]) {
+    const queryRaw = vi
+      .fn()
+      .mockResolvedValueOnce(filaRol)
+      .mockResolvedValueOnce(filaAtributos);
+    return { $queryRaw: queryRaw };
+  }
+
+  it("neondb_owner con BYPASSRLS=true -- ACEPTADO (atributo administrativo esperado de Neon, nunca se pide degradarlo)", async () => {
+    const { verificarRolConexionAdministrativa } = await import("../destinoPrueba");
+    const cliente = clienteMock(
+      [{ usuario_actual: "neondb_owner", base_actual: "chainpulse_prueba", esquema_actual: "public" }],
+      [{ rolbypassrls: true, rolsuper: false }],
+    );
+    const veredicto = await verificarRolConexionAdministrativa(cliente, "ctx", "neondb_owner");
+    expect(veredicto).toEqual({
+      usuarioActual: "neondb_owner",
+      baseActual: "chainpulse_prueba",
+      esquemaActual: "public",
+      bypassrls: true,
+      superuser: false,
+    });
+  });
+
+  it("neondb_owner con SUPERUSER=true -- tambien ACEPTADO", async () => {
+    const { verificarRolConexionAdministrativa } = await import("../destinoPrueba");
+    const cliente = clienteMock(
+      [{ usuario_actual: "neondb_owner", base_actual: "chainpulse_prueba", esquema_actual: "public" }],
+      [{ rolbypassrls: false, rolsuper: true }],
+    );
+    const veredicto = await verificarRolConexionAdministrativa(cliente, "ctx", "neondb_owner");
+    expect(veredicto.superuser).toBe(true);
+  });
+
+  it("rol distinto del esperado -- ROL_INESPERADO (sigue rechazado, igual que la politica de aplicacion)", async () => {
+    const { verificarRolConexionAdministrativa } = await import("../destinoPrueba");
+    const cliente = clienteMock(
+      [{ usuario_actual: "otro_rol", base_actual: "chainpulse_prueba", esquema_actual: "public" }],
+      [{ rolbypassrls: true, rolsuper: false }],
+    );
+    await expect(verificarRolConexionAdministrativa(cliente, "ctx", "neondb_owner")).rejects.toThrow(
+      "ROL_INESPERADO",
+    );
+  });
+});
+
 describe("verificarDestinoEfectivo", () => {
   const veredictoOk = {
     usuarioActual: "chainpulse_app",

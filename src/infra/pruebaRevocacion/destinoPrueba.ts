@@ -114,17 +114,17 @@ export interface VerdictoRol {
 }
 
 /**
- * Verifica el rol EFECTIVO de una conexion ya abierta y aborta (lanza)
- * si: el rol no es exactamente el esperado, o el rol tiene BYPASSRLS o
- * es superusuario (atributos incompatibles con que las politicas RLS se
- * esten aplicando de verdad). Nunca reenvia un error real de Postgres --
+ * Consulta compartida (rol efectivo + atributos) usada por las dos
+ * politicas de abajo. Nunca reenvia un error real de Postgres --
  * cualquier fallo de consulta cae a un codigo fijo.
  */
-export async function verificarRolConexion(
+async function consultarRolYAtributos(
   cliente: ClienteSoloLecturaRol,
   contexto: string,
-  rolEsperado: string,
-): Promise<VerdictoRol> {
+): Promise<{
+  rol: { usuario_actual: string; base_actual: string; esquema_actual: string };
+  atributos: { rolbypassrls: boolean; rolsuper: boolean };
+}> {
   let filaRol: Array<{ usuario_actual: string; base_actual: string; esquema_actual: string }>;
   let filaAtributos: Array<{ rolbypassrls: boolean; rolsuper: boolean }>;
   try {
@@ -145,6 +145,24 @@ export async function verificarRolConexion(
     logError(contexto, "RESPUESTA_VACIA_VERIFICACION_ROL");
     throw new Error("RESPUESTA_VACIA_VERIFICACION_ROL");
   }
+  return { rol, atributos };
+}
+
+/**
+ * Politica de APLICACION (chainpulse_app) -- EXACTAMENTE la misma de
+ * siempre, sin debilitar en absoluto: aborta (lanza) si el rol no es
+ * exactamente el esperado, o si el rol tiene BYPASSRLS o es superusuario
+ * (atributos incompatibles con que las politicas RLS se esten aplicando
+ * de verdad para ese rol). Nunca usar esta funcion para el rol
+ * administrativo real de Neon (neondb_owner) -- para eso existe
+ * verificarRolConexionAdministrativa() mas abajo.
+ */
+export async function verificarRolConexion(
+  cliente: ClienteSoloLecturaRol,
+  contexto: string,
+  rolEsperado: string,
+): Promise<VerdictoRol> {
+  const { rol, atributos } = await consultarRolYAtributos(cliente, contexto);
 
   if (rol.usuario_actual !== rolEsperado) {
     logError(contexto, "ROL_INESPERADO");
@@ -153,6 +171,41 @@ export async function verificarRolConexion(
   if (atributos.rolbypassrls || atributos.rolsuper) {
     logError(contexto, "ROL_CON_ATRIBUTOS_INCOMPATIBLES");
     throw new Error("ROL_CON_ATRIBUTOS_INCOMPATIBLES");
+  }
+
+  return {
+    usuarioActual: rol.usuario_actual,
+    baseActual: rol.base_actual,
+    esquemaActual: rol.esquema_actual,
+    bypassrls: atributos.rolbypassrls,
+    superuser: atributos.rolsuper,
+  };
+}
+
+/**
+ * Politica ADMINISTRATIVA -- para el rol real de administracion de Neon
+ * (neondb_owner), NUNCA para chainpulse_app. Corrige el bug real
+ * reportado en ejecucion: verificarRolConexion() rechazaba
+ * incondicionalmente rolbypassrls/rolsuper, politica correcta para
+ * chainpulse_app pero incorrecta para neondb_owner, al que Neon le
+ * asigna esos atributos administrativos por diseno (para poder
+ * administrar todos los datos sin que las politicas RLS se lo
+ * impidan). Esta funcion exige el mismo usuario EXACTO que
+ * verificarRolConexion() (sigue rechazando cualquier otro rol), pero
+ * NUNCA pide que se degraden esos atributos administrativos en Neon.
+ * El destino exacto (base/esquema) ya lo exige, por separado,
+ * verificarDestinoEfectivo() -- no se duplica aqui.
+ */
+export async function verificarRolConexionAdministrativa(
+  cliente: ClienteSoloLecturaRol,
+  contexto: string,
+  rolEsperado: string,
+): Promise<VerdictoRol> {
+  const { rol, atributos } = await consultarRolYAtributos(cliente, contexto);
+
+  if (rol.usuario_actual !== rolEsperado) {
+    logError(contexto, "ROL_INESPERADO");
+    throw new Error("ROL_INESPERADO");
   }
 
   return {

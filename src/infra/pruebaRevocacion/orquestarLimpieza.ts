@@ -41,7 +41,7 @@ import {
   exigirEntornoConfirmado,
   resumenUrl,
   verificarDestinoEfectivo,
-  verificarRolConexion,
+  verificarRolConexionAdministrativa,
   type ClienteSoloLecturaRol,
 } from "./destinoPrueba";
 import { construirClientePrueba, desconectarClientePrueba, type ClientePrueba } from "./clientePrueba";
@@ -91,7 +91,7 @@ export async function orquestarLimpieza(
   // El rechazo del destino/rol NUNCA se convierte en el resultado suave
   // de mas abajo (ERROR_TRANSACCION_LIMPIEZA) -- se relanza tal cual.
   try {
-    const rol = await verificarRolConexion(prismaAdmin, "limpiar:rol", ROL_ADMIN_ESPERADO);
+    const rol = await verificarRolConexionAdministrativa(prismaAdmin, "limpiar:rol", ROL_ADMIN_ESPERADO);
     verificarDestinoEfectivo(rol, destino, "limpiar:rol");
   } catch (e) {
     await deps.desconectar(prismaAdmin);

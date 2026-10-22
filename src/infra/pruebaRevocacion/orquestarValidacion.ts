@@ -68,6 +68,7 @@ import {
   resumenUrl,
   verificarDestinoEfectivo,
   verificarRolConexion,
+  verificarRolConexionAdministrativa,
   type ClienteSoloLecturaRol,
 } from "./destinoPrueba";
 import { construirClientePrueba, desconectarClientePrueba, type ClientePrueba } from "./clientePrueba";
@@ -158,7 +159,7 @@ export async function orquestarValidacion(
 
   const prismaAdmin = deps.construirAdmin(deps.seedDatabaseUrl as string);
   try {
-    const rolAdmin = await verificarRolConexion(prismaAdmin, "validar:admin", ROL_ADMIN_ESPERADO);
+    const rolAdmin = await verificarRolConexionAdministrativa(prismaAdmin, "validar:admin", ROL_ADMIN_ESPERADO);
     verificarDestinoEfectivo(rolAdmin, destinoAdmin, "validar:admin");
 
     const clienteTenant = tenantClient(empresaId);

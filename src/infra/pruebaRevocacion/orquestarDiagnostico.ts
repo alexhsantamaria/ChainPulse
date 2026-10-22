@@ -17,6 +17,7 @@ import {
   resumenUrl,
   verificarDestinoEfectivo,
   verificarRolConexion,
+  verificarRolConexionAdministrativa,
   type ClienteSoloLecturaRol,
   type EstadoMigraciones,
   type FilaMigracion,
@@ -82,7 +83,7 @@ export async function orquestarDiagnostico(
   try {
     const rolApp = await verificarRolConexion(prismaApp, "diagnostico:app", ROL_APP_ESPERADO);
     verificarDestinoEfectivo(rolApp, destinoApp, "diagnostico:app");
-    const rolAdmin = await verificarRolConexion(prismaAdmin, "diagnostico:admin", ROL_ADMIN_ESPERADO);
+    const rolAdmin = await verificarRolConexionAdministrativa(prismaAdmin, "diagnostico:admin", ROL_ADMIN_ESPERADO);
     verificarDestinoEfectivo(rolAdmin, destinoAdmin, "diagnostico:admin");
 
     let filas: FilaMigracion[];
