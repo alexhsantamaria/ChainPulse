@@ -82,6 +82,8 @@ enum EstadoDato {
 enum BucketLimiteTasa {
   INICIO_EVALUACION
   DESBLOQUEO_DETALLE
+  SOLICITUD_DERECHOS // RF24 -- ALTER TYPE ADD VALUE aislado en su propia migracion, ver prisma/migrations/20261022080000_rf24_enum_bucket_limite_tasa
+  CONFIRMAR_DERECHOS // RF24 -- idem
 }
 
 // RF3, engine v1 (src/engine/criticidad.ts): nivel categorico del impacto
@@ -336,6 +338,10 @@ model Usuario {
   consentimientosCuenta      ConsentimientoCuenta[]
   importacionesCsvConfirmadas ImportacionCsv[]
   consultasLog ConsultaLog[]
+  // Correccion PR-A (Alex, 2026-10-22, punto 3): lado inverso de
+  // SolicitudDerechos.resueltoPorUsuario -- un administrador puede
+  // resolver cero o varias solicitudes RF24 por el canal SOPORTE.
+  solicitudesDerechosResueltas SolicitudDerechos[]
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -809,11 +815,20 @@ model EvaluacionExpresV2 {
   huellaOrigen          String
   huellaOrigenPurgadaEn DateTime?
 
+  // RF24 -- derechos/retiro (chainpulse/diseno-v5-final-consolidado-paquete-
+  // rf24-derechos-retiro-2026-10-21.md Seccion 10 + addendas de cierre):
+  // una vez poblado, las 4 rutas publicas que dependen solo de este `id`
+  // (result/unlock/answers/complete) rechazan con 410 -- comprobado antes
+  // de cualquier otra logica. Irreversible dentro de este paquete (ninguna
+  // funcion RF24 lo limpia).
+  accesoPublicoRevocadoEn DateTime?
+
   createdAt DateTime @default(now())
 
-  respuestas      Respuesta[]
-  consentimientos ConsentimientoExpres[]
-  hallazgos       HallazgoExpres[]
+  respuestas          Respuesta[]
+  consentimientos     ConsentimientoExpres[]
+  hallazgos           HallazgoExpres[]
+  solicitudesDerechos SolicitudDerechos[]
 
   @@index([huellaOrigen])
   @@index([createdAt])
@@ -1700,4 +1715,110 @@ model ConsultaLog {
   @@index([usuarioId])
   @@index([catalogoId])
   @@map("consultas_log")
+}
+
+
+// =============================================================================
+// RF24 -- Derechos/retiro (consentimiento + eliminacion de contacto)
+// =============================================================================
+// Diseno cerrado, en este orden de autoridad (autorizacion de Alex,
+// 2026-10-22, "Queda cerrado el diseno de RF24..."):
+//   1) chainpulse/diseno-v5-final-consolidado-paquete-rf24-derechos-retiro-2026-10-21.md
+//   2) chainpulse/addenda-cierre-v5-paquete-rf24-derechos-retiro-2026-10-22.md
+//   3) chainpulse/addenda-2-cierre-v5-paquete-rf24-derechos-retiro-2026-10-22.md
+//   4) Las condiciones de reconciliacion y fencing de la autorizacion de PR-A.
+// PR-A unicamente: esquema + migraciones + funciones SQL controladas +
+// pruebas. Sin puntaje atribuido por este PR -- I6-09/S9-11 se acreditan
+// solo con implementacion Y verificacion reales (PR-B en adelante);
+// S9-10 permanece en P.
+
+enum AlcanceRetiro {
+  DIAGNOSTICO
+  INVESTIGACION
+  AMBAS_FINALIDADES
+}
+
+enum TipoSolicitudDerechos {
+  RETIRO_CONSENTIMIENTO
+  ELIMINACION_CONTACTO
+  RETIRO_Y_ELIMINACION
+}
+
+enum EstadoSolicitudDerechos {
+  PENDIENTE
+  PROCESADA
+  EXPIRADA
+  CANCELADA
+}
+
+enum EstadoResolucion {
+  AUTOMATICO
+  SOPORTE
+}
+
+// Modelo de despacho con fencing (autorizacion de PR-A, 2026-10-22):
+// reclamoId es el token de arriendo que distingue al worker vigente de
+// uno vencido/sustituido -- asignar_token_pendiente/confirmar_envio_token/
+// registrar_fallo_envio_solicitud_derechos/cancelar_solicitud_derechos_
+// por_envio_fallido exigen SIEMPRE (solicitudId, reclamoId, arriendo
+// vigente, estado PENDIENTE) juntos (ver migracion de funciones). tokenHash
+// se persiste ANTES de llamar a Resend (nunca despues) -- envioConfirmadoEn,
+// separado, se fija solo tras exito confirmado; tokenKeyVersion fija cual
+// version de la clave HMAC de derivacion se uso, para que un reintento
+// recalcule el MISMO token sin migrar silenciosamente a la version activa.
+model SolicitudDerechos {
+  id                   String                  @id @default(cuid())
+  evaluacionExpresV2Id String
+  evaluacionExpresV2   EvaluacionExpresV2      @relation(fields: [evaluacionExpresV2Id], references: [id], onDelete: Restrict)
+
+  tipo          TipoSolicitudDerechos
+  alcanceRetiro AlcanceRetiro?
+
+  tokenHash                 String?   @unique
+  tokenKeyVersion            Int?
+  huellaOrigenHashSolicitud String?
+
+  // Despacho y fencing.
+  envioConfirmadoEn DateTime?
+  intentosEnvio     Int       @default(0)
+  reclamoId         String?
+  reclamadoHasta    DateTime?
+
+  expiraEn    DateTime
+  consumidoEn DateTime?
+  estado      EstadoSolicitudDerechos @default(PENDIENTE)
+
+  resueltoCanal        EstadoResolucion?
+  resueltoPorUsuarioId String?
+  // Correccion PR-A (Alex, 2026-10-22, punto 3 de la primera ronda,
+  // endurecida en la segunda ronda de correccion): FK nullable real
+  // hacia Usuario -- antes era un String suelto sin relacion declarada.
+  // onDelete: Restrict (antes SetNull en la primera ronda) -- un
+  // administrador que resolvio al menos una SolicitudDerechos por el
+  // canal SOPORTE NO puede borrarse mientras esa fila exista, para
+  // preservar la trazabilidad real de quien la resolvio en vez de
+  // dejarla huerfana (NULL) en silencio. Ver la migracion 2 de este
+  // paquete para el FK real (ON DELETE RESTRICT ON UPDATE CASCADE), el
+  // nuevo indice sobre esta columna, y la constraint de coherencia con
+  // resueltoCanal.
+  resueltoPorUsuario   Usuario?          @relation(fields: [resueltoPorUsuarioId], references: [id], onDelete: Restrict)
+
+  createdAt      DateTime @default(now())
+  actualizadaEn  DateTime @updatedAt
+
+  @@index([evaluacionExpresV2Id, createdAt])
+  @@index([estado, expiraEn])
+  @@index([estado, envioConfirmadoEn], map: "solicitudes_derechos_estado_envioConfirmadoEn_idx")
+  @@index([resueltoPorUsuarioId])
+  @@map("solicitudes_derechos")
+}
+
+// Tabla senuelo (Seccion 8 de v5 -- canal lateral de timing): absorbe el
+// costo de escritura de la rama "no coincide"/"limite alcanzado" sin FK
+// ni dato identificante. Purgada a 7 dias (addenda-cierre-v5, Bloqueador 4).
+model IntentoSolicitudDerechosDescartado {
+  id       String   @id
+  creadoEn DateTime @default(now())
+
+  @@map("intentos_solicitud_derechos_descartados")
 }
