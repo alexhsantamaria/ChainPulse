@@ -267,51 +267,270 @@ describe("evaluarEstadoMigraciones", () => {
   it("todas aplicadas, nada pendiente", async () => {
     const { evaluarEstadoMigraciones } = await import("../destinoPrueba");
     const resultado = evaluarEstadoMigraciones(
-      [{ migration_name: "m1", finished_at: new Date(), rolled_back_at: null }],
+      [
+        {
+          migration_name: "m1",
+          started_at: new Date("2026-01-01T00:00:00Z"),
+          finished_at: new Date("2026-01-01T00:01:00Z"),
+          rolled_back_at: null,
+        },
+      ],
       ["m1"],
     );
-    expect(resultado).toEqual({ aplicadas: ["m1"], pendientes: [], fallidasOInconclusas: [] });
+    expect(resultado).toEqual({
+      aplicadas: ["m1"],
+      reversionesResueltas: [],
+      anomaliasActivas: [],
+      reversionesSinResolucion: [],
+      pendientes: [],
+      fallidasOInconclusas: [],
+    });
   });
 
   it("una pendiente -- ni aplicada ni en la tabla todavia", async () => {
     const { evaluarEstadoMigraciones } = await import("../destinoPrueba");
     const resultado = evaluarEstadoMigraciones(
-      [{ migration_name: "m1", finished_at: new Date(), rolled_back_at: null }],
+      [
+        {
+          migration_name: "m1",
+          started_at: new Date("2026-01-01T00:00:00Z"),
+          finished_at: new Date("2026-01-01T00:01:00Z"),
+          rolled_back_at: null,
+        },
+      ],
       ["m1", "m2_pendiente"],
     );
-    expect(resultado).toEqual({ aplicadas: ["m1"], pendientes: ["m2_pendiente"], fallidasOInconclusas: [] });
+    expect(resultado).toEqual({
+      aplicadas: ["m1"],
+      reversionesResueltas: [],
+      anomaliasActivas: [],
+      reversionesSinResolucion: [],
+      pendientes: ["m2_pendiente"],
+      fallidasOInconclusas: [],
+    });
   });
 
-  it("rolled_back_at distinto de null -- fallida/inconclusa, no pendiente ni aplicada", async () => {
-    const { evaluarEstadoMigraciones } = await import("../destinoPrueba");
-    const resultado = evaluarEstadoMigraciones(
-      [{ migration_name: "m1", finished_at: new Date(), rolled_back_at: new Date() }],
-      ["m1"],
-    );
-    expect(resultado).toEqual({ aplicadas: [], pendientes: [], fallidasOInconclusas: ["m1"] });
-  });
-
-  it("finished_at null (quedo a mitad de aplicar) -- fallida/inconclusa, no pendiente ni aplicada", async () => {
-    const { evaluarEstadoMigraciones } = await import("../destinoPrueba");
-    const resultado = evaluarEstadoMigraciones([{ migration_name: "m1", finished_at: null, rolled_back_at: null }], [
-      "m1",
-    ]);
-    expect(resultado).toEqual({ aplicadas: [], pendientes: [], fallidasOInconclusas: ["m1"] });
-  });
-
-  it("mezcla real -- aplicada, inconclusa y pendiente a la vez", async () => {
+  it("rolled_back_at sin exito posterior del mismo nombre -- reversion SIN resolucion, bloquea", async () => {
     const { evaluarEstadoMigraciones } = await import("../destinoPrueba");
     const resultado = evaluarEstadoMigraciones(
       [
-        { migration_name: "m1_ok", finished_at: new Date(), rolled_back_at: null },
-        { migration_name: "m2_rollback", finished_at: new Date(), rolled_back_at: new Date() },
+        {
+          migration_name: "m1",
+          started_at: new Date("2026-01-01T00:00:00Z"),
+          finished_at: new Date("2026-01-01T00:01:00Z"),
+          rolled_back_at: new Date("2026-01-01T00:02:00Z"),
+        },
+      ],
+      ["m1"],
+    );
+    expect(resultado).toEqual({
+      aplicadas: [],
+      reversionesResueltas: [],
+      anomaliasActivas: [],
+      reversionesSinResolucion: ["m1"],
+      pendientes: [],
+      fallidasOInconclusas: ["m1"],
+    });
+  });
+
+  it("finished_at null y rolled_back_at null -- anomalia ACTIVA (intento en curso, nunca termino ni se revirtio), bloquea", async () => {
+    const { evaluarEstadoMigraciones } = await import("../destinoPrueba");
+    const resultado = evaluarEstadoMigraciones(
+      [
+        {
+          migration_name: "m1",
+          started_at: new Date("2026-01-01T00:00:00Z"),
+          finished_at: null,
+          rolled_back_at: null,
+        },
+      ],
+      ["m1"],
+    );
+    expect(resultado).toEqual({
+      aplicadas: [],
+      reversionesResueltas: [],
+      anomaliasActivas: ["m1"],
+      reversionesSinResolucion: [],
+      pendientes: [],
+      fallidasOInconclusas: ["m1"],
+    });
+  });
+
+  it("mezcla real -- aplicada, reversion sin resolucion y pendiente a la vez", async () => {
+    const { evaluarEstadoMigraciones } = await import("../destinoPrueba");
+    const resultado = evaluarEstadoMigraciones(
+      [
+        {
+          migration_name: "m1_ok",
+          started_at: new Date("2026-01-01T00:00:00Z"),
+          finished_at: new Date("2026-01-01T00:01:00Z"),
+          rolled_back_at: null,
+        },
+        {
+          migration_name: "m2_rollback",
+          started_at: new Date("2026-01-01T00:00:00Z"),
+          finished_at: new Date("2026-01-01T00:01:00Z"),
+          rolled_back_at: new Date("2026-01-01T00:02:00Z"),
+        },
       ],
       ["m1_ok", "m2_rollback", "m3_pendiente"],
     );
     expect(resultado).toEqual({
       aplicadas: ["m1_ok"],
+      reversionesResueltas: [],
+      anomaliasActivas: [],
+      reversionesSinResolucion: ["m2_rollback"],
       pendientes: ["m3_pendiente"],
       fallidasOInconclusas: ["m2_rollback"],
+    });
+  });
+
+  // ------------------------------------------------------------------------
+  // Correccion real reportada en ejecucion: la version anterior clasificaba
+  // FILA por fila (nunca agrupaba por migration_name), asi que una reversion
+  // HISTORICA con una aplicacion exitosa posterior del mismo nombre seguia
+  // bloqueando para siempre. Las pruebas de abajo cubren, una por una, las
+  // combinaciones que exige esa correccion -- agrupacion por nombre, uso de
+  // started_at (nunca el orden del arreglo) para decidir cual es la fila MAS
+  // RECIENTE, y que solo "anomalia activa" y "reversion sin resolucion"
+  // alimenten el bloqueo.
+  // ------------------------------------------------------------------------
+
+  it("rollback seguido de exito posterior del mismo nombre -- reversion HISTORICAMENTE RESUELTA, NO bloquea", async () => {
+    const { evaluarEstadoMigraciones } = await import("../destinoPrueba");
+    const resultado = evaluarEstadoMigraciones(
+      [
+        {
+          migration_name: "m1",
+          started_at: new Date("2026-01-01T00:00:00Z"),
+          finished_at: new Date("2026-01-01T00:01:00Z"),
+          rolled_back_at: new Date("2026-01-01T00:02:00Z"),
+        },
+        {
+          migration_name: "m1",
+          started_at: new Date("2026-01-02T00:00:00Z"),
+          finished_at: new Date("2026-01-02T00:01:00Z"),
+          rolled_back_at: null,
+        },
+      ],
+      ["m1"],
+    );
+    expect(resultado).toEqual({
+      aplicadas: [],
+      reversionesResueltas: ["m1"],
+      anomaliasActivas: [],
+      reversionesSinResolucion: [],
+      pendientes: [],
+      fallidasOInconclusas: [],
+    });
+  });
+
+  it("exito anterior seguido por un intento activo posterior del mismo nombre -- anomalia ACTIVA, bloquea (la fila MAS RECIENTE manda, nunca la primera)", async () => {
+    const { evaluarEstadoMigraciones } = await import("../destinoPrueba");
+    const resultado = evaluarEstadoMigraciones(
+      [
+        {
+          migration_name: "m1",
+          started_at: new Date("2026-01-01T00:00:00Z"),
+          finished_at: new Date("2026-01-01T00:01:00Z"),
+          rolled_back_at: null,
+        },
+        {
+          migration_name: "m1",
+          started_at: new Date("2026-01-02T00:00:00Z"),
+          finished_at: null,
+          rolled_back_at: null,
+        },
+      ],
+      ["m1"],
+    );
+    expect(resultado).toEqual({
+      aplicadas: [],
+      reversionesResueltas: [],
+      anomaliasActivas: ["m1"],
+      reversionesSinResolucion: [],
+      pendientes: [],
+      fallidasOInconclusas: ["m1"],
+    });
+  });
+
+  it("varias filas exitosas del mismo nombre -- una sola aparece en aplicadas (deduplicado por nombre)", async () => {
+    const { evaluarEstadoMigraciones } = await import("../destinoPrueba");
+    const resultado = evaluarEstadoMigraciones(
+      [
+        {
+          migration_name: "m1",
+          started_at: new Date("2026-01-01T00:00:00Z"),
+          finished_at: new Date("2026-01-01T00:01:00Z"),
+          rolled_back_at: null,
+        },
+        {
+          migration_name: "m1",
+          started_at: new Date("2026-01-02T00:00:00Z"),
+          finished_at: new Date("2026-01-02T00:01:00Z"),
+          rolled_back_at: null,
+        },
+      ],
+      ["m1"],
+    );
+    expect(resultado).toEqual({
+      aplicadas: ["m1"],
+      reversionesResueltas: [],
+      anomaliasActivas: [],
+      reversionesSinResolucion: [],
+      pendientes: [],
+      fallidasOInconclusas: [],
+    });
+  });
+
+  it("regresion real: las 2 reversiones historicas (limite_tasa, ciclo_abierto_unico) ya resueltas + exactamente las 3 pendientes de RF24 -- nunca bloquea", async () => {
+    const { evaluarEstadoMigraciones } = await import("../destinoPrueba");
+    const resultado = evaluarEstadoMigraciones(
+      [
+        {
+          migration_name: "20260916140000_limite_tasa",
+          started_at: new Date("2026-09-16T14:00:00Z"),
+          finished_at: new Date("2026-09-16T14:00:05Z"),
+          rolled_back_at: new Date("2026-09-16T14:00:10Z"),
+        },
+        {
+          migration_name: "20260916140000_limite_tasa",
+          started_at: new Date("2026-09-16T15:00:00Z"),
+          finished_at: new Date("2026-09-16T15:00:05Z"),
+          rolled_back_at: null,
+        },
+        {
+          migration_name: "20260916160000_ciclo_abierto_unico",
+          started_at: new Date("2026-09-16T16:00:00Z"),
+          finished_at: new Date("2026-09-16T16:00:05Z"),
+          rolled_back_at: new Date("2026-09-16T16:00:10Z"),
+        },
+        {
+          migration_name: "20260916160000_ciclo_abierto_unico",
+          started_at: new Date("2026-09-16T17:00:00Z"),
+          finished_at: new Date("2026-09-16T17:00:05Z"),
+          rolled_back_at: null,
+        },
+      ],
+      [
+        "20260916140000_limite_tasa",
+        "20260916160000_ciclo_abierto_unico",
+        "20261022080000_rf24_enum_bucket_limite_tasa",
+        "20261022090000_rf24_tabla_solicitud_derechos",
+        "20261022100000_rf24_funciones_controladas",
+      ],
+    );
+    expect(resultado).toEqual({
+      aplicadas: [],
+      reversionesResueltas: ["20260916140000_limite_tasa", "20260916160000_ciclo_abierto_unico"],
+      anomaliasActivas: [],
+      reversionesSinResolucion: [],
+      pendientes: [
+        "20261022080000_rf24_enum_bucket_limite_tasa",
+        "20261022090000_rf24_tabla_solicitud_derechos",
+        "20261022100000_rf24_funciones_controladas",
+      ],
+      fallidasOInconclusas: [],
     });
   });
 });

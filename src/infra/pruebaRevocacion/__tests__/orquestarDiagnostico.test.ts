@@ -25,7 +25,7 @@ function clienteOk(rol: string) {
       .fn()
       .mockResolvedValueOnce([{ usuario_actual: rol, base_actual: "chainpulse_prueba", esquema_actual: "public" }])
       .mockResolvedValueOnce([{ rolbypassrls: false, rolsuper: false }])
-      .mockResolvedValueOnce([{ migration_name: "20260101000000_otra", finished_at: new Date(), rolled_back_at: null }]),
+      .mockResolvedValueOnce([{ migration_name: "20260101000000_otra", started_at: new Date(), finished_at: new Date(), rolled_back_at: null }]),
   };
 }
 
@@ -96,7 +96,7 @@ describe("orquestarDiagnostico", () => {
         .fn()
         .mockResolvedValueOnce([{ usuario_actual: "neondb_owner", base_actual: "chainpulse_prueba", esquema_actual: "public" }])
         .mockResolvedValueOnce([{ rolbypassrls: false, rolsuper: false }])
-        .mockResolvedValueOnce([{ migration_name: "20260101000000_rota", finished_at: null, rolled_back_at: null }]),
+        .mockResolvedValueOnce([{ migration_name: "20260101000000_rota", started_at: new Date(), finished_at: null, rolled_back_at: null }]),
     }));
     await expect(orquestarDiagnostico(deps)).rejects.toThrow("MIGRACIONES_FALLIDAS_O_INCONCLUSAS");
   });

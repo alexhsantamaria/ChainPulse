@@ -17,7 +17,7 @@ const DATABASE_URL = "postgresql://chainpulse_app:x@host-de-prueba.neon.tech:543
 const SEED_DATABASE_URL = "postgresql://neondb_owner:x@host-de-prueba.neon.tech:5432/chainpulse_prueba?schema=public";
 const DESTINO = { host: "host-de-prueba.neon.tech", puerto: "5432", base: "chainpulse_prueba", esquema: "public", usuario: "x" };
 
-function clienteOk(rol: string, migraciones: Array<{ migration_name: string; finished_at: Date | null; rolled_back_at: Date | null }>) {
+function clienteOk(rol: string, migraciones: Array<{ migration_name: string; started_at: Date; finished_at: Date | null; rolled_back_at: Date | null }>) {
   return {
     $disconnect: vi.fn().mockResolvedValue(undefined),
     $queryRaw: vi
@@ -78,7 +78,7 @@ describe("orquestarAplicarMigracion", () => {
   it("hay una migracion fallida/inconclusa -- aborta, nunca ejecuta el subproceso", async () => {
     const { orquestarAplicarMigracion } = await import("../orquestarAplicarMigracion");
     const deps = depsBase();
-    deps.construirAdmin = vi.fn(() => clienteOk("neondb_owner", [{ migration_name: "m_rota", finished_at: null, rolled_back_at: null }]));
+    deps.construirAdmin = vi.fn(() => clienteOk("neondb_owner", [{ migration_name: "m_rota", started_at: new Date(), finished_at: null, rolled_back_at: null }]));
     await expect(orquestarAplicarMigracion(deps)).rejects.toThrow("MIGRACIONES_FALLIDAS_O_INCONCLUSAS");
     expect(deps.ejecutarMigrateDeploy).not.toHaveBeenCalled();
   });

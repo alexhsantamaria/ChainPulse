@@ -89,7 +89,7 @@ export async function orquestarDiagnostico(
     let filas: FilaMigracion[];
     try {
       filas = await prismaAdmin.$queryRaw<FilaMigracion[]>`
-        SELECT migration_name, finished_at, rolled_back_at
+        SELECT migration_name, started_at, finished_at, rolled_back_at
         FROM "_prisma_migrations"
         ORDER BY started_at ASC
       `;
