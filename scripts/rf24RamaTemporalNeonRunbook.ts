@@ -27,15 +27,19 @@
 //
 // Que valida, EXACTAMENTE (ver cabecera de orquestarValidacionRamaTemporal.ts
 // para el detalle completo paso a paso): destino unico de DATABASE_URL/
-// SEED_DATABASE_URL, rol efectivo de cada conexion, estado real de
-// _prisma_migrations (debe haber EXACTAMENTE las 3 migraciones de RF24
-// pendientes, en orden, sin fallidas/inconclusas), aplica esas 3
-// migraciones, y despues corre contra catalogo REAL las verificaciones
-// que las Pruebas 3/4/5/6 de la entrega de PR-A dejaron "preparadas, no
-// ejecutadas": privilegios de tabla de chainpulse_app (cero), EXECUTE de
-// PUBLIC en las 12 funciones (cero), EXECUTE de chainpulse_app en las 11
-// publicas (presente), propietario de las 12 (neondb_owner), y ausencia
-// de politica RLS en las 2 tablas nuevas.
+// SEED_DATABASE_URL, rol efectivo de cada conexion, y el estado real de
+// _prisma_migrations via decidirModoMigracionesRf24() -- flujo resumible
+// con exactamente dos estados permitidos: "aplicar" (las 3 de RF24 son
+// EXACTAMENTE las unicas pendientes, en orden -- entonces las aplica) o
+// "continuar" (las 3 ya estan aplicadas o historicamente resueltas, cero
+// pendientes en todo el repo -- entonces NUNCA vuelve a aplicar nada).
+// Cualquier otro estado aborta. En AMBOS modos corre despues, contra
+// catalogo REAL, las verificaciones que las Pruebas 3/4/5/6 de la entrega
+// de PR-A dejaron "preparadas, no ejecutadas": privilegios de tabla de
+// chainpulse_app (cero), EXECUTE de PUBLIC en las 12 funciones (cero),
+// EXECUTE de chainpulse_app en las 11 publicas (presente), propietario de
+// las 12 (neondb_owner), y ausencia de politica RLS en las 2 tablas
+// nuevas.
 //
 // Antes de correr esto contra una rama real: usar
 // scripts/verificarLanzamientoPrismaEntornoPrueba.ts (ya existente en
