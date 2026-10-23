@@ -64,12 +64,21 @@ function obtenerFilaUnica<T>(filas: T[], mensaje: string): T {
  * Usuario REAL (nunca un id inventado que coincida por casualidad).
  * Mismo patron exacto que crearFixtureCobertura()
  * (entornoPruebasIntegracionCobertura.ts).
+ *
+ * CORRECCION B1 (Alex, auditoria de los 24 fallos, 2026-10-23): usa
+ * `prismaAdmin` (neondb_owner), NUNCA `prisma` (chainpulse_app) -- "empresas"
+ * tiene RLS por tenant, y crear una Empresa nueva con el cliente de
+ * aplicacion viola esa politica ("new row violates row-level security
+ * policy for table \"empresas\"", confirmado en el log real de Vitest).
+ * `prismaAdmin` corre como neondb_owner, exento de RLS por diseno (ver
+ * verificarRolConexionAdministrativa en destinoPrueba.ts) -- nunca se
+ * otorga ni se modifica ningun privilegio nuevo para llegar a esto.
  */
 async function crearFixtureUsuarioAdminRf24(etiqueta: string): Promise<{ empresaId: string; usuarioId: string }> {
   const empresaId = randomUUID();
   const passwordHash = await hashPassword(`integracion-rf24-${randomUUID()}`);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-  return prisma.$transaction(async (tx: any) => {
+  return prismaAdmin.$transaction(async (tx: any) => {
     await tx.empresa.create({ data: { id: empresaId, nombre: `Integracion RF24 ${etiqueta}` } });
     const admin = await tx.usuario.create({
       data: {
@@ -84,8 +93,10 @@ async function crearFixtureUsuarioAdminRf24(etiqueta: string): Promise<{ empresa
   });
 }
 
+// CORRECCION B1 (Alex, 2026-10-23): mismo motivo que arriba -- `prismaAdmin`,
+// nunca `prisma`.
 async function borrarFixtureUsuarioAdminRf24(fixture: { empresaId: string }): Promise<void> {
-  await prisma.empresa.delete({ where: { id: fixture.empresaId } }); // onDelete: Cascade se lleva al Usuario
+  await prismaAdmin.empresa.delete({ where: { id: fixture.empresaId } }); // onDelete: Cascade se lleva al Usuario
 }
 
 // Las 11 funciones de cara a la aplicacion (de las 12 totales -- ver
@@ -102,15 +113,31 @@ async function borrarFixtureUsuarioAdminRf24(fixture: { empresaId: string }): Pr
 // p_lease_minutos/p_max_intentos; reconciliar_solicitudes_derechos_agotadas
 // ya no recibe p_max_intentos -- todas son ahora constantes/literales
 // fijos dentro del cuerpo de cada funcion (ver migracion de funciones).
+//
+// CORRECCION B4 (Alex, auditoria de los 24 fallos, 2026-10-23):
+// pg_get_function_identity_arguments(oid) -- que esta prueba ya usa
+// correctamente mas abajo -- SI conserva los nombres de parametro
+// declarados (todas las funciones de RF24 los declaran); solo omite
+// valores por defecto y parametros OUT, ninguno presente aqui. 7 de las
+// 11 cadenas de abajo estaban sin nombres (forma que esa funcion de
+// catalogo nunca devuelve) -- corregidas a la forma real devuelta por
+// Postgres, letra por letra contra la migracion de funciones. Las 4
+// funciones sin argumentos ("") ya estaban correctas, sin cambio.
 const FUNCIONES_PUBLICAS_RF24: Array<{ nombre: string; argumentos: string }> = [
-  { nombre: "crear_solicitud_derechos", argumentos: "text, text, text, text, text" },
-  { nombre: "procesar_solicitud_derechos", argumentos: "text" },
-  { nombre: "resolver_solicitud_por_soporte", argumentos: "text, text" },
+  {
+    nombre: "crear_solicitud_derechos",
+    argumentos: "p_evaluacion_id text, p_correo_hash_entrante text, p_tipo text, p_alcance_retiro text, p_huella_hash text",
+  },
+  { nombre: "procesar_solicitud_derechos", argumentos: "p_token_hash text" },
+  { nombre: "resolver_solicitud_por_soporte", argumentos: "p_solicitud_id text, p_usuario_admin_id text" },
   { nombre: "reclamar_solicitudes_derechos_para_envio", argumentos: "" },
-  { nombre: "asignar_token_pendiente", argumentos: "text, text, text, integer" },
-  { nombre: "confirmar_envio_token", argumentos: "text, text" },
-  { nombre: "registrar_fallo_envio_solicitud_derechos", argumentos: "text, text" },
-  { nombre: "cancelar_solicitud_derechos_por_envio_fallido", argumentos: "text, text" },
+  {
+    nombre: "asignar_token_pendiente",
+    argumentos: "p_solicitud_id text, p_reclamo_id text, p_token_hash text, p_token_key_version integer",
+  },
+  { nombre: "confirmar_envio_token", argumentos: "p_solicitud_id text, p_reclamo_id text" },
+  { nombre: "registrar_fallo_envio_solicitud_derechos", argumentos: "p_solicitud_id text, p_reclamo_id text" },
+  { nombre: "cancelar_solicitud_derechos_por_envio_fallido", argumentos: "p_solicitud_id text, p_reclamo_id text" },
   { nombre: "reconciliar_solicitudes_derechos_agotadas", argumentos: "" },
   { nombre: "expirar_solicitudes_derechos_vencidas", argumentos: "" },
   { nombre: "purgar_solicitudes_derechos_segun_retencion", argumentos: "" },
@@ -205,7 +232,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
   }, 30000);
 
   afterAll(async () => {
-    if (fixture) await borrarFixtureEvaluacionRf24(fixture);
+    if (fixture) await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
   it("alcance_retiro_coherente rechaza ELIMINACION_CONTACTO con alcanceRetiro no nulo", async () => {
@@ -250,21 +277,28 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     await prismaAdmin.solicitudDerechos.delete({ where: { id } });
   });
 
+  // CORRECCION B3 (Alex, auditoria de los 24 fallos, 2026-10-23): idA
+  // dejaba "tokenKeyVersion" en NULL con "tokenHash" poblado -- la
+  // constraint token_hash_version_pareja (verificada mas abajo, "rechaza
+  // tokenHash poblado con tokenKeyVersion NULL") rechazaba el INSERT de
+  // idA ANTES de poder ejercitar la UNIQUE que esta prueba pretende
+  // probar. Se agrega "tokenKeyVersion" (1) a ambas filas -- ninguna otra
+  // columna cambia.
   it("solicitudes_derechos_tokenHash_key es unico: dos filas con el mismo tokenHash no coexisten", async () => {
     const tokenHash = "a".repeat(64);
     const idA = `chk-5a-${fixture.evaluacionExpresV2Id}`;
     const idB = `chk-5b-${fixture.evaluacionExpresV2Id}`;
     await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
-      (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "expiraEn", "createdAt", "actualizadaEn")
+      (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "tokenKeyVersion", "expiraEn", "createdAt", "actualizadaEn")
       VALUES (${idA}, ${fixture.evaluacionExpresV2Id},
               'RETIRO_CONSENTIMIENTO'::"TipoSolicitudDerechos", 'DIAGNOSTICO'::"AlcanceRetiro",
-              ${tokenHash}, now() + interval '1 day', now(), now())`;
+              ${tokenHash}, 1, now() + interval '1 day', now(), now())`;
     await expect(
       prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
-        (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "expiraEn", "createdAt", "actualizadaEn")
+        (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "tokenKeyVersion", "expiraEn", "createdAt", "actualizadaEn")
         VALUES (${idB}, ${fixture.evaluacionExpresV2Id},
                 'RETIRO_CONSENTIMIENTO'::"TipoSolicitudDerechos", 'DIAGNOSTICO'::"AlcanceRetiro",
-                ${tokenHash}, now() + interval '1 day', now(), now())`,
+                ${tokenHash}, 1, now() + interval '1 day', now(), now())`,
     ).rejects.toThrow(/solicitudes_derechos_tokenHash_key/);
     await prismaAdmin.solicitudDerechos.delete({ where: { id: idA } });
   });
@@ -622,7 +656,7 @@ describe("Prueba 5 -- chainpulse_app sin CRUD directo", () => {
   }, 30000);
 
   afterAll(async () => {
-    if (fixture) await borrarFixtureEvaluacionRf24(fixture);
+    if (fixture) await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
   it("la funcion interna aplicar_efecto_solicitud_derechos nunca aparece en information_schema.routine_privileges para chainpulse_app", async () => {
@@ -729,7 +763,7 @@ describe("Prueba 7 -- intentos de shadowing con objetos temporales sin efecto", 
   }, 30000);
 
   afterAll(async () => {
-    if (fixture) await borrarFixtureEvaluacionRf24(fixture);
+    if (fixture) await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
     if (clienteSesion) await clienteSesion.end();
   });
 
@@ -790,5 +824,114 @@ describe("Prueba 7 -- intentos de shadowing con objetos temporales sin efecto", 
       [fixture.evaluacionExpresV2Id, correoHash],
     );
     expect(rows[0].creada).toBe(false); // correo no coincide (titular real tiene otro correo) -- lo que importa es que NO lance un error de tipo
+  });
+});
+
+// Prueba 19 (Alex, auditoria de los 24 fallos, 2026-10-23): regresion
+// explicita de la migracion 5 -- nunca se asume que A1/A2 quedaron
+// corregidos solo porque las pruebas preexistentes (Prueba 2/7, que ya
+// exponian ambos bugs) vuelven a pasar; esta describe lo verifica de
+// forma dedicada y ademas reconfirma que la correccion no abrio ningun
+// privilegio nuevo.
+describe("Prueba 19 -- regresion migracion 5 (A1: 42702 corregido; A2: consentimientos_expres.id poblado; privilegios intactos)", () => {
+  let fixture: FixtureEvaluacionRf24;
+
+  beforeAll(async () => {
+    requerirEntornoDePruebasRf24Confirmado();
+    fixture = await crearFixtureEvaluacionRf24("regresion-migracion5");
+  }, 30000);
+
+  afterAll(async () => {
+    if (fixture) await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
+  });
+
+  it('A1 -- crear_solicitud_derechos ya NO lanza SQLSTATE 42702 ("column reference \\"id\\" is ambiguous") y devuelve un id real', async () => {
+    const evaluacion = await prisma.evaluacionExpresV2.findUniqueOrThrow({
+      where: { id: fixture.evaluacionExpresV2Id },
+    });
+    const correoHash = hashCorreoNormalizado(evaluacion.correo!);
+    const resultado = obtenerFilaUnica<{ creada: boolean; id: string | null }>(
+      await prisma.$queryRaw<Array<{ creada: boolean; id: string | null }>>`
+        SELECT * FROM crear_solicitud_derechos(
+          ${fixture.evaluacionExpresV2Id}, ${correoHash}, 'ELIMINACION_CONTACTO', NULL,
+          ${`huella-regresion-a1-${fixture.evaluacionExpresV2Id}`})`,
+      "crear_solicitud_derechos no devolvio ninguna fila (se esperaba exactamente una) -- regresion A1.",
+    );
+    // Antes de la migracion 5, esta misma llamada lanzaba 42702 antes de
+    // devolver ninguna fila -- que obtenerFilaUnica() reciba una fila con
+    // "creada" ya demuestra que la ambiguedad quedo resuelta.
+    expect(resultado.creada).toBe(true);
+    expect(resultado.id).not.toBeNull();
+    await prismaAdmin.solicitudDerechos.delete({ where: { id: resultado.id! } });
+  });
+
+  it("A2 -- aplicar_efecto_solicitud_derechos (via la ruta publica procesar_solicitud_derechos) ya NO viola el NOT NULL de consentimientos_expres.id", async () => {
+    const evaluacion = await prisma.evaluacionExpresV2.findUniqueOrThrow({
+      where: { id: fixture.evaluacionExpresV2Id },
+    });
+    const correoHash = hashCorreoNormalizado(evaluacion.correo!);
+    const creado = obtenerFilaUnica<{ creada: boolean; id: string | null }>(
+      await prisma.$queryRaw<Array<{ creada: boolean; id: string | null }>>`
+        SELECT * FROM crear_solicitud_derechos(
+          ${fixture.evaluacionExpresV2Id}, ${correoHash}, 'RETIRO_CONSENTIMIENTO', 'DIAGNOSTICO',
+          ${`huella-regresion-a2-${fixture.evaluacionExpresV2Id}`})`,
+      "crear_solicitud_derechos no devolvio ninguna fila -- regresion A2 (preparacion).",
+    );
+    expect(creado.creada).toBe(true);
+    const solicitudId = creado.id!;
+    const tokenHash = "f".repeat(64);
+    // Persiste el token como si ya hubiera sido despachado -- unico
+    // objetivo de esta linea es dejar la fila en el estado que
+    // procesar_solicitud_derechos exige (PENDIENTE, expiraEn > now(),
+    // tokenHash = el que se va a confirmar); nunca ejercita el reclamo/
+    // lease real de reclamar_solicitudes_derechos_para_envio, que no es
+    // lo que esta prueba de regresion mide.
+    await prismaAdmin.solicitudDerechos.update({
+      where: { id: solicitudId },
+      data: { tokenHash, tokenKeyVersion: 1 },
+    });
+
+    // procesar_solicitud_derechos es la ruta PUBLICA real (SECURITY
+    // DEFINER, EXECUTE ya otorgado a chainpulse_app) -- llama internamente
+    // a aplicar_efecto_solicitud_derechos; esta prueba de regresion NUNCA
+    // invoca la funcion interna de forma directa (eso es exactamente lo
+    // que B5 corrigio que NO se hiciera).
+    const procesado = obtenerFilaUnica<{ procesada: boolean }>(
+      await prisma.$queryRaw<Array<{ procesada: boolean }>>`SELECT * FROM procesar_solicitud_derechos(${tokenHash})`,
+      "procesar_solicitud_derechos no devolvio ninguna fila -- regresion A2.",
+    );
+    // Antes de la migracion 5, procesar_solicitud_derechos lanzaba el
+    // error de NOT NULL de consentimientos_expres.id ANTES de poder
+    // devolver "procesada" -- que esta linea pase ya demuestra que A2
+    // quedo corregido; la fila de abajo confirma ademas que el id
+    // quedo poblado (nunca NULL ni vacio), no solo que no hubo excepcion.
+    expect(procesado.procesada).toBe(true);
+
+    const consentimientos = await prismaAdmin.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "consentimientos_expres"
+      WHERE "evaluacionExpresV2Id" = ${fixture.evaluacionExpresV2Id}
+        AND finalidad = 'DIAGNOSTICO'::"FinalidadConsentimiento"
+      ORDER BY "createdAt" DESC LIMIT 1`;
+    const consentimiento = consentimientos[0];
+    expect(consentimiento).not.toBeUndefined();
+    expect(consentimiento?.id).toBeTruthy();
+
+    await prismaAdmin.solicitudDerechos.delete({ where: { id: solicitudId } });
+  });
+
+  it("modelo de privilegios intacto tras la migracion 5: chainpulse_app sigue sin SELECT/INSERT/UPDATE/DELETE directo sobre las 2 tablas de RF24", async () => {
+    const client = await conectarComoOwner();
+    try {
+      for (const tabla of TABLAS_RF24) {
+        const { rows } = await client.query(
+          `SELECT privilege_type FROM information_schema.role_table_grants
+             WHERE table_schema = 'public' AND table_name = $1 AND grantee = 'chainpulse_app'`,
+          [tabla],
+        );
+        expect(rows).toHaveLength(0);
+      }
+    } finally {
+      await client.end();
+    }
   });
 });

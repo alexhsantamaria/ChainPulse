@@ -86,6 +86,14 @@ const MIGRACIONES_RF24_ESPERADAS_EN_ORDEN = [
   // confirmados por Alex sobre las 2 tablas de RF24. Ver el header de esa
   // migracion para el detalle completo de la auditoria que la precede.
   "20261023053758_rf24_revocar_privilegios_directos_tablas_derechos",
+  // Ronda 9 (Alex): 5a migracion, correctiva -- CREATE OR REPLACE sobre
+  // las 2 funciones con defectos PRODUCTIVOS confirmados por la
+  // auditoria consolidada de los 24 fallos reales de v10.1 (A1:
+  // SQLSTATE 42702 en crear_solicitud_derechos; A2: id NOT NULL sin
+  // poblar en el INSERT de aplicar_efecto_solicitud_derechos sobre
+  // consentimientos_expres). Ver el header de esa migracion para el
+  // detalle completo.
+  "20261023160000_rf24_correccion_ambiguedad_id_y_consentimiento_sin_id",
 ];
 
 const FUNCIONES_PUBLICAS_RF24 = [
@@ -300,6 +308,101 @@ export interface FilaDefaultAclTablaRf24 {
   is_grantable: boolean | null;
 }
 
+// Ronda 9 (Alex): verificacion POST-aplicacion, BLOQUEANTE (a diferencia
+// del diagnostico de pg_default_acl de arriba, que es informativo), de
+// que las 2 funciones de la migracion 5 quedaron exactamente como
+// autorizo Alex -- firma (via pg_get_function_identity_arguments, que
+// SI conserva los nombres de parametro declarados, nunca los omite),
+// SECURITY DEFINER (asimetria deliberada: presente en
+// crear_solicitud_derechos, ausente en aplicar_efecto_solicitud_derechos),
+// propietario (debe seguir siendo neondb_owner) y search_path (debe
+// seguir siendo exactamente "public, pg_temp"). proname/propietario son
+// tipo nativo "name" (OID 19) -- mismo cast ::text ya usado en el resto
+// de este modulo. search_path se extrae de pg_proc.proconfig (arreglo de
+// texto "clave=valor") buscando la entrada "search_path=..." y recortando
+// el prefijo fijo "search_path=" (12 caracteres, substring desde la
+// posicion 13) -- NULL si la funcion no tuviera ninguna entrada
+// search_path en proconfig (no deberia ocurrir; nunca se asume, se
+// reporta como discrepancia si pasara).
+export interface FilaDefinicionFuncionMigracion5 {
+  proname: string;
+  identidad_argumentos: string;
+  prosecdef: boolean;
+  propietario: string;
+  search_path: string | null;
+}
+
+export interface DiscrepanciaDefinicionMigracion5 {
+  proname: string;
+  motivo: string;
+}
+
+const DEFINICIONES_ESPERADAS_MIGRACION_5: ReadonlyArray<{
+  proname: string;
+  identidadArgumentosEsperada: string;
+  securityDefinerEsperado: boolean;
+}> = [
+  {
+    proname: "crear_solicitud_derechos",
+    identidadArgumentosEsperada:
+      "p_evaluacion_id text, p_correo_hash_entrante text, p_tipo text, p_alcance_retiro text, p_huella_hash text",
+    securityDefinerEsperado: true,
+  },
+  {
+    proname: "aplicar_efecto_solicitud_derechos",
+    identidadArgumentosEsperada: "p_evaluacion_id text, p_tipo text, p_alcance_retiro text, p_metodo_retiro text",
+    securityDefinerEsperado: false,
+  },
+];
+
+const FUNCIONES_MIGRACION_5_ESPERADAS = DEFINICIONES_ESPERADAS_MIGRACION_5.map((d) => d.proname);
+
+/**
+ * Funcion PURA (sin tocar la base) -- compara las filas reales de
+ * catalogo contra DEFINICIONES_ESPERADAS_MIGRACION_5. Nunca solo un
+ * booleano (mismo criterio ya establecido en todo este modulo, puntos 4
+ * de rondas 6/7): cada discrepancia trae el proname afectado y el valor
+ * esperado vs. el real, nunca se corrige aqui.
+ */
+export function evaluarDefinicionesMigracion5(
+  filas: FilaDefinicionFuncionMigracion5[],
+): { coincide: boolean; discrepancias: DiscrepanciaDefinicionMigracion5[] } {
+  const porNombre = new Map(filas.map((f) => [f.proname, f]));
+  const discrepancias: DiscrepanciaDefinicionMigracion5[] = [];
+  for (const esperada of DEFINICIONES_ESPERADAS_MIGRACION_5) {
+    const real = porNombre.get(esperada.proname);
+    if (!real) {
+      discrepancias.push({ proname: esperada.proname, motivo: "funcion ausente en pg_proc (esquema public)" });
+      continue;
+    }
+    if (real.identidad_argumentos !== esperada.identidadArgumentosEsperada) {
+      discrepancias.push({
+        proname: esperada.proname,
+        motivo: `firma inesperada: esperada="${esperada.identidadArgumentosEsperada}" real="${real.identidad_argumentos}"`,
+      });
+    }
+    if (real.prosecdef !== esperada.securityDefinerEsperado) {
+      discrepancias.push({
+        proname: esperada.proname,
+        motivo: `SECURITY DEFINER inesperado: esperado=${esperada.securityDefinerEsperado} real=${real.prosecdef}`,
+      });
+    }
+    if (real.propietario !== ROL_ADMIN_ESPERADO) {
+      discrepancias.push({
+        proname: esperada.proname,
+        motivo: `propietario inesperado: esperado=${ROL_ADMIN_ESPERADO} real=${real.propietario}`,
+      });
+    }
+    if (real.search_path !== "public, pg_temp") {
+      discrepancias.push({
+        proname: esperada.proname,
+        motivo: `search_path inesperado: esperado="public, pg_temp" real=${real.search_path ?? "NULL"}`,
+      });
+    }
+  }
+  return { coincide: discrepancias.length === 0, discrepancias };
+}
+
 export interface ResumenValidacionRamaTemporalRf24 {
   modoMigraciones: "aplicar" | "continuar";
   migracionesAplicadas: string[];
@@ -329,6 +432,14 @@ export interface ResumenValidacionRamaTemporalRf24 {
   funcionInternaSinGrant: boolean;
   todasLasFuncionesSonDeNeondbOwner: boolean;
   tablasSinPoliticaRls: boolean;
+  // Ronda 9 (Alex): BLOQUEANTE (a diferencia del diagnostico de
+  // pg_default_acl de abajo) -- true solo si las 2 funciones de la
+  // migracion 5 coinciden EXACTAMENTE con lo esperado (firma, SECURITY
+  // DEFINER, propietario, search_path). discrepancias trae el detalle
+  // completo (nunca solo el booleano) cuando es false; vacio cuando es
+  // true.
+  funcionesMigracion5ConDefinicionEsperada: boolean;
+  discrepanciasDefinicionMigracion5: DiscrepanciaDefinicionMigracion5[];
   // Ronda 8 (Alex): diagnostico de SOLO LECTURA, NUNCA bloqueante -- ver
   // diagnosticarDefaultAclTablasNeondbOwner() mas abajo. null cuando la
   // propia consulta de diagnostico fallo (el motivo saneado queda en
@@ -653,6 +764,31 @@ export async function orquestarValidacionRamaTemporalRf24(
     );
     const tablasSinPoliticaRls = politicasRls.length === 0;
 
+    // Ronda 9 (Alex): verificacion BLOQUEANTE de que la migracion 5 dejo
+    // las 2 funciones corregidas exactamente como se autorizo -- ver
+    // evaluarDefinicionesMigracion5() y DEFINICIONES_ESPERADAS_MIGRACION_5
+    // arriba. pg_get_function_identity_arguments(oid) SI conserva los
+    // nombres de parametro declarados (nunca los omite -- solo omite
+    // defaults y parametros OUT, ninguno presente en estas 2 funciones).
+    // search_path se extrae de proconfig (ver comentario de
+    // FilaDefinicionFuncionMigracion5 arriba).
+    const definicionesMigracion5 = await consultarCatalogoRf24<FilaDefinicionFuncionMigracion5[]>(
+      "DEFINICION_FUNCIONES_MIGRACION_5",
+      contexto,
+      () =>
+        prismaAdmin.$queryRaw<FilaDefinicionFuncionMigracion5[]>`
+          SELECT p.proname::text AS proname,
+                 pg_get_function_identity_arguments(p.oid)::text AS identidad_argumentos,
+                 p.prosecdef AS prosecdef,
+                 r.rolname::text AS propietario,
+                 (SELECT substring(cfg, 13) FROM unnest(p.proconfig) AS cfg WHERE cfg LIKE 'search_path=%') AS search_path
+            FROM pg_proc p
+            JOIN pg_roles r ON r.oid = p.proowner
+            WHERE p.proname = ANY(${FUNCIONES_MIGRACION_5_ESPERADAS}) AND p.pronamespace = 'public'::regnamespace`,
+    );
+    const { coincide: funcionesMigracion5ConDefinicionEsperada, discrepancias: discrepanciasDefinicionMigracion5 } =
+      evaluarDefinicionesMigracion5(definicionesMigracion5);
+
     // Ronda 8 (Alex, punto 1 del pedido): diagnostico de SOLO LECTURA,
     // nunca bloqueante -- ver diagnosticarDefaultAclTablasNeondbOwner()
     // arriba. Se corre AL FINAL, despues de todas las verificaciones que
@@ -673,6 +809,8 @@ export async function orquestarValidacionRamaTemporalRf24(
       funcionInternaSinGrant,
       todasLasFuncionesSonDeNeondbOwner,
       tablasSinPoliticaRls,
+      funcionesMigracion5ConDefinicionEsperada,
+      discrepanciasDefinicionMigracion5,
       defaultAclTablasNeondbOwner: diagnosticoDefaultAcl.filas,
       defaultAclTablasNeondbOwnerError: diagnosticoDefaultAcl.error,
     };

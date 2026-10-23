@@ -11,7 +11,7 @@
 // "Idempotente" se demuestra corriendo la MISMA purga dos veces seguidas
 // -- la segunda corrida nunca encuentra nada mas que purgar (0 filas
 // afectadas), nunca falla ni cuenta de mas.
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../../prisma/client";
 import {
@@ -20,6 +20,34 @@ import {
   borrarFixtureEvaluacionRf24,
   type FixtureEvaluacionRf24,
 } from "./entornoPruebasIntegracionRf24";
+import { construirClientePrueba, desconectarClientePrueba, type ClientePrueba } from "../../pruebaRevocacion/clientePrueba";
+
+// CORRECCION B1 (Alex, auditoria de los 24 fallos, 2026-10-23): cliente
+// Prisma conectado como neondb_owner -- mismo patron ya establecido en
+// rf24EsquemaYPrivilegios.integration.test.ts (Ronda 8). Usado SOLO para
+// sembrar/leer/borrar filas DIRECTAMENTE sobre "solicitudes_derechos" e
+// "intentos_solicitud_derechos_descartados" (Ronda 8 revoco su CRUD
+// directo a chainpulse_app sobre ambas); la llamada a la funcion publica
+// SECURITY DEFINER purgar_solicitudes_derechos_segun_retencion() sigue
+// con el cliente de aplicacion normal (`prisma`), sin cambios -- ya
+// tiene EXECUTE otorgado.
+let prismaAdmin: ClientePrueba;
+
+beforeAll(() => {
+  const connectionString = process.env.SEED_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      "Las pruebas de integracion de RF24 necesitan SEED_DATABASE_URL o DATABASE_URL (conexion real a Postgres, como neondb_owner) -- no deberian correr en este entorno. Usar `npm run test:integration` en Windows, nunca `npm run test`.",
+    );
+  }
+  prismaAdmin = construirClientePrueba(connectionString, "rf24-pruebas-integracion:admin");
+});
+
+afterAll(async () => {
+  if (prismaAdmin) {
+    await desconectarClientePrueba(prismaAdmin, "rf24-pruebas-integracion:admin:desconexion");
+  }
+});
 
 interface ResultadoPurga {
   secretos_purgados: number;
@@ -52,7 +80,7 @@ describe("Prueba 15 -- estados terminales y purgas idempotentes", () => {
     // cualquiera que la purga no haya tocado) se limpian aca --
     // borrarFixtureEvaluacionRf24 ya hace deleteMany de SolicitudDerechos
     // por evaluacionExpresV2Id antes de borrar la evaluacion.
-    if (fixture) await borrarFixtureEvaluacionRf24(fixture);
+    if (fixture) await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
   it("purga secretos (tokenHash/huella/tokenKeyVersion) de filas terminales con mas de 72h, pero nunca borra la fila misma todavia -- y nunca viola envio_confirmado_requiere_token (CORRECCION Alex 2026-10-22, punto 4(b))", async () => {
@@ -68,7 +96,7 @@ describe("Prueba 15 -- estados terminales y purgas idempotentes", () => {
     // "envio_confirmado_requiere_token" debe seguir permitiendo para un
     // estado terminal (si no lo permitiera, esta misma INSERT/UPDATE de
     // la purga violaria su propia constraint).
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "tokenKeyVersion",
        "huellaOrigenHashSolicitud", "envioConfirmadoEn", "expiraEn", "consumidoEn", estado, "createdAt", "actualizadaEn")
       VALUES (${idSecretoViejo}, ${fixture.evaluacionExpresV2Id},
@@ -79,7 +107,7 @@ describe("Prueba 15 -- estados terminales y purgas idempotentes", () => {
     const primeraCorrida = await correrPurga();
     expect(primeraCorrida.secretos_purgados).toBeGreaterThanOrEqual(1);
 
-    const filaTrasPurga = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: idSecretoViejo } });
+    const filaTrasPurga = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: idSecretoViejo } });
     expect(filaTrasPurga.tokenHash).toBeNull();
     expect(filaTrasPurga.tokenKeyVersion).toBeNull();
     expect(filaTrasPurga.huellaOrigenHashSolicitud).toBeNull();
@@ -90,7 +118,7 @@ describe("Prueba 15 -- estados terminales y purgas idempotentes", () => {
     // purgar de ESTA fila (sus secretos ya son NULL), 0 filas afectadas
     // por esta fila especificamente.
     const segundaCorrida = await correrPurga();
-    const filaTrasSegundaPurga = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: idSecretoViejo } });
+    const filaTrasSegundaPurga = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: idSecretoViejo } });
     expect(filaTrasSegundaPurga.tokenHash).toBeNull();
     expect(segundaCorrida.secretos_purgados).toBe(0);
   }, 30000);
@@ -99,12 +127,12 @@ describe("Prueba 15 -- estados terminales y purgas idempotentes", () => {
     fixture = await crearFixtureEvaluacionRf24(`retencion-15b-${randomUUID()}`);
     idFilaTerminalVieja = `terminal-vieja-${randomUUID()}`;
     idFilaTerminalReciente = `terminal-reciente-${randomUUID()}`;
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${idFilaTerminalVieja}, ${fixture.evaluacionExpresV2Id},
               'ELIMINACION_CONTACTO'::"TipoSolicitudDerechos", NULL,
               now() - interval '400 days', 'EXPIRADA', now() - interval '400 days', now() - interval '366 days')`;
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${idFilaTerminalReciente}, ${fixture.evaluacionExpresV2Id},
               'ELIMINACION_CONTACTO'::"TipoSolicitudDerechos", NULL,
@@ -113,10 +141,10 @@ describe("Prueba 15 -- estados terminales y purgas idempotentes", () => {
     const resultado = await correrPurga();
     expect(resultado.filas_eliminadas).toBeGreaterThanOrEqual(1);
 
-    const filaVieja = await prisma.solicitudDerechos.findUnique({ where: { id: idFilaTerminalVieja } });
+    const filaVieja = await prismaAdmin.solicitudDerechos.findUnique({ where: { id: idFilaTerminalVieja } });
     expect(filaVieja).toBeNull(); // eliminada por completo
 
-    const filaReciente = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: idFilaTerminalReciente } });
+    const filaReciente = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: idFilaTerminalReciente } });
     expect(filaReciente.estado).toBe("CANCELADA"); // conservada -- solo 5 dias desde actualizadaEn
 
     // Idempotente: correr otra vez no vuelve a "eliminar" la ya
@@ -135,7 +163,7 @@ describe("Prueba 16 -- purga de tabla senuelo a siete dias", () => {
   });
 
   afterEach(async () => {
-    await prisma.intentoSolicitudDerechosDescartado.deleteMany({
+    await prismaAdmin.intentoSolicitudDerechosDescartado.deleteMany({
       where: { id: { in: [idIntentoViejo, idIntentoReciente].filter(Boolean) } },
     });
   });
@@ -143,18 +171,18 @@ describe("Prueba 16 -- purga de tabla senuelo a siete dias", () => {
   it("purga intentos senuelo con mas de 7 dias; conserva los recientes; idempotente en la segunda corrida", async () => {
     idIntentoViejo = `senuelo-viejo-${randomUUID()}`;
     idIntentoReciente = `senuelo-reciente-${randomUUID()}`;
-    await prisma.$executeRaw`INSERT INTO "intentos_solicitud_derechos_descartados" (id, "creadoEn")
+    await prismaAdmin.$executeRaw`INSERT INTO "intentos_solicitud_derechos_descartados" (id, "creadoEn")
       VALUES (${idIntentoViejo}, now() - interval '8 days')`;
-    await prisma.$executeRaw`INSERT INTO "intentos_solicitud_derechos_descartados" (id, "creadoEn")
+    await prismaAdmin.$executeRaw`INSERT INTO "intentos_solicitud_derechos_descartados" (id, "creadoEn")
       VALUES (${idIntentoReciente}, now() - interval '1 day')`;
 
     const primeraCorrida = await correrPurga();
     expect(primeraCorrida.intentos_descartados_purgados).toBeGreaterThanOrEqual(1);
 
-    const intentoViejo = await prisma.intentoSolicitudDerechosDescartado.findUnique({ where: { id: idIntentoViejo } });
+    const intentoViejo = await prismaAdmin.intentoSolicitudDerechosDescartado.findUnique({ where: { id: idIntentoViejo } });
     expect(intentoViejo).toBeNull();
 
-    const intentoReciente = await prisma.intentoSolicitudDerechosDescartado.findUniqueOrThrow({
+    const intentoReciente = await prismaAdmin.intentoSolicitudDerechosDescartado.findUniqueOrThrow({
       where: { id: idIntentoReciente },
     });
     expect(intentoReciente).not.toBeNull();

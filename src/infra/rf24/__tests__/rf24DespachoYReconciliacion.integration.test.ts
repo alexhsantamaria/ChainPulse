@@ -23,7 +23,7 @@
 // lo que esta prueba demuestra que la unitaria no puede es que la
 // FUNCION SQL, no solo el calculo en memoria, acepta el reintento como
 // idempotente (mismo hash) en vez de rechazarlo.
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import { prisma } from "../../prisma/client";
 import {
@@ -36,6 +36,34 @@ import {
   borrarFixtureEvaluacionRf24,
   type FixtureEvaluacionRf24,
 } from "./entornoPruebasIntegracionRf24";
+import { construirClientePrueba, desconectarClientePrueba, type ClientePrueba } from "../../pruebaRevocacion/clientePrueba";
+
+// CORRECCION B1 (Alex, auditoria de los 24 fallos, 2026-10-23): cliente
+// Prisma conectado como neondb_owner -- mismo patron ya establecido en
+// rf24EsquemaYPrivilegios.integration.test.ts (Ronda 8). Usado SOLO para
+// sembrar/leer/borrar filas DIRECTAMENTE sobre "solicitudes_derechos"
+// (Ronda 8 revoco su CRUD directo a chainpulse_app); las llamadas a las
+// funciones publicas SECURITY DEFINER (reconciliar_solicitudes_derechos_
+// agotadas, registrar_fallo_envio_solicitud_derechos, asignar_token_
+// pendiente, confirmar_envio_token) siguen con el cliente de aplicacion
+// normal (`prisma`), sin cambios -- ya tienen EXECUTE otorgado.
+let prismaAdmin: ClientePrueba;
+
+beforeAll(() => {
+  const connectionString = process.env.SEED_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      "Las pruebas de integracion de RF24 necesitan SEED_DATABASE_URL o DATABASE_URL (conexion real a Postgres, como neondb_owner) -- no deberian correr en este entorno. Usar `npm run test:integration` en Windows, nunca `npm run test`.",
+    );
+  }
+  prismaAdmin = construirClientePrueba(connectionString, "rf24-pruebas-integracion:admin");
+});
+
+afterAll(async () => {
+  if (prismaAdmin) {
+    await desconectarClientePrueba(prismaAdmin, "rf24-pruebas-integracion:admin:desconexion");
+  }
+});
 
 // CORRECCION Alex 2026-10-22 (ronda noUncheckedIndexedAccess): helper local
 // de pruebas -- extrae la unica fila esperada de un arreglo de resultados
@@ -59,7 +87,7 @@ describe("Prueba 12 -- caida tras incrementar el quinto intento termina en cance
   });
 
   afterEach(async () => {
-    if (fixture) await borrarFixtureEvaluacionRf24(fixture);
+    if (fixture) await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
   it("una fila con intentosEnvio=5 (maximo), reclamoId poblado y arriendo vencido se cancela atomicamente por el sweep, nunca por el fencing normal", async () => {
@@ -72,7 +100,7 @@ describe("Prueba 12 -- caida tras incrementar el quinto intento termina en cance
     // una corrida anterior) y murio ANTES de llamar a
     // cancelar_solicitud_derechos_por_envio_fallido -- el arriendo sigue
     // poblado (reclamoId, reclamadoHasta) pero ya vencio.
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "tokenKeyVersion",
        "intentosEnvio", "reclamoId", "reclamadoHasta", "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${solicitudId}, ${fixture.evaluacionExpresV2Id},
@@ -89,7 +117,7 @@ describe("Prueba 12 -- caida tras incrementar el quinto intento termina en cance
     );
     expect(resultado.reconciliar_solicitudes_derechos_agotadas).toBeGreaterThanOrEqual(1);
 
-    const filaFinal = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    const filaFinal = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaFinal.estado).toBe("CANCELADA");
     expect(filaFinal.tokenHash).toBeNull(); // nulificado de inmediato -- mismo criterio que cancelar por fallo
     expect(filaFinal.tokenKeyVersion).toBeNull();
@@ -100,7 +128,7 @@ describe("Prueba 12 -- caida tras incrementar el quinto intento termina en cance
   it("una fila agotada pero cuyo arriendo AUN NO vencio no es tocada por el sweep (el worker podria seguir vivo)", async () => {
     fixture = await crearFixtureEvaluacionRf24(`reconciliacion-12b-${randomUUID()}`);
     solicitudId = `agotada-vigente-${randomUUID()}`;
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "intentosEnvio", "reclamoId", "reclamadoHasta",
        "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${solicitudId}, ${fixture.evaluacionExpresV2Id},
@@ -110,7 +138,7 @@ describe("Prueba 12 -- caida tras incrementar el quinto intento termina en cance
 
     await prisma.$queryRaw`SELECT reconciliar_solicitudes_derechos_agotadas()`;
 
-    const filaFinal = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    const filaFinal = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaFinal.estado).toBe("PENDIENTE"); // sin cambios -- el arriendo todavia es vigente
   }, 30000);
 
@@ -127,7 +155,7 @@ describe("Prueba 12 -- caida tras incrementar el quinto intento termina en cance
     // tocan, porque no hay reclamoId que fencing exija).
     fixture = await crearFixtureEvaluacionRf24(`reconciliacion-12c-${randomUUID()}`);
     solicitudId = `agotada-sin-arriendo-${randomUUID()}`;
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "intentosEnvio", "reclamoId", "reclamadoHasta",
        "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${solicitudId}, ${fixture.evaluacionExpresV2Id},
@@ -142,7 +170,7 @@ describe("Prueba 12 -- caida tras incrementar el quinto intento termina en cance
     );
     expect(resultado.reconciliar_solicitudes_derechos_agotadas).toBeGreaterThanOrEqual(1);
 
-    const filaFinal = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    const filaFinal = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaFinal.estado).toBe("CANCELADA");
   }, 30000);
 });
@@ -156,14 +184,14 @@ describe("Prueba 12bis -- registrar_fallo_envio_solicitud_derechos (funcion 8): 
   });
 
   afterEach(async () => {
-    if (fixture) await borrarFixtureEvaluacionRf24(fixture);
+    if (fixture) await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
   it("libera el arriendo (reclamoId/reclamadoHasta -> NULL) sin tocar estado ni intentosEnvio, cuando el reclamoId coincide y el arriendo sigue vigente", async () => {
     fixture = await crearFixtureEvaluacionRf24(`fallo-envio-8-${randomUUID()}`);
     solicitudId = `fallo-${randomUUID()}`;
     const reclamoId = randomUUID();
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "intentosEnvio", "reclamoId", "reclamadoHasta",
        "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${solicitudId}, ${fixture.evaluacionExpresV2Id},
@@ -178,7 +206,7 @@ describe("Prueba 12bis -- registrar_fallo_envio_solicitud_derechos (funcion 8): 
     );
     expect(resultado.liberado).toBe(true);
 
-    const filaFinal = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    const filaFinal = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaFinal.reclamoId).toBeNull();
     expect(filaFinal.reclamadoHasta).toBeNull();
     expect(filaFinal.estado).toBe("PENDIENTE"); // nunca cancela -- eso es la funcion 9, no esta
@@ -190,7 +218,7 @@ describe("Prueba 12bis -- registrar_fallo_envio_solicitud_derechos (funcion 8): 
     solicitudId = `fallo-fenced-${randomUUID()}`;
     const reclamoIdReal = randomUUID();
     const reclamoIdAjeno = randomUUID();
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "intentosEnvio", "reclamoId", "reclamadoHasta",
        "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${solicitudId}, ${fixture.evaluacionExpresV2Id},
@@ -205,7 +233,7 @@ describe("Prueba 12bis -- registrar_fallo_envio_solicitud_derechos (funcion 8): 
     );
     expect(resultado.liberado).toBe(false);
 
-    const filaFinal = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    const filaFinal = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaFinal.reclamoId).toBe(reclamoIdReal); // intacto -- el reclamo ajeno no tuvo efecto
     expect(filaFinal.reclamadoHasta).not.toBeNull();
   }, 30000);
@@ -214,7 +242,7 @@ describe("Prueba 12bis -- registrar_fallo_envio_solicitud_derechos (funcion 8): 
     fixture = await crearFixtureEvaluacionRf24(`fallo-envio-8c-${randomUUID()}`);
     solicitudId = `fallo-vencido-${randomUUID()}`;
     const reclamoId = randomUUID();
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "intentosEnvio", "reclamoId", "reclamadoHasta",
        "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${solicitudId}, ${fixture.evaluacionExpresV2Id},
@@ -229,7 +257,7 @@ describe("Prueba 12bis -- registrar_fallo_envio_solicitud_derechos (funcion 8): 
     );
     expect(resultado.liberado).toBe(false);
 
-    const filaFinal = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    const filaFinal = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaFinal.reclamoId).toBe(reclamoId); // intacto -- el arriendo vencido no se puede "liberar" dos veces
   }, 30000);
 });
@@ -244,14 +272,14 @@ describe("Prueba 13 -- preparacion del token antes del envio", () => {
   });
 
   afterEach(async () => {
-    if (fixture) await borrarFixtureEvaluacionRf24(fixture);
+    if (fixture) await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
   it("asignar_token_pendiente persiste tokenHash con envioConfirmadoEn todavia NULL -- el orden exigido (preparar antes de llamar a Resend)", async () => {
     fixture = await crearFixtureEvaluacionRf24(`preparacion-13-${randomUUID()}`);
     solicitudId = `prep-${randomUUID()}`;
     reclamoId = randomUUID();
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "reclamoId", "reclamadoHasta",
        "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${solicitudId}, ${fixture.evaluacionExpresV2Id},
@@ -275,7 +303,7 @@ describe("Prueba 13 -- preparacion del token antes del envio", () => {
     // antes (nunca envia un correo con un token que no fue persistido
     // primero) y NO despues de marcar enviado (eso seria confirmar antes
     // de preparar, el bloqueador original que esta migracion corrige).
-    const filaIntermedia = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    const filaIntermedia = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaIntermedia.tokenHash).toBe(tokenHash);
     expect(filaIntermedia.envioConfirmadoEn).toBeNull();
 
@@ -286,7 +314,7 @@ describe("Prueba 13 -- preparacion del token antes del envio", () => {
     );
     expect(confirmacion.confirmado).toBe(true);
 
-    const filaFinal = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    const filaFinal = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaFinal.envioConfirmadoEn).not.toBeNull();
     expect(filaFinal.reclamoId).toBeNull(); // liberado al confirmar
   }, 30000);
@@ -308,14 +336,14 @@ describe("Prueba 14 -- reintentos producen exactamente el mismo hash y version",
   });
 
   afterEach(async () => {
-    if (fixture) await borrarFixtureEvaluacionRf24(fixture);
+    if (fixture) await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
   it("asignar_token_pendiente llamado dos veces con el MISMO token (reintento real tras un fallo de red hacia Resend) es idempotente -- nunca rechaza el segundo intento ni cambia el hash", async () => {
     fixture = await crearFixtureEvaluacionRf24(`reintento-14-${randomUUID()}`);
     solicitudId = `reintento-${randomUUID()}`;
     const reclamoId = randomUUID();
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "reclamoId", "reclamadoHasta",
        "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${solicitudId}, ${fixture.evaluacionExpresV2Id},
@@ -337,7 +365,7 @@ describe("Prueba 14 -- reintentos producen exactamente el mismo hash y version",
     // aplicacion reintenta DESDE CERO, volviendo a leer la fila, volviendo
     // a derivar el token con la MISMA tokenKeyVersion almacenada (nunca la
     // version activa global), y vuelve a llamar a asignar_token_pendiente.
-    const filaTrasPrimerIntento = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    const filaTrasPrimerIntento = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     const tokenReintento = derivarToken(solicitudId, filaTrasPrimerIntento.tokenKeyVersion!);
     const hashReintento = hashearToken(tokenReintento);
     expect(hashReintento).toBe(hashPrimerIntento); // la propiedad central: determinismo
@@ -349,7 +377,7 @@ describe("Prueba 14 -- reintentos producen exactamente el mismo hash y version",
     );
     expect(asignacionDos.asignado).toBe(true); // nunca rechazado -- WHERE ("tokenHash" IS NULL OR "tokenHash" = p_token_hash)
 
-    const filaFinal = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    const filaFinal = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaFinal.tokenHash).toBe(hashPrimerIntento);
     expect(filaFinal.tokenKeyVersion).toBe(1);
   }, 30000);
@@ -358,7 +386,7 @@ describe("Prueba 14 -- reintentos producen exactamente el mismo hash y version",
     fixture = await crearFixtureEvaluacionRf24(`reintento-14b-${randomUUID()}`);
     solicitudId = `reintento-distinto-${randomUUID()}`;
     const reclamoId = randomUUID();
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "reclamoId", "reclamadoHasta",
        "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${solicitudId}, ${fixture.evaluacionExpresV2Id},
@@ -374,7 +402,7 @@ describe("Prueba 14 -- reintentos producen exactamente el mismo hash y version",
     );
     expect(asignacionConOtroHash.asignado).toBe(false);
 
-    const filaFinal = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    const filaFinal = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaFinal.tokenHash).toBe("f".repeat(64)); // conserva el primero, nunca lo pisa
   }, 30000);
 });

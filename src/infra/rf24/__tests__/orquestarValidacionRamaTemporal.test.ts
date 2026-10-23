@@ -10,8 +10,9 @@
 // (eso ya esta cubierto en destinoPrueba.test.ts), para aislar unicamente la
 // logica de decision.
 import { describe, expect, it } from "vitest";
-import { decidirModoMigracionesRf24 } from "../orquestarValidacionRamaTemporal";
+import { decidirModoMigracionesRf24, evaluarDefinicionesMigracion5 } from "../orquestarValidacionRamaTemporal";
 import type { EstadoMigraciones } from "../../pruebaRevocacion/destinoPrueba";
+import type { FilaDefinicionFuncionMigracion5 } from "../orquestarValidacionRamaTemporal";
 
 const RF24 = ["rf24_a", "rf24_b", "rf24_c"];
 // Ronda 8: mismo conjunto pero con una 4a migracion -- espejo exacto del
@@ -177,5 +178,189 @@ describe("decidirModoMigracionesRf24", () => {
   it("bloqueado -- las pendientes de RF24 NO estan en el orden exacto esperado", () => {
     const resultado = decidirModoMigracionesRf24(estado({ pendientes: ["rf24_b", "rf24_a", "rf24_c"] }), RF24);
     expect(resultado.modo).toBe("bloqueado");
+  });
+});
+
+// Pruebas -- evaluarDefinicionesMigracion5() (Ronda 9, Alex: verificacion
+// BLOQUEANTE post-migracion-5 -- firma/SECURITY DEFINER/propietario/
+// search_path exactos de crear_solicitud_derechos y
+// aplicar_efecto_solicitud_derechos). Funcion 100% pura (nunca toca
+// Prisma, Postgres ni el disco): estas pruebas construyen las filas de
+// catalogo a mano, nunca via consultarCatalogoRf24 (eso requiere conexion
+// real y queda cubierto por las pruebas de integracion), para aislar
+// unicamente la logica de comparacion.
+describe("evaluarDefinicionesMigracion5", () => {
+  const IDENTIDAD_CREAR_SOLICITUD =
+    "p_evaluacion_id text, p_correo_hash_entrante text, p_tipo text, p_alcance_retiro text, p_huella_hash text";
+  const IDENTIDAD_APLICAR_EFECTO = "p_evaluacion_id text, p_tipo text, p_alcance_retiro text, p_metodo_retiro text";
+
+  function filaCrearSolicitud(parcial: Partial<FilaDefinicionFuncionMigracion5> = {}): FilaDefinicionFuncionMigracion5 {
+    return {
+      proname: "crear_solicitud_derechos",
+      identidad_argumentos: IDENTIDAD_CREAR_SOLICITUD,
+      prosecdef: true,
+      propietario: "neondb_owner",
+      search_path: "public, pg_temp",
+      ...parcial,
+    };
+  }
+
+  function filaAplicarEfecto(parcial: Partial<FilaDefinicionFuncionMigracion5> = {}): FilaDefinicionFuncionMigracion5 {
+    return {
+      proname: "aplicar_efecto_solicitud_derechos",
+      identidad_argumentos: IDENTIDAD_APLICAR_EFECTO,
+      prosecdef: false,
+      propietario: "neondb_owner",
+      search_path: "public, pg_temp",
+      ...parcial,
+    };
+  }
+
+  it("coincide -- las 2 filas reales coinciden EXACTAMENTE con lo esperado (firma, SECURITY DEFINER asimetrico, propietario, search_path)", () => {
+    const resultado = evaluarDefinicionesMigracion5([filaCrearSolicitud(), filaAplicarEfecto()]);
+    expect(resultado).toEqual({ coincide: true, discrepancias: [] });
+  });
+
+  it("discrepancia -- crear_solicitud_derechos ausente por completo en pg_proc", () => {
+    const resultado = evaluarDefinicionesMigracion5([filaAplicarEfecto()]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toEqual([
+      { proname: "crear_solicitud_derechos", motivo: "funcion ausente en pg_proc (esquema public)" },
+    ]);
+  });
+
+  it("discrepancia -- aplicar_efecto_solicitud_derechos ausente por completo en pg_proc", () => {
+    const resultado = evaluarDefinicionesMigracion5([filaCrearSolicitud()]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toEqual([
+      { proname: "aplicar_efecto_solicitud_derechos", motivo: "funcion ausente en pg_proc (esquema public)" },
+    ]);
+  });
+
+  it("discrepancia -- ambas funciones ausentes (filas vacias)", () => {
+    const resultado = evaluarDefinicionesMigracion5([]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias.map((d) => d.proname)).toEqual([
+      "crear_solicitud_derechos",
+      "aplicar_efecto_solicitud_derechos",
+    ]);
+  });
+
+  it("discrepancia -- firma inesperada (identidad_argumentos distinta) en crear_solicitud_derechos", () => {
+    const resultado = evaluarDefinicionesMigracion5([
+      filaCrearSolicitud({ identidad_argumentos: "p_evaluacion_id text" }),
+      filaAplicarEfecto(),
+    ]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toHaveLength(1);
+    expect(resultado.discrepancias[0]?.proname).toBe("crear_solicitud_derechos");
+    expect(resultado.discrepancias[0]?.motivo).toContain("firma inesperada");
+    expect(resultado.discrepancias[0]?.motivo).toContain(IDENTIDAD_CREAR_SOLICITUD);
+  });
+
+  it("discrepancia -- SECURITY DEFINER inesperado: crear_solicitud_derechos SIN SECURITY DEFINER (deberia tenerlo)", () => {
+    const resultado = evaluarDefinicionesMigracion5([filaCrearSolicitud({ prosecdef: false }), filaAplicarEfecto()]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toEqual([
+      {
+        proname: "crear_solicitud_derechos",
+        motivo: "SECURITY DEFINER inesperado: esperado=true real=false",
+      },
+    ]);
+  });
+
+  it("discrepancia -- SECURITY DEFINER inesperado: aplicar_efecto_solicitud_derechos CON SECURITY DEFINER (nunca deberia tenerlo -- asimetria por diseno)", () => {
+    const resultado = evaluarDefinicionesMigracion5([filaCrearSolicitud(), filaAplicarEfecto({ prosecdef: true })]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toEqual([
+      {
+        proname: "aplicar_efecto_solicitud_derechos",
+        motivo: "SECURITY DEFINER inesperado: esperado=false real=true",
+      },
+    ]);
+  });
+
+  it("discrepancia -- propietario inesperado (no es neondb_owner)", () => {
+    const resultado = evaluarDefinicionesMigracion5([
+      filaCrearSolicitud({ propietario: "chainpulse_app" }),
+      filaAplicarEfecto(),
+    ]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toEqual([
+      {
+        proname: "crear_solicitud_derechos",
+        motivo: "propietario inesperado: esperado=neondb_owner real=chainpulse_app",
+      },
+    ]);
+  });
+
+  it("discrepancia -- search_path inesperado (valor distinto)", () => {
+    const resultado = evaluarDefinicionesMigracion5([
+      filaCrearSolicitud({ search_path: "public" }),
+      filaAplicarEfecto(),
+    ]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toEqual([
+      {
+        proname: "crear_solicitud_derechos",
+        motivo: 'search_path inesperado: esperado="public, pg_temp" real=public',
+      },
+    ]);
+  });
+
+  it("discrepancia -- search_path NULL (sin ninguna entrada search_path en proconfig) se reporta como NULL, nunca se asume", () => {
+    const resultado = evaluarDefinicionesMigracion5([
+      filaCrearSolicitud({ search_path: null }),
+      filaAplicarEfecto(),
+    ]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toEqual([
+      {
+        proname: "crear_solicitud_derechos",
+        motivo: 'search_path inesperado: esperado="public, pg_temp" real=NULL',
+      },
+    ]);
+  });
+
+  it("acumula TODAS las discrepancias de una misma funcion -- nunca se detiene en la primera (misma funcion con 4 campos mal a la vez)", () => {
+    const resultado = evaluarDefinicionesMigracion5([
+      filaCrearSolicitud({
+        identidad_argumentos: "x text",
+        prosecdef: false,
+        propietario: "chainpulse_app",
+        search_path: null,
+      }),
+      filaAplicarEfecto(),
+    ]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toHaveLength(4);
+    expect(resultado.discrepancias.every((d) => d.proname === "crear_solicitud_derechos")).toBe(true);
+    const motivos = resultado.discrepancias.map((d) => d.motivo);
+    expect(motivos.some((m) => m.includes("firma inesperada"))).toBe(true);
+    expect(motivos.some((m) => m.includes("SECURITY DEFINER inesperado"))).toBe(true);
+    expect(motivos.some((m) => m.includes("propietario inesperado"))).toBe(true);
+    expect(motivos.some((m) => m.includes("search_path inesperado"))).toBe(true);
+  });
+
+  it("acumula discrepancias de AMBAS funciones a la vez cuando ambas fallan", () => {
+    const resultado = evaluarDefinicionesMigracion5([
+      filaCrearSolicitud({ prosecdef: false }),
+      filaAplicarEfecto({ propietario: "otro_rol" }),
+    ]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toHaveLength(2);
+    expect(resultado.discrepancias.map((d) => d.proname).sort()).toEqual([
+      "aplicar_efecto_solicitud_derechos",
+      "crear_solicitud_derechos",
+    ]);
+  });
+
+  it("ignora filas de catalogo adicionales que no correspondan a ninguna de las 2 funciones esperadas", () => {
+    const resultado = evaluarDefinicionesMigracion5([
+      filaCrearSolicitud(),
+      filaAplicarEfecto(),
+      filaCrearSolicitud({ proname: "otra_funcion_cualquiera" }),
+    ]);
+    expect(resultado).toEqual({ coincide: true, discrepancias: [] });
   });
 });

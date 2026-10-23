@@ -83,6 +83,19 @@ async function main() {
           .join("\n"),
     );
   }
+  // Ronda 9 (Alex): BLOQUEANTE -- firmas/propietario/search_path/SECURITY
+  // DEFINER EXACTOS de las 2 funciones de la migracion 5 si hay alguna
+  // discrepancia (nunca solo el booleano; nunca se corrige aqui ni se
+  // genera una migracion nueva, solo se reporta -- todoOk de abajo ya
+  // aborta).
+  if (resumen.discrepanciasDefinicionMigracion5.length > 0) {
+    console.error(
+      "\nATENCION -- discrepancia(s) en la definicion de las funciones de la migracion 5:\n" +
+        resumen.discrepanciasDefinicionMigracion5
+          .map((d) => `  funcion=${d.proname} motivo=${d.motivo}`)
+          .join("\n"),
+    );
+  }
   // Ronda 8 (Alex, punto 1): diagnostico de SOLO LECTURA, NUNCA bloqueante
   // -- nunca participa en todoOk de abajo. Se imprime siempre que haya
   // algo que mostrar (filas encontradas, o la propia consulta fallo) para
@@ -112,7 +125,8 @@ async function main() {
     resumen.funcionesPublicasConExecuteParaChainpulseApp &&
     resumen.funcionInternaSinGrant &&
     resumen.todasLasFuncionesSonDeNeondbOwner &&
-    resumen.tablasSinPoliticaRls;
+    resumen.tablasSinPoliticaRls &&
+    resumen.funcionesMigracion5ConDefinicionEsperada;
   if (!todoOk) {
     console.error("\nATENCION -- al menos una verificacion de catalogo NO cumplio lo esperado. Revisar el resumen de arriba antes de continuar con cualquier PR posterior.");
     process.exitCode = 1;

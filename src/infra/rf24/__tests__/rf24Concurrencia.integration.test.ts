@@ -15,7 +15,7 @@
 // disparando las llamadas a la vez, nunca secuenciales -- lo que
 // demuestra la serializacion es el propio Postgres (advisory lock /
 // FOR UPDATE SKIP LOCKED / fencing por reclamoId), nunca un mock.
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../../prisma/client";
 import {
@@ -25,6 +25,36 @@ import {
   hashCorreoNormalizado,
   type FixtureEvaluacionRf24,
 } from "./entornoPruebasIntegracionRf24";
+import { construirClientePrueba, desconectarClientePrueba, type ClientePrueba } from "../../pruebaRevocacion/clientePrueba";
+
+// CORRECCION B1/B5 (Alex, auditoria de los 24 fallos, 2026-10-23): cliente
+// Prisma conectado como neondb_owner (nunca chainpulse_app) -- mismo
+// patron ya establecido en rf24EsquemaYPrivilegios.integration.test.ts
+// (Ronda 8). Usado SOLO para (B1) sembrar/borrar filas DIRECTAMENTE sobre
+// "solicitudes_derechos" (Ronda 8 revoco su CRUD directo a chainpulse_app)
+// y (B5) para invocar la funcion INTERNA aplicar_efecto_solicitud_derechos,
+// que nunca recibe GRANT EXECUTE para chainpulse_app a proposito -- nunca
+// para el acceso de runtime real de la app, que sigue pasando por las
+// funciones publicas SECURITY DEFINER (crear_solicitud_derechos,
+// reclamar_solicitudes_derechos_para_envio, asignar_token_pendiente,
+// confirmar_envio_token), sin cambios en esta ronda.
+let prismaAdmin: ClientePrueba;
+
+beforeAll(() => {
+  const connectionString = process.env.SEED_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      "Las pruebas de integracion de RF24 necesitan SEED_DATABASE_URL o DATABASE_URL (conexion real a Postgres, como neondb_owner) -- no deberian correr en este entorno. Usar `npm run test:integration` en Windows, nunca `npm run test`.",
+    );
+  }
+  prismaAdmin = construirClientePrueba(connectionString, "rf24-pruebas-integracion:admin");
+});
+
+afterAll(async () => {
+  if (prismaAdmin) {
+    await desconectarClientePrueba(prismaAdmin, "rf24-pruebas-integracion:admin:desconexion");
+  }
+});
 
 interface ResultadoCreacion {
   creada: boolean;
@@ -81,7 +111,7 @@ describe("Prueba 8 -- creacion concurrente respetando 3/24h por evaluacion", () 
   });
 
   afterEach(async () => {
-    await borrarFixtureEvaluacionRf24(fixture);
+    await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
   it("5 creaciones simultaneas sobre la MISMA evaluacion nunca superan 3 PENDIENTE dentro de la ventana de 24h", async () => {
@@ -98,7 +128,12 @@ describe("Prueba 8 -- creacion concurrente respetando 3/24h por evaluacion", () 
     const creadas = resultados.filter((r) => r.creada);
     expect(creadas.length).toBe(3);
 
-    const conteoReal = await prisma.solicitudDerechos.count({
+    // CORRECCION B1 (Alex, auditoria de los 24 fallos, 2026-10-23):
+    // lectura DIRECTA de la tabla (bypasea la funcion SECURITY DEFINER,
+    // a diferencia de llamarCrearSolicitud() de arriba) -- exige SELECT
+    // real sobre "solicitudes_derechos", que chainpulse_app ya no tiene
+    // desde la migracion correctiva de Ronda 8. prismaAdmin, nunca prisma.
+    const conteoReal = await prismaAdmin.solicitudDerechos.count({
       where: { evaluacionExpresV2Id: fixture.evaluacionExpresV2Id },
     });
     expect(conteoReal).toBe(3);
@@ -134,17 +169,21 @@ describe("Prueba 9 -- dos retiros concurrentes de la misma finalidad producen un
     await prisma.consentimientoExpres.deleteMany({
       where: { evaluacionExpresV2Id: fixture.evaluacionExpresV2Id },
     });
-    await borrarFixtureEvaluacionRf24(fixture);
+    await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
+  // CORRECCION B5 (Alex, auditoria de los 24 fallos, 2026-10-23):
+  // aplicar_efecto_solicitud_derechos es la funcion INTERNA de la
+  // migracion de funciones -- a proposito nunca recibe GRANT EXECUTE
+  // para chainpulse_app. prismaAdmin (neondb_owner), nunca prisma.
   it("dos llamadas simultaneas a aplicar_efecto_solicitud_derechos sobre la misma finalidad insertan exactamente un evento de retiro", async () => {
     // pg_advisory_xact_lock(hashtext(evaluacionId || ':' || finalidad))
     // serializa las dos llamadas; la segunda, al ver que ya quedo
     // "aceptado=false" como el mas reciente (IS DISTINCT FROM false),
     // es un no-op -- nunca inserta un segundo evento.
     await Promise.all([
-      prisma.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'RETIRO_CONSENTIMIENTO', 'DIAGNOSTICO', 'FORMULARIO_PUBLICO')`,
-      prisma.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'RETIRO_CONSENTIMIENTO', 'DIAGNOSTICO', 'FORMULARIO_PUBLICO')`,
+      prismaAdmin.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'RETIRO_CONSENTIMIENTO', 'DIAGNOSTICO', 'FORMULARIO_PUBLICO')`,
+      prismaAdmin.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'RETIRO_CONSENTIMIENTO', 'DIAGNOSTICO', 'FORMULARIO_PUBLICO')`,
     ]);
 
     const eventosDeRetiro = await prisma.consentimientoExpres.count({
@@ -174,7 +213,9 @@ describe("Prueba 10 -- dos workers no reclaman simultaneamente la misma solicitu
   beforeEach(async () => {
     fixture = await crearFixtureEvaluacionRf24(`concurrencia-10-${randomUUID()}`);
     solicitudId = `reclamo-${randomUUID()}`;
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    // CORRECCION B1 (Alex, 2026-10-23): prismaAdmin, nunca prisma --
+    // Ronda 8 revoco el INSERT directo de chainpulse_app sobre esta tabla.
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${solicitudId}, ${fixture.evaluacionExpresV2Id},
               'RETIRO_CONSENTIMIENTO'::"TipoSolicitudDerechos", 'DIAGNOSTICO'::"AlcanceRetiro",
@@ -182,7 +223,7 @@ describe("Prueba 10 -- dos workers no reclaman simultaneamente la misma solicitu
   });
 
   afterEach(async () => {
-    await borrarFixtureEvaluacionRf24(fixture);
+    await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
   it("dos reclamos simultaneos, con UNA SOLA fila candidata en la tabla, solo uno obtiene la fila -- FOR UPDATE SKIP LOCKED (CORRECCION Alex 2026-10-22 punto 1: el lote ya no es parametrizable -- fijo en 10 -- pero con una sola fila elegible la carrera es identica)", async () => {
@@ -201,7 +242,9 @@ describe("Prueba 10 -- dos workers no reclaman simultaneamente la misma solicitu
     const totalFilasReclamadas = reclamoA.length + reclamoB.length;
     expect(totalFilasReclamadas).toBe(1);
 
-    const filaFinal = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    // CORRECCION B1 (Alex, 2026-10-23): lectura directa de tabla --
+    // prismaAdmin, nunca prisma (mismo motivo que arriba).
+    const filaFinal = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaFinal.intentosEnvio).toBe(1); // incrementado una sola vez, nunca dos
     expect(filaFinal.reclamoId).not.toBeNull();
   }, 30000);
@@ -223,7 +266,8 @@ describe("Prueba 11 -- worker vencido no puede escribir despues de un nuevo recl
     // Siembra directamente una fila YA reclamada, con el arriendo YA
     // vencido (reclamadoHasta en el pasado) -- simula un worker que
     // reclamo, nunca termino, y cuyo arriendo expiro.
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    // CORRECCION B1 (Alex, 2026-10-23): prismaAdmin, nunca prisma.
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "intentosEnvio", "reclamoId", "reclamadoHasta",
        "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${solicitudId}, ${fixture.evaluacionExpresV2Id},
@@ -233,7 +277,7 @@ describe("Prueba 11 -- worker vencido no puede escribir despues de un nuevo recl
   });
 
   afterEach(async () => {
-    await borrarFixtureEvaluacionRf24(fixture);
+    await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
   it("un segundo worker reclama la fila (arriendo vencido); el worker viejo ya no puede asignar_token_pendiente ni confirmar_envio_token", async () => {
@@ -278,7 +322,9 @@ describe("Prueba 11 -- worker vencido no puede escribir despues de un nuevo recl
     );
     expect(asignacionNueva.asignado).toBe(true);
 
-    const filaFinal = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
+    // CORRECCION B1 (Alex, 2026-10-23): lectura directa de tabla --
+    // prismaAdmin, nunca prisma (mismo motivo que arriba).
+    const filaFinal = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: solicitudId } });
     expect(filaFinal.tokenHash).toBe("d".repeat(64)); // nunca "c".repeat(64), el intento del worker viejo
   }, 30000);
 });

@@ -8,7 +8,7 @@
 //   17. Datos de contacto nulificables sin romper constraints.
 //   18. Cero cambios en respuestas, hallazgos y agregados durante
 //       eliminacion de contacto.
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../../prisma/client";
 import {
@@ -17,6 +17,35 @@ import {
   borrarFixtureEvaluacionRf24,
   type FixtureEvaluacionRf24,
 } from "./entornoPruebasIntegracionRf24";
+import { construirClientePrueba, desconectarClientePrueba, type ClientePrueba } from "../../pruebaRevocacion/clientePrueba";
+
+// CORRECCION B1/B5 (Alex, auditoria de los 24 fallos, 2026-10-23): cliente
+// Prisma conectado como neondb_owner -- mismo patron ya establecido en
+// rf24EsquemaYPrivilegios.integration.test.ts (Ronda 8). Usado para (B1)
+// borrarFixtureEvaluacionRf24() (que necesita el admin para su propio
+// deleteMany sobre "solicitudes_derechos") y para (B5) invocar la funcion
+// INTERNA aplicar_efecto_solicitud_derechos, que nunca recibe GRANT
+// EXECUTE para chainpulse_app a proposito -- esta describe SI quiere
+// ejercitar deliberadamente la funcion interna con sus efectos de
+// negocio (no hay una ruta publica equivalente que preserve el proposito
+// de estas 2 pruebas, ver auditoria).
+let prismaAdmin: ClientePrueba;
+
+beforeAll(() => {
+  const connectionString = process.env.SEED_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      "Las pruebas de integracion de RF24 necesitan SEED_DATABASE_URL o DATABASE_URL (conexion real a Postgres, como neondb_owner) -- no deberian correr en este entorno. Usar `npm run test:integration` en Windows, nunca `npm run test`.",
+    );
+  }
+  prismaAdmin = construirClientePrueba(connectionString, "rf24-pruebas-integracion:admin");
+});
+
+afterAll(async () => {
+  if (prismaAdmin) {
+    await desconectarClientePrueba(prismaAdmin, "rf24-pruebas-integracion:admin:desconexion");
+  }
+});
 
 describe("Prueba 17 -- datos de contacto nulificables sin romper constraints", () => {
   let fixture: FixtureEvaluacionRf24;
@@ -26,7 +55,7 @@ describe("Prueba 17 -- datos de contacto nulificables sin romper constraints", (
   });
 
   afterEach(async () => {
-    if (fixture) await borrarFixtureEvaluacionRf24(fixture);
+    if (fixture) await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 
   it("aplicar_efecto_solicitud_derechos(ELIMINACION_CONTACTO) nulifica correo/nombreCompleto/empresaNombre/telefono sin violar ningun constraint de EvaluacionExpresV2", async () => {
@@ -36,7 +65,7 @@ describe("Prueba 17 -- datos de contacto nulificables sin romper constraints", (
       data: { empresaNombre: "Empresa de prueba RF24", telefono: "+51 999 999 999" },
     });
 
-    await prisma.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'ELIMINACION_CONTACTO', NULL, 'FORMULARIO_PUBLICO')`;
+    await prismaAdmin.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'ELIMINACION_CONTACTO', NULL, 'FORMULARIO_PUBLICO')`;
 
     const evaluacionFinal = await prisma.evaluacionExpresV2.findUniqueOrThrow({
       where: { id: fixture.evaluacionExpresV2Id },
@@ -64,7 +93,7 @@ describe("Prueba 17 -- datos de contacto nulificables sin romper constraints", (
       },
     });
 
-    await prisma.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'RETIRO_Y_ELIMINACION', 'INVESTIGACION', 'FORMULARIO_PUBLICO')`;
+    await prismaAdmin.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'RETIRO_Y_ELIMINACION', 'INVESTIGACION', 'FORMULARIO_PUBLICO')`;
 
     const evaluacionFinal = await prisma.evaluacionExpresV2.findUniqueOrThrow({
       where: { id: fixture.evaluacionExpresV2Id },
@@ -91,7 +120,7 @@ describe("Prueba 18 -- cero cambios en respuestas, hallazgos y agregados durante
       await prisma.hallazgoExpres.deleteMany({ where: { evaluacionExpresV2Id: fixture.evaluacionExpresV2Id } });
       await prisma.respuesta.deleteMany({ where: { evaluacionExpresV2Id: fixture.evaluacionExpresV2Id } });
       await prisma.preguntaVersion.deleteMany({ where: { cuestionarioVersionId: fixture.cuestionarioVersionId } });
-      await borrarFixtureEvaluacionRf24(fixture);
+      await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
     }
   });
 
@@ -132,7 +161,7 @@ describe("Prueba 18 -- cero cambios en respuestas, hallazgos y agregados durante
       },
     });
 
-    await prisma.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'ELIMINACION_CONTACTO', NULL, 'FORMULARIO_PUBLICO')`;
+    await prismaAdmin.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'ELIMINACION_CONTACTO', NULL, 'FORMULARIO_PUBLICO')`;
 
     const respuestaFinal = await prisma.respuesta.findUniqueOrThrow({ where: { id: respuesta.id } });
     const hallazgoFinal = await prisma.hallazgoExpres.findUniqueOrThrow({ where: { id: hallazgo.id } });

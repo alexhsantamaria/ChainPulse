@@ -18,6 +18,9 @@ import {
   VALOR_CONFIRMACION_ENTORNO,
   TX_OPTIONS_INTEGRACION,
 } from "../../kpis/cobertura/__tests__/entornoPruebasIntegracionCobertura";
+// CORRECCION B1 (Alex, auditoria de los 24 fallos, 2026-10-23): solo para
+// el tipo -- ver borrarFixtureEvaluacionRf24() mas abajo.
+import type { ClientePrueba } from "../../pruebaRevocacion/clientePrueba";
 
 export { VARIABLE_CONFIRMACION_ENTORNO, VALOR_CONFIRMACION_ENTORNO, TX_OPTIONS_INTEGRACION };
 
@@ -100,9 +103,29 @@ export async function crearFixtureEvaluacionRf24(
  * propia EvaluacionExpresV2 (ON DELETE CASCADE se lleva
  * ConsentimientoExpres/Respuesta/HallazgoExpres por su cuenta), por
  * ultimo la CuestionarioVersion sintetica.
+ *
+ * CORRECCION B1 (Alex, auditoria de los 24 fallos, 2026-10-23): la
+ * migracion correctiva de Ronda 8 revoco SELECT/INSERT/UPDATE/DELETE
+ * directo de chainpulse_app sobre "solicitudes_derechos" -- el
+ * `prisma.solicitudDerechos.deleteMany` de abajo (cliente de aplicacion)
+ * fallaba con "permission denied for table solicitudes_derechos" en el
+ * afterAll de 3 de las 5 suites de este paquete (root cause de 3 de las
+ * 4 suites fallidas del log real). Ahora recibe el cliente ADMINISTRATIVO
+ * (neondb_owner, construido con construirClientePrueba() en cada archivo
+ * de prueba) como segundo parametro -- obligatorio, nunca con default,
+ * para que sea imposible volver a llamar esta funcion sin pasarlo.
+ * `evaluacionExpresV2.delete`/`cuestionarioVersion.delete` quedan EXACTAMENTE
+ * igual, con el cliente de aplicacion -- esas 2 tablas nunca perdieron
+ * privilegios para chainpulse_app, cambiarlas tambien seria un cambio sin
+ * motivo. Nunca se restaura ningun privilegio de tabla ni se concede nada
+ * nuevo a chainpulse_app -- la correccion es exclusivamente del lado de
+ * la prueba.
  */
-export async function borrarFixtureEvaluacionRf24(fixture: FixtureEvaluacionRf24): Promise<void> {
-  await prisma.solicitudDerechos.deleteMany({
+export async function borrarFixtureEvaluacionRf24(
+  fixture: FixtureEvaluacionRf24,
+  clienteAdmin: ClientePrueba,
+): Promise<void> {
+  await clienteAdmin.solicitudDerechos.deleteMany({
     where: { evaluacionExpresV2Id: fixture.evaluacionExpresV2Id },
   });
   await prisma.evaluacionExpresV2.delete({ where: { id: fixture.evaluacionExpresV2Id } });
