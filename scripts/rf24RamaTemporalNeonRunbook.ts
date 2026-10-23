@@ -54,6 +54,16 @@ async function main() {
   const resumen = await orquestarValidacionRamaTemporalRf24();
   console.log("\nRF24 -- validacion de rama temporal completada. Resumen:");
   console.log(JSON.stringify(resumen, null, 2));
+  // Punto 4 (Alex, ronda 6): si hay EXECUTE inesperado a PUBLIC, las
+  // firmas exactas se repiten aqui de forma explicita (no solo dentro del
+  // JSON de arriba) -- nunca se corrige aqui ni se genera una migracion
+  // nueva, solo se reporta.
+  if (resumen.funcionesConExecuteInesperadoParaPublic.length > 0) {
+    console.error(
+      "\nATENCION -- GRANT EXECUTE a PUBLIC inesperado en: " +
+        resumen.funcionesConExecuteInesperadoParaPublic.join(", "),
+    );
+  }
   const todoOk =
     resumen.tablasSinPrivilegiosDeChainpulseApp &&
     resumen.funcionesSinExecuteParaPublic &&

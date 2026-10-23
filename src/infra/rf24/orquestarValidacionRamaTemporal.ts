@@ -59,6 +59,7 @@
 //      ningun valor de conexion (mismo criterio que logError() del
 //      resto de este paquete).
 import { logError } from "../log";
+import { diagnosticoErrorConsultaCruda } from "../prisma/errores";
 import {
   ROL_APP_ESPERADO,
   ROL_ADMIN_ESPERADO,
@@ -226,6 +227,13 @@ export interface ResumenValidacionRamaTemporalRf24 {
   migracionesAplicadas: string[];
   tablasSinPrivilegiosDeChainpulseApp: boolean;
   funcionesSinExecuteParaPublic: boolean;
+  // Punto 4 (Alex, ronda 6): si funcionesSinExecuteParaPublic es false,
+  // este arreglo trae los routine_name EXACTOS que tienen un GRANT EXECUTE
+  // a PUBLIC inesperado -- nunca solo el booleano. Vacio cuando
+  // funcionesSinExecuteParaPublic es true. Nunca se corrige aqui ni se
+  // genera una migracion nueva -- solo se reporta y la validacion ya
+  // aborta (ver el chequeo todoOk en scripts/rf24RamaTemporalNeonRunbook.ts).
+  funcionesConExecuteInesperadoParaPublic: string[];
   funcionesPublicasConExecuteParaChainpulseApp: boolean;
   funcionInternaSinGrant: boolean;
   todasLasFuncionesSonDeNeondbOwner: boolean;
@@ -264,11 +272,26 @@ function dependenciasReales(): DependenciasValidacionRamaTemporalRf24 {
 async function consultarCatalogoRf24<T>(etiqueta: string, contexto: string, consulta: () => Promise<T>): Promise<T> {
   try {
     return await consulta();
-  } catch {
-    logError(`${contexto}:catalogo:${etiqueta}`, `ERROR_CONSULTA_CATALOGO_${etiqueta}`);
+  } catch (err) {
+    // Ronda 6 (Alex): antes este catch estaba "sin binding" y descartaba
+    // TODO detalle del error -- asi fallo GRANTS_EXECUTE_PUBLIC sin dejar
+    // saber si era SQL, firma, permiso o un grant real inesperado. Ahora
+    // se extrae, con diagnosticoErrorConsultaCruda() (duck-typing
+    // defensivo, nunca reenvia el error crudo ni la URL de conexion -- ver
+    // ese helper en src/infra/prisma/errores.ts), el SQLSTATE real (si lo
+    // hay), la severidad (si lo hay), el tipo de columna no soportado por
+    // el adaptador (si ese fue el caso, como en GRANTS_EXECUTE_PUBLIC esta
+    // ronda) y un mensaje ya saneado -- todo opcional, nunca se inventa un
+    // valor que no vino del error.
+    const diag = diagnosticoErrorConsultaCruda(err);
+    const detalle =
+      `codigo_prisma=${diag.codigoPrisma ?? "N/A"} sqlstate=${diag.sqlstate ?? "N/A"} ` +
+      `severidad=${diag.severidad ?? "N/A"} tipo_no_soportado=${diag.tipoNoSoportado ?? "N/A"} ` +
+      `mensaje=${diag.mensaje ?? "N/A"}`;
+    logError(`${contexto}:catalogo:${etiqueta}`, `ERROR_CONSULTA_CATALOGO_${etiqueta} -- ${detalle}`);
     throw new Error(
-      `ERROR_CONSULTA_CATALOGO_${etiqueta} -- fallo la consulta de catalogo "${etiqueta}" (post-migracion/post-continuacion). ` +
-        "Ver el log de arriba para el contexto exacto -- nunca se imprime la URL de conexion ni el error crudo del driver.",
+      `ERROR_CONSULTA_CATALOGO_${etiqueta} -- fallo la consulta de catalogo "${etiqueta}" (post-migracion/post-continuacion). ${detalle}. ` +
+        "Nunca se imprime la URL de conexion ni el error crudo del driver -- solo SQLSTATE/severidad/mensaje ya saneados (ver diagnosticoErrorConsultaCruda en src/infra/prisma/errores.ts).",
     );
   }
 }
@@ -389,42 +412,65 @@ export async function orquestarValidacionRamaTemporalRf24(
     const tablasSinPrivilegiosDeChainpulseApp = privilegiosTabla.length === 0;
 
     const todasLasFunciones = [...FUNCIONES_PUBLICAS_RF24, FUNCION_INTERNA_RF24];
+    // Ronda 6 (Alex, punto 1/2): routine_name es de tipo sql_identifier en
+    // information_schema (dominio sobre el tipo nativo "name", OID 19) --
+    // @prisma/adapter-pg (6.19.3) no tiene mapeo para ese OID (confirmado
+    // leyendo fieldToColumnType() en node_modules/) y lanza
+    // UnsupportedNativeDataType ANTES de que la consulta llegue a tener
+    // exito o fallo real en Postgres -- esta es la causa confirmada del
+    // fallo real de esta consulta contra la rama temporal, NO un error de
+    // SQL, NO un nombre/firma incorrecto (las 12 firmas se compararon
+    // literalmente contra la migracion, todas coinciden) y NO un permiso
+    // insuficiente de neondb_owner. El cast ::text (mismo patron ya usado
+    // en restablecerPasswordMantenimiento.ts para current_user) evita el
+    // problema de raiz sin cambiar la semantica de la consulta.
     const grantsExecutePublic = await consultarCatalogoRf24<Array<{ routine_name: string }>>("GRANTS_EXECUTE_PUBLIC", contexto, () =>
       prismaAdmin.$queryRaw<Array<{ routine_name: string }>>`
-        SELECT routine_name FROM information_schema.routine_privileges
+        SELECT routine_name::text AS routine_name FROM information_schema.routine_privileges
           WHERE routine_schema = 'public' AND routine_name = ANY(${todasLasFunciones})
             AND privilege_type = 'EXECUTE' AND grantee = 'PUBLIC'`,
     );
     const funcionesSinExecuteParaPublic = grantsExecutePublic.length === 0;
+    // Punto 4 (Alex): firmas EXACTAS afectadas si hay un grant inesperado
+    // a PUBLIC -- nunca se corrige aqui ni se genera una migracion nueva.
+    const funcionesConExecuteInesperadoParaPublic = grantsExecutePublic.map((f: { routine_name: string }) => f.routine_name);
 
+    // Mismo defecto que GRANTS_EXECUTE_PUBLIC (punto 6: auditadas las 5
+    // consultas restantes antes de entregar, no una correccion por
+    // consulta) -- mismo cast ::text.
     const grantsExecuteChainpulseApp = await consultarCatalogoRf24<Array<{ routine_name: string }>>("GRANTS_EXECUTE_CHAINPULSE_APP", contexto, () =>
       prismaAdmin.$queryRaw<Array<{ routine_name: string }>>`
-        SELECT routine_name FROM information_schema.routine_privileges
+        SELECT routine_name::text AS routine_name FROM information_schema.routine_privileges
           WHERE routine_schema = 'public' AND routine_name = ANY(${FUNCIONES_PUBLICAS_RF24})
             AND privilege_type = 'EXECUTE' AND grantee = ${ROL_APP_ESPERADO}`,
     );
     const funcionesPublicasConExecuteParaChainpulseApp =
       new Set(grantsExecuteChainpulseApp.map((f: { routine_name: string }) => f.routine_name)).size === FUNCIONES_PUBLICAS_RF24.length;
 
+    // Mismo defecto (punto 6) -- mismo cast ::text.
     const grantInternaChainpulseApp = await consultarCatalogoRf24<Array<{ routine_name: string }>>("GRANT_INTERNA_CHAINPULSE_APP", contexto, () =>
       prismaAdmin.$queryRaw<Array<{ routine_name: string }>>`
-        SELECT routine_name FROM information_schema.routine_privileges
+        SELECT routine_name::text AS routine_name FROM information_schema.routine_privileges
           WHERE routine_schema = 'public' AND routine_name = ${FUNCION_INTERNA_RF24} AND grantee = ${ROL_APP_ESPERADO}`,
     );
     const funcionInternaSinGrant = grantInternaChainpulseApp.length === 0;
 
+    // Mismo defecto (punto 6): p.proname y r.rolname son de tipo nativo
+    // "name" (OID 19) en pg_proc/pg_roles -- mismo cast ::text en ambos.
     const propietarios = await consultarCatalogoRf24<Array<{ proname: string; rolname: string }>>("PROPIETARIOS_FUNCIONES", contexto, () =>
       prismaAdmin.$queryRaw<Array<{ proname: string; rolname: string }>>`
-        SELECT p.proname, r.rolname FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
+        SELECT p.proname::text AS proname, r.rolname::text AS rolname FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
           WHERE p.proname = ANY(${todasLasFunciones}) AND p.pronamespace = 'public'::regnamespace`,
     );
     const todasLasFuncionesSonDeNeondbOwner =
       propietarios.length === todasLasFunciones.length &&
       propietarios.every((p: { rolname: string }) => p.rolname === ROL_ADMIN_ESPERADO);
 
+    // Mismo defecto (punto 6): pg_policies.tablename tambien es "name" --
+    // mismo cast ::text.
     const politicasRls = await consultarCatalogoRf24<Array<{ tablename: string }>>("POLITICAS_RLS", contexto, () =>
       prismaAdmin.$queryRaw<Array<{ tablename: string }>>`
-        SELECT tablename FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY(${TABLAS_RF24})`,
+        SELECT tablename::text AS tablename FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY(${TABLAS_RF24})`,
     );
     const tablasSinPoliticaRls = politicasRls.length === 0;
 
@@ -433,6 +479,7 @@ export async function orquestarValidacionRamaTemporalRf24(
       migracionesAplicadas: MIGRACIONES_RF24_ESPERADAS_EN_ORDEN,
       tablasSinPrivilegiosDeChainpulseApp,
       funcionesSinExecuteParaPublic,
+      funcionesConExecuteInesperadoParaPublic,
       funcionesPublicasConExecuteParaChainpulseApp,
       funcionInternaSinGrant,
       todasLasFuncionesSonDeNeondbOwner,
