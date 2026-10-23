@@ -67,7 +67,18 @@ async function main() {
   }
 }
 
-main().catch(() => {
-  console.error("VALIDACION_DE_RAMA_TEMPORAL_ABORTADA -- ver el mensaje de error impreso arriba para el detalle.");
+main().catch((err: unknown) => {
+  // Correccion real (Alex, ejecucion en Windows): este catch descartaba el
+  // objeto Error por completo (`catch (() => {...})` sin parametro), asi que
+  // ningun detalle llegaba a la terminal mas alla de este mensaje generico --
+  // ni siquiera cuando orquestarValidacionRamaTemporalRf24() SI construyo un
+  // mensaje especifico. Ahora se imprime err.message: es SEGURO hacerlo
+  // porque cada "throw" de ese modulo (y de subproceso.ts) construye su
+  // PROPIO mensaje con texto fijo, nunca reenvia el error crudo del driver
+  // ni ninguna URL de conexion (ver los comentarios "catch SIN binding" en
+  // destinoPrueba.ts/subproceso.ts) -- por eso nunca se imprime err.stack
+  // aqui, solo err.message, que ya esta garantizado seguro en origen.
+  const mensaje = err instanceof Error ? err.message : String(err);
+  console.error(`VALIDACION_DE_RAMA_TEMPORAL_ABORTADA -- ${mensaje}`);
   process.exitCode = 1;
 });

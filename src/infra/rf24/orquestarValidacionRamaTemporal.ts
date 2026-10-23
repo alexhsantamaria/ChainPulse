@@ -246,6 +246,33 @@ function dependenciasReales(): DependenciasValidacionRamaTemporalRf24 {
   };
 }
 
+/**
+ * Envoltorio de diagnostico para las consultas de catalogo POST-aplicacion.
+ * Correccion real (Alex, ejecucion en Windows contra la rama temporal real):
+ * "prisma migrate deploy" aplico las 3 migraciones con exito, pero el script
+ * aborto justo despues con "fallo o excedio el timeout de 240s" SIN ningun
+ * diagnostico -- porque estas 6 consultas no tenian try/catch ni logError en
+ * absoluto, y el catch del wrapper (scripts/rf24RamaTemporalNeonRunbook.ts)
+ * descartaba el objeto Error real. Esta funcion cierra ambos huecos: cada
+ * consulta ahora pasa por una ETIQUETA UNICA y especifica (nunca generica),
+ * y logError() ya imprime mensaje+stack de forma segura (nunca la URL de
+ * conexion: estos catch siguen "sin binding" del error crudo del driver,
+ * igual que en subproceso.ts, asi que nunca se reenvia nada mas alla de la
+ * etiqueta fija) -- la etiqueta sola ya dice EXACTAMENTE cual de las 6
+ * consultas fallo, cosa que antes era imposible saber desde afuera.
+ */
+async function consultarCatalogoRf24<T>(etiqueta: string, contexto: string, consulta: () => Promise<T>): Promise<T> {
+  try {
+    return await consulta();
+  } catch {
+    logError(`${contexto}:catalogo:${etiqueta}`, `ERROR_CONSULTA_CATALOGO_${etiqueta}`);
+    throw new Error(
+      `ERROR_CONSULTA_CATALOGO_${etiqueta} -- fallo la consulta de catalogo "${etiqueta}" (post-migracion/post-continuacion). ` +
+        "Ver el log de arriba para el contexto exacto -- nunca se imprime la URL de conexion ni el error crudo del driver.",
+    );
+  }
+}
+
 export async function orquestarValidacionRamaTemporalRf24(
   deps: DependenciasValidacionRamaTemporalRf24 = dependenciasReales(),
 ): Promise<ResumenValidacionRamaTemporalRf24> {
@@ -351,39 +378,54 @@ export async function orquestarValidacionRamaTemporalRf24(
     }
 
     // --- Verificaciones de catalogo real, post-aplicacion (Pruebas 3/4/5/6) ---
-    const privilegiosTabla = await prismaAdmin.$queryRaw<Array<{ privilege_type: string }>>`
-      SELECT privilege_type FROM information_schema.role_table_grants
-        WHERE table_schema = 'public' AND table_name = ANY(${TABLAS_RF24}) AND grantee = ${ROL_APP_ESPERADO}`;
+    // Cada consulta pasa por consultarCatalogoRf24() con su propia etiqueta --
+    // antes de esta correccion, ninguna tenia try/catch ni logError, asi que
+    // un fallo aqui abortaba sin dejar NINGUN rastro de cual consulta fallo.
+    const privilegiosTabla = await consultarCatalogoRf24<Array<{ privilege_type: string }>>("PRIVILEGIOS_TABLA", contexto, () =>
+      prismaAdmin.$queryRaw<Array<{ privilege_type: string }>>`
+        SELECT privilege_type FROM information_schema.role_table_grants
+          WHERE table_schema = 'public' AND table_name = ANY(${TABLAS_RF24}) AND grantee = ${ROL_APP_ESPERADO}`,
+    );
     const tablasSinPrivilegiosDeChainpulseApp = privilegiosTabla.length === 0;
 
     const todasLasFunciones = [...FUNCIONES_PUBLICAS_RF24, FUNCION_INTERNA_RF24];
-    const grantsExecutePublic = await prismaAdmin.$queryRaw<Array<{ routine_name: string }>>`
-      SELECT routine_name FROM information_schema.routine_privileges
-        WHERE routine_schema = 'public' AND routine_name = ANY(${todasLasFunciones})
-          AND privilege_type = 'EXECUTE' AND grantee = 'PUBLIC'`;
+    const grantsExecutePublic = await consultarCatalogoRf24<Array<{ routine_name: string }>>("GRANTS_EXECUTE_PUBLIC", contexto, () =>
+      prismaAdmin.$queryRaw<Array<{ routine_name: string }>>`
+        SELECT routine_name FROM information_schema.routine_privileges
+          WHERE routine_schema = 'public' AND routine_name = ANY(${todasLasFunciones})
+            AND privilege_type = 'EXECUTE' AND grantee = 'PUBLIC'`,
+    );
     const funcionesSinExecuteParaPublic = grantsExecutePublic.length === 0;
 
-    const grantsExecuteChainpulseApp = await prismaAdmin.$queryRaw<Array<{ routine_name: string }>>`
-      SELECT routine_name FROM information_schema.routine_privileges
-        WHERE routine_schema = 'public' AND routine_name = ANY(${FUNCIONES_PUBLICAS_RF24})
-          AND privilege_type = 'EXECUTE' AND grantee = ${ROL_APP_ESPERADO}`;
+    const grantsExecuteChainpulseApp = await consultarCatalogoRf24<Array<{ routine_name: string }>>("GRANTS_EXECUTE_CHAINPULSE_APP", contexto, () =>
+      prismaAdmin.$queryRaw<Array<{ routine_name: string }>>`
+        SELECT routine_name FROM information_schema.routine_privileges
+          WHERE routine_schema = 'public' AND routine_name = ANY(${FUNCIONES_PUBLICAS_RF24})
+            AND privilege_type = 'EXECUTE' AND grantee = ${ROL_APP_ESPERADO}`,
+    );
     const funcionesPublicasConExecuteParaChainpulseApp =
       new Set(grantsExecuteChainpulseApp.map((f: { routine_name: string }) => f.routine_name)).size === FUNCIONES_PUBLICAS_RF24.length;
 
-    const grantInternaChainpulseApp = await prismaAdmin.$queryRaw<Array<{ routine_name: string }>>`
-      SELECT routine_name FROM information_schema.routine_privileges
-        WHERE routine_schema = 'public' AND routine_name = ${FUNCION_INTERNA_RF24} AND grantee = ${ROL_APP_ESPERADO}`;
+    const grantInternaChainpulseApp = await consultarCatalogoRf24<Array<{ routine_name: string }>>("GRANT_INTERNA_CHAINPULSE_APP", contexto, () =>
+      prismaAdmin.$queryRaw<Array<{ routine_name: string }>>`
+        SELECT routine_name FROM information_schema.routine_privileges
+          WHERE routine_schema = 'public' AND routine_name = ${FUNCION_INTERNA_RF24} AND grantee = ${ROL_APP_ESPERADO}`,
+    );
     const funcionInternaSinGrant = grantInternaChainpulseApp.length === 0;
 
-    const propietarios = await prismaAdmin.$queryRaw<Array<{ proname: string; rolname: string }>>`
-      SELECT p.proname, r.rolname FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
-        WHERE p.proname = ANY(${todasLasFunciones}) AND p.pronamespace = 'public'::regnamespace`;
+    const propietarios = await consultarCatalogoRf24<Array<{ proname: string; rolname: string }>>("PROPIETARIOS_FUNCIONES", contexto, () =>
+      prismaAdmin.$queryRaw<Array<{ proname: string; rolname: string }>>`
+        SELECT p.proname, r.rolname FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
+          WHERE p.proname = ANY(${todasLasFunciones}) AND p.pronamespace = 'public'::regnamespace`,
+    );
     const todasLasFuncionesSonDeNeondbOwner =
       propietarios.length === todasLasFunciones.length &&
       propietarios.every((p: { rolname: string }) => p.rolname === ROL_ADMIN_ESPERADO);
 
-    const politicasRls = await prismaAdmin.$queryRaw<Array<{ tablename: string }>>`
-      SELECT tablename FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY(${TABLAS_RF24})`;
+    const politicasRls = await consultarCatalogoRf24<Array<{ tablename: string }>>("POLITICAS_RLS", contexto, () =>
+      prismaAdmin.$queryRaw<Array<{ tablename: string }>>`
+        SELECT tablename FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY(${TABLAS_RF24})`,
+    );
     const tablasSinPoliticaRls = politicasRls.length === 0;
 
     return {
