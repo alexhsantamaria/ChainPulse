@@ -64,8 +64,28 @@ async function main() {
         resumen.funcionesConExecuteInesperadoParaPublic.join(", "),
     );
   }
+  // Punto 4 (Alex, ronda 7): filas EXACTAS (tabla/privilegio/grantee/
+  // grantor/is_grantable) si hay un privilegio de tabla inesperado --
+  // nunca se corrige aqui (ni REVOKE manual ni migracion nueva).
+  if (resumen.privilegiosTablaInesperadosParaChainpulseApp.length > 0) {
+    console.error(
+      "\nATENCION -- privilegio(s) de tabla inesperado(s) para chainpulse_app:\n" +
+        resumen.privilegiosTablaInesperadosParaChainpulseApp
+          .map((f) => `  tabla=${f.table_name} privilegio=${f.privilege_type} grantee=${f.grantee} grantor=${f.grantor} is_grantable=${f.is_grantable}`)
+          .join("\n"),
+    );
+  }
+  if (resumen.privilegiosTablaInesperadosParaPublic.length > 0) {
+    console.error(
+      "\nATENCION -- privilegio(s) de tabla inesperado(s) para PUBLIC:\n" +
+        resumen.privilegiosTablaInesperadosParaPublic
+          .map((f) => `  tabla=${f.table_name} privilegio=${f.privilege_type} grantee=${f.grantee} grantor=${f.grantor} is_grantable=${f.is_grantable}`)
+          .join("\n"),
+    );
+  }
   const todoOk =
     resumen.tablasSinPrivilegiosDeChainpulseApp &&
+    resumen.tablasSinPrivilegiosParaPublic &&
     resumen.funcionesSinExecuteParaPublic &&
     resumen.funcionesPublicasConExecuteParaChainpulseApp &&
     resumen.funcionInternaSinGrant &&

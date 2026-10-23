@@ -222,10 +222,37 @@ export function decidirModoMigracionesRf24(
   };
 }
 
+// Ronda 7 (Alex, punto 1): fila completa de information_schema.role_table_grants
+// -- esquema (siempre 'public' en este chequeo, no se repite por fila),
+// tabla, grantee, privilege_type, grantor e is_grantable. table_name,
+// grantee y grantor son sql_identifier (dominio sobre "name", mismo
+// defecto de adaptador ya corregido en ronda 6 para las funciones) --
+// casteados a ::text en la consulta misma.
+export interface FilaPrivilegioTablaRf24 {
+  table_name: string;
+  privilege_type: string;
+  grantee: string;
+  grantor: string;
+  is_grantable: string;
+}
+
 export interface ResumenValidacionRamaTemporalRf24 {
   modoMigraciones: "aplicar" | "continuar";
   migracionesAplicadas: string[];
   tablasSinPrivilegiosDeChainpulseApp: boolean;
+  // Punto 4 (Alex, ronda 7): filas EXACTAS (tabla/privilegio/grantee/
+  // grantor/is_grantable) si tablasSinPrivilegiosDeChainpulseApp es
+  // false -- nunca solo el booleano. Vacio cuando es true. Nunca se
+  // corrige aqui (ni REVOKE manual ni migracion nueva) -- solo se
+  // reporta; la validacion ya aborta via el todoOk existente.
+  privilegiosTablaInesperadosParaChainpulseApp: FilaPrivilegioTablaRf24[];
+  // Punto 3 (Alex): la migracion 2 de RF24 hace REVOKE ALL ... FROM PUBLIC
+  // explicito sobre estas mismas 2 tablas -- esto lo reverifica contra
+  // catalogo real en vez de asumirlo (mismo alcance exacto de tablas,
+  // punto 2: nunca se mezcla con privilegios de chainpulse_app sobre
+  // otras tablas del proyecto).
+  tablasSinPrivilegiosParaPublic: boolean;
+  privilegiosTablaInesperadosParaPublic: FilaPrivilegioTablaRf24[];
   funcionesSinExecuteParaPublic: boolean;
   // Punto 4 (Alex, ronda 6): si funcionesSinExecuteParaPublic es false,
   // este arreglo trae los routine_name EXACTOS que tienen un GRANT EXECUTE
@@ -404,12 +431,43 @@ export async function orquestarValidacionRamaTemporalRf24(
     // Cada consulta pasa por consultarCatalogoRf24() con su propia etiqueta --
     // antes de esta correccion, ninguna tenia try/catch ni logError, asi que
     // un fallo aqui abortaba sin dejar NINGUN rastro de cual consulta fallo.
-    const privilegiosTabla = await consultarCatalogoRf24<Array<{ privilege_type: string }>>("PRIVILEGIOS_TABLA", contexto, () =>
-      prismaAdmin.$queryRaw<Array<{ privilege_type: string }>>`
-        SELECT privilege_type FROM information_schema.role_table_grants
+    // Ronda 7 (Alex, punto 1): antes esta consulta solo traia privilege_type
+    // (suficiente para el booleano, insuficiente para auditar que privilegio
+    // exacto aparecio) -- ahora trae la fila completa de role_table_grants.
+    // Punto 2: table_schema='public' AND table_name = ANY(TABLAS_RF24) sigue
+    // exactamente igual -- limitado EXCLUSIVAMENTE a las 2 tablas de RF24,
+    // nunca se confunde con un privilegio legitimo de chainpulse_app sobre
+    // otra tabla del proyecto (eslabones, conexiones, etc., que tienen
+    // nombres distintos y quedan fuera de este arreglo).
+    const privilegiosTabla = await consultarCatalogoRf24<FilaPrivilegioTablaRf24[]>("PRIVILEGIOS_TABLA", contexto, () =>
+      prismaAdmin.$queryRaw<FilaPrivilegioTablaRf24[]>`
+        SELECT table_name::text AS table_name, privilege_type, grantee::text AS grantee,
+               grantor::text AS grantor, is_grantable
+          FROM information_schema.role_table_grants
           WHERE table_schema = 'public' AND table_name = ANY(${TABLAS_RF24}) AND grantee = ${ROL_APP_ESPERADO}`,
     );
     const tablasSinPrivilegiosDeChainpulseApp = privilegiosTabla.length === 0;
+    const privilegiosTablaInesperadosParaChainpulseApp = privilegiosTabla;
+
+    // Punto 3 (Alex): la migracion 2 de RF24 (20261022090000_rf24_tabla_
+    // solicitud_derechos) hace "REVOKE ALL ... FROM PUBLIC" explicito sobre
+    // "solicitudes_derechos" e "intentos_solicitud_derechos_descartados"
+    // -- se reverifica aqui contra catalogo real, igual que el resto de
+    // este modulo nunca asume un estado sin probarlo. Si chainpulse_app NO
+    // es miembro de ningun rol intermedio con privilegios sobre estas 2
+    // tablas (no hay ninguno documentado en este proyecto -- chainpulse_app
+    // es el rol de runtime de la aplicacion, sin miembros propios) un
+    // privilegio heredado por membresia de roles no aplicaria aqui; esta
+    // consulta cubre la otra via real de herencia (PUBLIC).
+    const privilegiosTablaPublic = await consultarCatalogoRf24<FilaPrivilegioTablaRf24[]>("PRIVILEGIOS_TABLA_PUBLIC", contexto, () =>
+      prismaAdmin.$queryRaw<FilaPrivilegioTablaRf24[]>`
+        SELECT table_name::text AS table_name, privilege_type, grantee::text AS grantee,
+               grantor::text AS grantor, is_grantable
+          FROM information_schema.role_table_grants
+          WHERE table_schema = 'public' AND table_name = ANY(${TABLAS_RF24}) AND grantee = 'PUBLIC'`,
+    );
+    const tablasSinPrivilegiosParaPublic = privilegiosTablaPublic.length === 0;
+    const privilegiosTablaInesperadosParaPublic = privilegiosTablaPublic;
 
     const todasLasFunciones = [...FUNCIONES_PUBLICAS_RF24, FUNCION_INTERNA_RF24];
     // Ronda 6 (Alex, punto 1/2): routine_name es de tipo sql_identifier en
@@ -478,6 +536,9 @@ export async function orquestarValidacionRamaTemporalRf24(
       modoMigraciones: decision.modo,
       migracionesAplicadas: MIGRACIONES_RF24_ESPERADAS_EN_ORDEN,
       tablasSinPrivilegiosDeChainpulseApp,
+      privilegiosTablaInesperadosParaChainpulseApp,
+      tablasSinPrivilegiosParaPublic,
+      privilegiosTablaInesperadosParaPublic,
       funcionesSinExecuteParaPublic,
       funcionesConExecuteInesperadoParaPublic,
       funcionesPublicasConExecuteParaChainpulseApp,
