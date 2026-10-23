@@ -167,6 +167,26 @@ async function conectarComoOwner(): Promise<Client> {
 // sobre solicitudes_derechos/intentos_solicitud_derechos_descartados,
 // para probar CHECK/FK a nivel de esquema -- nunca el acceso de runtime
 // de la app (eso es exactamente lo que Prueba 5 verifica que falle).
+//
+// AMPLIACION punto 4 (Alex, auditoria v11 fallida, 2026-10-23): el mismo
+// criterio se extiende ahora a "usuarios"/"empresas" (RLS por tenant,
+// ver mas abajo en las 2 pruebas de ON DELETE RESTRICT) -- la fila del
+// fixture de Usuario/Empresa es INVISIBLE para chainpulse_app sin
+// app.tenant_id fijado, asi que su delete/findUnique debe correr con
+// prismaAdmin (neondb_owner, exento de RLS).
+//
+// CORRECCION punto 1 (Alex, auditoria v11 fallida, 2026-10-23, barrido
+// amplio -- reemplaza la nota anterior sobre "evaluaciones_expres_v2"):
+// prismaAdmin para TODA creacion, lectura de inspeccion y limpieza
+// DIRECTA de fixtures, sin excepcion por tabla -- incluidas las 3
+// lecturas de "evaluaciones_expres_v2" de este archivo que solo derivan
+// correoHash (aunque esa tabla no tiene RLS ni REVOKE para
+// chainpulse_app). "prisma" (chainpulse_app) se usa UNICAMENTE cuando el
+// objetivo explicito de la prueba es el propio contrato de chainpulse_app
+// -- en este archivo, las 4 llamadas a crear_solicitud_derechos/
+// procesar_solicitud_derechos (funciones publicas SECURITY DEFINER, ya
+// con EXECUTE otorgado), cada una el objeto bajo prueba de su propio
+// `it` (expiracion fija, regresion A1, regresion A2).
 let prismaAdmin: ClientePrueba;
 
 beforeAll(() => {
@@ -186,31 +206,44 @@ afterAll(async () => {
 });
 
 describe("Prueba 1 -- migraciones aplicables desde una copia de production", () => {
-  it("las 4 migraciones de RF24 existen, en orden, bajo prisma/migrations/ (3 originales + la correctiva de privilegios, Ronda 8)", () => {
+  it("las 6 migraciones de RF24 existen, en orden, bajo prisma/migrations/ (3 originales + la correctiva de privilegios + 2 correcciones de A1/A2, Rondas 8-10)", () => {
     // Verificacion estatica (sin red): el ORDEN relativo (enum aislado
     // primero, tabla despues, funciones despues, correctivo de
-    // privilegios al final -- tiene que ir despues de que la tabla
-    // exista) es lo que realmente importa para "aplicable desde una
-    // copia de production" -- ALTER TYPE ... ADD VALUE exige su propia
-    // transaccion ya COMMITeada antes de que cualquier otra migracion
-    // use el valor nuevo (ver cabecera de la migracion 1). La aplicacion
-    // real contra una copia de production (el runbook de rama temporal
-    // Neon, bloqueado en esta entrega) es lo que demuestra esto de punta
-    // a punta -- esta asercion es el chequeo minimo que SI puede correr
-    // localmente. El filtro es "_rf24_" (presente en las 4, y en
+    // privilegios despues -- tiene que ir despues de que la tabla
+    // exista -- y las 2 correcciones de A1/A2 al final, cada una
+    // CREATE OR REPLACE sobre funciones ya existentes) es lo que
+    // realmente importa para "aplicable desde una copia de production"
+    // -- ALTER TYPE ... ADD VALUE exige su propia transaccion ya
+    // COMMITeada antes de que cualquier otra migracion use el valor
+    // nuevo (ver cabecera de la migracion 1). La aplicacion real contra
+    // una copia de production (el runbook de rama temporal Neon,
+    // bloqueado en esta entrega) es lo que demuestra esto de punta a
+    // punta -- esta asercion es el chequeo minimo que SI puede correr
+    // localmente. El filtro es "_rf24_" (presente en las 6, y en
     // ninguna otra migracion del repo) en vez de un prefijo de fecha fijo
-    // -- la 4a migracion es de 2026-10-23, no de 2026-10-22 como las
-    // primeras 3.
+    // -- la migracion 4 es de 2026-10-23 05:37:58, y las migraciones 5 y
+    // 6 son del mismo dia 2026-10-23, a las 16:00:00 y 17:00:00
+    // respectivamente -- no de 2026-10-22 como las primeras 3.
+    //
+    // ACTUALIZACION (Alex, punto 6, auditoria v11 fallida 2026-10-23):
+    // esta prueba quedo desactualizada tras aplicarse realmente la
+    // migracion 5 en la rama temporal (v11) -- todavia exigia solo 4
+    // carpetas, sin la migracion 5 ya aplicada. Ahora exige exactamente
+    // las 6: las 5 ya aplicadas en produccion/rama-temporal mas la
+    // migracion 6 (correccion residual de A1, creada en esta ronda,
+    // forward-only, todavia NO aplicada contra ninguna base real).
     const carpetas: string[] = readdirSync("prisma/migrations").filter((c: string) => c.includes("_rf24_"));
     expect(carpetas.sort()).toEqual([
       "20261022080000_rf24_enum_bucket_limite_tasa",
       "20261022090000_rf24_tabla_solicitud_derechos",
       "20261022100000_rf24_funciones_controladas",
       "20261023053758_rf24_revocar_privilegios_directos_tablas_derechos",
+      "20261023160000_rf24_correccion_ambiguedad_id_y_consentimiento_sin_id",
+      "20261023170000_rf24_correccion_referencia_ambigua_id_verificacion_correo",
     ]);
   });
 
-  it("aplica las 4 migraciones de RF24, en orden, contra una copia real de production (sin destruir nada preexistente)", async () => {
+  it("aplica las 6 migraciones de RF24, en orden, contra una copia real de production (sin destruir nada preexistente)", async () => {
     requerirEntornoDePruebasRf24Confirmado();
     // Intencionalmente no reimplementado aca: aplicar una migracion
     // nueva contra una copia REAL de production (no una base de prueba
@@ -309,7 +342,12 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
   // dentro de la funcion. ---
   describe("crear_solicitud_derechos -- expiracion fija (el llamador no la controla, punto 1 segunda ronda)", () => {
     it("crea la fila con expiraEn ~ now() + 24h SIN que exista ningun parametro para pedir otra cosa -- la firma real (5 argumentos) ya no deja hueco para intentarlo", async () => {
-      const evaluacion = await prisma.evaluacionExpresV2.findUniqueOrThrow({
+      // CORRECCION punto 1 (Alex, auditoria v11 fallida, 2026-10-23,
+      // barrido amplio): prismaAdmin, nunca prisma -- lectura de
+      // inspeccion de fixture (obtener el correo), nunca el contrato de
+      // chainpulse_app bajo prueba aqui (eso es crear_solicitud_derechos,
+      // invocado mas abajo via $queryRaw con "prisma").
+      const evaluacion = await prismaAdmin.evaluacionExpresV2.findUniqueOrThrow({
         where: { id: fixture.evaluacionExpresV2Id },
       });
       const correoHash = hashCorreoNormalizado(evaluacion.correo!);
@@ -411,6 +449,23 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     // Usuario se rechaza mientras la fila exista). Fixture de Usuario
     // PROPIO en cada prueba (nunca el `admin` compartido de arriba) --
     // una prueba que intenta borrarlo no debe interferir con las demas.
+    //
+    // CORRECCION punto 4 (Alex, auditoria v11 fallida, 2026-10-23):
+    // prismaAdmin, nunca prisma, en el delete/findUnique de estas 2
+    // pruebas -- "usuarios" tiene RLS por tenant (prisma/rls.sql,
+    // tenant_isolation_usuarios: USING ("empresaId" = current_setting
+    // ('app.tenant_id', true))). El cliente de aplicacion no fija
+    // app.tenant_id en este contexto de prueba, asi que para ese rol la
+    // fila del fixture es INVISIBLE -- prisma.usuario.delete/findUnique
+    // devolvian "record not found" (P2025/null), NUNCA el error real de
+    // la FK RESTRICT, en el log real de v11. prismaAdmin corre como
+    // neondb_owner (propietario de la tabla, exento de RLS por diseno,
+    // igual que crearFixtureUsuarioAdminRf24/borrarFixtureUsuarioAdminRf24
+    // de mas arriba) -- con prismaAdmin la fila SI es visible y el
+    // DELETE llega de verdad a Postgres, que es lo que esta prueba
+    // necesita ejercitar (la RESTRICT real), nunca el contrato de RLS/
+    // privilegios de chainpulse_app, que no es lo que estas 2 pruebas
+    // validan.
     it("ON DELETE RESTRICT bloquea borrar un administrador mientras exista una SolicitudDerechos que lo referencia", async () => {
       const referenciado = await crearFixtureUsuarioAdminRf24("restrict-referenciado");
       const id = `chk-restrict-1-${fixture.evaluacionExpresV2Id}`;
@@ -423,7 +478,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
                 now() + interval '1 day', 'PROCESADA', now(), now())`;
 
       await expect(
-        prisma.usuario.delete({ where: { id: referenciado.usuarioId } }),
+        prismaAdmin.usuario.delete({ where: { id: referenciado.usuarioId } }),
       ).rejects.toThrow(/solicitudes_derechos_resueltoPorUsuarioId_fkey/);
 
       // Limpieza en el orden que la propia RESTRICT exige: primero la
@@ -435,12 +490,12 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("ON DELETE RESTRICT permite borrar un administrador que NO tiene ninguna SolicitudDerechos referenciandolo", async () => {
       const sinReferencias = await crearFixtureUsuarioAdminRf24("restrict-sin-referencias");
 
-      await prisma.usuario.delete({ where: { id: sinReferencias.usuarioId } });
+      await prismaAdmin.usuario.delete({ where: { id: sinReferencias.usuarioId } });
 
-      const usuarioTrasBorrado = await prisma.usuario.findUnique({ where: { id: sinReferencias.usuarioId } });
+      const usuarioTrasBorrado = await prismaAdmin.usuario.findUnique({ where: { id: sinReferencias.usuarioId } });
       expect(usuarioTrasBorrado).toBeNull();
 
-      await prisma.empresa.delete({ where: { id: sinReferencias.empresaId } }); // ya sin Usuario que cascada
+      await prismaAdmin.empresa.delete({ where: { id: sinReferencias.empresaId } }); // ya sin Usuario que cascada
     });
   });
 
@@ -846,7 +901,10 @@ describe("Prueba 19 -- regresion migracion 5 (A1: 42702 corregido; A2: consentim
   });
 
   it('A1 -- crear_solicitud_derechos ya NO lanza SQLSTATE 42702 ("column reference \\"id\\" is ambiguous") y devuelve un id real', async () => {
-    const evaluacion = await prisma.evaluacionExpresV2.findUniqueOrThrow({
+    // CORRECCION punto 1 (Alex, auditoria v11 fallida, 2026-10-23,
+    // barrido amplio): prismaAdmin, nunca prisma -- lectura de inspeccion
+    // de fixture.
+    const evaluacion = await prismaAdmin.evaluacionExpresV2.findUniqueOrThrow({
       where: { id: fixture.evaluacionExpresV2Id },
     });
     const correoHash = hashCorreoNormalizado(evaluacion.correo!);
@@ -866,7 +924,10 @@ describe("Prueba 19 -- regresion migracion 5 (A1: 42702 corregido; A2: consentim
   });
 
   it("A2 -- aplicar_efecto_solicitud_derechos (via la ruta publica procesar_solicitud_derechos) ya NO viola el NOT NULL de consentimientos_expres.id", async () => {
-    const evaluacion = await prisma.evaluacionExpresV2.findUniqueOrThrow({
+    // CORRECCION punto 1 (Alex, auditoria v11 fallida, 2026-10-23,
+    // barrido amplio): prismaAdmin, nunca prisma -- lectura de inspeccion
+    // de fixture.
+    const evaluacion = await prismaAdmin.evaluacionExpresV2.findUniqueOrThrow({
       where: { id: fixture.evaluacionExpresV2Id },
     });
     const correoHash = hashCorreoNormalizado(evaluacion.correo!);

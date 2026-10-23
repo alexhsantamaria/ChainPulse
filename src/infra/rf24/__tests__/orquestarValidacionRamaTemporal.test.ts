@@ -179,6 +179,55 @@ describe("decidirModoMigracionesRf24", () => {
     const resultado = decidirModoMigracionesRf24(estado({ pendientes: ["rf24_b", "rf24_a", "rf24_c"] }), RF24);
     expect(resultado.modo).toBe("bloqueado");
   });
+
+  // Ronda 10 (Alex, punto 9, auditoria v11 fallida 2026-10-23): mismas 3
+  // garantias que la Ronda 8 ya probaba de forma abstracta (rf24_a/b/c),
+  // pero ahora con los 6 nombres REALES de carpeta de migracion RF24 tal
+  // como existen en prisma/migrations/ tras la migracion 6 (correccion
+  // residual de A1) -- para que esta prueba quede directamente trazable
+  // al escenario real de produccion, nunca solo a nombres abstractos.
+  const RF24_REAL_5 = [
+    "20261022080000_rf24_enum_bucket_limite_tasa",
+    "20261022090000_rf24_tabla_solicitud_derechos",
+    "20261022100000_rf24_funciones_controladas",
+    "20261023053758_rf24_revocar_privilegios_directos_tablas_derechos",
+    "20261023160000_rf24_correccion_ambiguedad_id_y_consentimiento_sin_id",
+  ];
+  const RF24_REAL_6 = [
+    ...RF24_REAL_5,
+    "20261023170000_rf24_correccion_referencia_ambigua_id_verificacion_correo",
+  ];
+
+  it("Modo A (Ronda 10, Alex punto 9) -- caso real de produccion con migracion 6: las 5 migraciones RF24 ya aplicadas, la 6a (correccion residual de A1) pendiente", () => {
+    const resultado = decidirModoMigracionesRf24(
+      estado({ aplicadas: [...RF24_REAL_5], pendientes: ["20261023170000_rf24_correccion_referencia_ambigua_id_verificacion_correo"] }),
+      RF24_REAL_6,
+    );
+    expect(resultado).toEqual({ modo: "aplicar" });
+  });
+
+  it("Modo B (Ronda 10, Alex punto 9) -- caso real de produccion con migracion 6: las 6 migraciones RF24 ya aplicadas (incluida la 6a), cero pendientes en total", () => {
+    const resultado = decidirModoMigracionesRf24(estado({ aplicadas: [...RF24_REAL_6] }), RF24_REAL_6);
+    expect(resultado).toEqual({ modo: "continuar" });
+  });
+
+  it("bloqueado (Ronda 10, Alex punto 9) -- estado mixto/anomalo: la migracion 6 sigue pendiente, pero una de las 5 ya aplicadas tiene una anomalia activa", () => {
+    const resultado = decidirModoMigracionesRf24(
+      estado({
+        aplicadas: [
+          "20261022080000_rf24_enum_bucket_limite_tasa",
+          "20261022090000_rf24_tabla_solicitud_derechos",
+          "20261022100000_rf24_funciones_controladas",
+          "20261023053758_rf24_revocar_privilegios_directos_tablas_derechos",
+        ],
+        anomaliasActivas: ["20261023160000_rf24_correccion_ambiguedad_id_y_consentimiento_sin_id"],
+        pendientes: ["20261023170000_rf24_correccion_referencia_ambigua_id_verificacion_correo"],
+      }),
+      RF24_REAL_6,
+    );
+    expect(resultado.modo).toBe("bloqueado");
+    expect(resultado.motivo).toContain("20261023160000_rf24_correccion_ambiguedad_id_y_consentimiento_sin_id");
+  });
 });
 
 // Pruebas -- evaluarDefinicionesMigracion5() (Ronda 9, Alex: verificacion
@@ -201,6 +250,15 @@ describe("evaluarDefinicionesMigracion5", () => {
       prosecdef: true,
       propietario: "neondb_owner",
       search_path: "public, pg_temp",
+      // Migracion 6 (Alex, 2026-10-23): forma YA CORREGIDA por defecto
+      // (alias "ev", ambas columnas calificadas) -- asi el caso base
+      // "coincide" de este archivo sigue pasando sin repetirla en cada
+      // prueba. Las pruebas nuevas de patronProhibidoEnCuerpo /
+      // patronRequeridoEnCuerpo la sobreescriben explicitamente para
+      // probar, por separado, el patron viejo (prohibido) y la ausencia
+      // del patron corregido (requerido).
+      definicion_completa:
+        "CREATE OR REPLACE FUNCTION public.crear_solicitud_derechos(...) RETURNS TABLE(creada boolean, id text) LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$ ... SELECT (ev.correo IS NOT NULL AND ...) INTO v_coincide FROM public.evaluaciones_expres_v2 AS ev WHERE ev.id = p_evaluacion_id; ... INSERT INTO public.solicitudes_derechos AS sd (...) VALUES (...) RETURNING sd.id INTO v_id; ... END; $$;",
       ...parcial,
     };
   }
@@ -212,6 +270,12 @@ describe("evaluarDefinicionesMigracion5", () => {
       prosecdef: false,
       propietario: "neondb_owner",
       search_path: "public, pg_temp",
+      // Sin patronProhibidoEnCuerpo/patronRequeridoEnCuerpo declarado para
+      // esta funcion (ver DEFINICIONES_ESPERADAS_MIGRACION_5) -- el valor
+      // exacto es irrelevante para evaluarDefinicionesMigracion5, pero el
+      // campo es obligatorio en FilaDefinicionFuncionMigracion5.
+      definicion_completa:
+        "CREATE OR REPLACE FUNCTION public.aplicar_efecto_solicitud_derechos(...) RETURNS void LANGUAGE plpgsql SET search_path = public, pg_temp AS $$ ... END; $$;",
       ...parcial,
     };
   }
@@ -360,6 +424,78 @@ describe("evaluarDefinicionesMigracion5", () => {
       filaCrearSolicitud(),
       filaAplicarEfecto(),
       filaCrearSolicitud({ proname: "otra_funcion_cualquiera" }),
+    ]);
+    expect(resultado).toEqual({ coincide: true, discrepancias: [] });
+  });
+
+  // Pruebas nuevas (Alex, punto 2, auditoria v11 fallida 2026-10-23):
+  // patronProhibidoEnCuerpo / patronRequeridoEnCuerpo contra
+  // pg_get_functiondef -- el chequeo que faltaba y que dejo pasar, como
+  // falso positivo real, la version de crear_solicitud_derechos que
+  // migracion 5 dejo con la ambiguedad residual de "id" todavia presente
+  // en el SELECT de verificacion de correo (corregida recien en
+  // migracion 6).
+  it("discrepancia -- la definicion real (pg_get_functiondef) TODAVIA contiene el patron ambiguo prohibido (A1 residual, el falso positivo real de migracion 5)", () => {
+    // El patron prohibido (forma vieja, sin alias) y el patron requerido
+    // (forma corregida, con alias "ev") son mutuamente excluyentes sobre
+    // la MISMA referencia -- por eso esta definicion simulada incluye,
+    // deliberadamente, AMBAS formas en lugares distintos del cuerpo (una
+    // hipotetica con dos SELECT, una ya corregida y otra todavia con el
+    // defecto): asi se aisla UNICAMENTE el chequeo de
+    // patronProhibidoEnCuerpo, sin que patronRequeridoEnCuerpo tambien
+    // dispare por no encontrar la forma corregida en ningun lado (ese
+    // caso, el real de la auditoria v11, ya esta cubierto -- y con las 2
+    // discrepancias simultaneas esperadas -- en la siguiente prueba).
+    const resultado = evaluarDefinicionesMigracion5([
+      filaCrearSolicitud({
+        definicion_completa:
+          "CREATE OR REPLACE FUNCTION public.crear_solicitud_derechos(...) ... SELECT (correo IS NOT NULL AND ...) INTO v_coincide FROM public.evaluaciones_expres_v2 WHERE id = p_evaluacion_id; ... (otra referencia, ya corregida en otra parte del cuerpo, para aislar este chequeo) ... FROM public.evaluaciones_expres_v2 AS ev WHERE ev.id = p_evaluacion_id ...",
+      }),
+      filaAplicarEfecto(),
+    ]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toHaveLength(1);
+    expect(resultado.discrepancias[0]?.proname).toBe("crear_solicitud_derechos");
+    expect(resultado.discrepancias[0]?.motivo).toContain("TODAVIA contiene el patron ambiguo prohibido");
+  });
+
+  it("discrepancia (caso real de la auditoria v11) -- cuando la definicion real NUNCA tuvo la forma corregida, ambos chequeos (prohibido presente + requerido ausente) disparan a la vez, sobre la misma funcion", () => {
+    const resultado = evaluarDefinicionesMigracion5([
+      filaCrearSolicitud({
+        definicion_completa:
+          "CREATE OR REPLACE FUNCTION public.crear_solicitud_derechos(...) ... SELECT (correo IS NOT NULL AND ...) INTO v_coincide FROM public.evaluaciones_expres_v2 WHERE id = p_evaluacion_id; ...",
+      }),
+      filaAplicarEfecto(),
+    ]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toHaveLength(2);
+    expect(resultado.discrepancias.every((d) => d.proname === "crear_solicitud_derechos")).toBe(true);
+    const motivos = resultado.discrepancias.map((d) => d.motivo);
+    expect(motivos.some((m) => m.includes("TODAVIA contiene el patron ambiguo prohibido"))).toBe(true);
+    expect(motivos.some((m) => m.includes("NO contiene la forma corregida y calificada esperada"))).toBe(true);
+  });
+
+  it("discrepancia -- la definicion real (pg_get_functiondef) NO contiene la forma corregida y calificada esperada (alias \"ev\" ausente)", () => {
+    const resultado = evaluarDefinicionesMigracion5([
+      filaCrearSolicitud({
+        definicion_completa:
+          "CREATE OR REPLACE FUNCTION public.crear_solicitud_derechos(...) ... SELECT (true) INTO v_coincide FROM public.otra_tabla_cualquiera WHERE x = 1; ...",
+      }),
+      filaAplicarEfecto(),
+    ]);
+    expect(resultado.coincide).toBe(false);
+    expect(resultado.discrepancias).toHaveLength(1);
+    expect(resultado.discrepancias[0]?.proname).toBe("crear_solicitud_derechos");
+    expect(resultado.discrepancias[0]?.motivo).toContain("NO contiene la forma corregida y calificada esperada");
+  });
+
+  it("coincide -- la forma corregida con alias implicito (sin la palabra AS) tambien se acepta como valida", () => {
+    const resultado = evaluarDefinicionesMigracion5([
+      filaCrearSolicitud({
+        definicion_completa:
+          "CREATE OR REPLACE FUNCTION public.crear_solicitud_derechos(...) ... FROM public.evaluaciones_expres_v2 ev WHERE ev.id = p_evaluacion_id; ...",
+      }),
+      filaAplicarEfecto(),
     ]);
     expect(resultado).toEqual({ coincide: true, discrepancias: [] });
   });

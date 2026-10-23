@@ -94,6 +94,16 @@ const MIGRACIONES_RF24_ESPERADAS_EN_ORDEN = [
   // consentimientos_expres). Ver el header de esa migracion para el
   // detalle completo.
   "20261023160000_rf24_correccion_ambiguedad_id_y_consentimiento_sin_id",
+  // Ronda 10 (Alex, punto 1/6, auditoria v11 fallida 2026-10-23): 6a
+  // migracion, correctiva -- CREATE OR REPLACE sobre crear_solicitud_
+  // derechos, corrigiendo una SEGUNDA ocurrencia (residual, no detectada
+  // antes de la corrida real v11) de la misma ambiguedad de "id" que la
+  // migracion 5 ya habia corregido en un lugar distinto de esa misma
+  // funcion (el RETURNING). Ver el header de esa migracion para el
+  // detalle completo. Todavia NO aplicada contra ninguna base real --
+  // es la que el runbook v12 debe reconocer como la unica pendiente,
+  // con las 5 anteriores ya aplicadas (Alex, punto 11).
+  "20261023170000_rf24_correccion_referencia_ambigua_id_verificacion_correo",
 ];
 
 const FUNCIONES_PUBLICAS_RF24 = [
@@ -316,7 +326,26 @@ export interface FilaDefaultAclTablaRf24 {
 // SECURITY DEFINER (asimetria deliberada: presente en
 // crear_solicitud_derechos, ausente en aplicar_efecto_solicitud_derechos),
 // propietario (debe seguir siendo neondb_owner) y search_path (debe
-// seguir siendo exactamente "public, pg_temp"). proname/propietario son
+// seguir siendo exactamente "public, pg_temp").
+//
+// CORRECCION punto 2 (Alex, auditoria v11 fallida, 2026-10-23): este
+// chequeo dio un FALSO POSITIVO real en la corrida de v11 -- la migracion
+// 5 dejo crear_solicitud_derechos con firma/SECURITY DEFINER/propietario/
+// search_path exactamente correctos, pero el CUERPO seguia conteniendo la
+// referencia ambigua a "id" (SQLSTATE 42702) que causo 7 fallos reales de
+// Vitest. Ninguno de los 4 atributos de catalogo de arriba puede detectar
+// un defecto DENTRO del cuerpo de la funcion -- de ahi el falso positivo.
+// Se agrega ahora una quinta verificacion, basada en pg_get_functiondef(oid)
+// (la definicion COMPLETA y literal de la funcion, cuerpo incluido -- nunca
+// solo metadatos de pg_proc): por cada funcion con un patronProhibidoEnCuerpo
+// declarado, su definicion NUNCA debe contener ese patron (el patron viejo,
+// ambiguo, ya corregido); por cada funcion con un patronRequeridoEnCuerpo
+// declarado, su definicion SIEMPRE debe contenerlo (la forma corregida,
+// calificada por alias). Deliberadamente literal y especifico (nunca un
+// detector generico de "ambiguedad" que yo mismo tendria que inventar sin
+// poder verificarlo contra un parser real de PL/pgSQL) -- el mismo patron
+// ya usado en todo este encargo para nombres de tabla: comparar contra la
+// definicion REAL, nunca inferir por analogia. proname/propietario son
 // tipo nativo "name" (OID 19) -- mismo cast ::text ya usado en el resto
 // de este modulo. search_path se extrae de pg_proc.proconfig (arreglo de
 // texto "clave=valor") buscando la entrada "search_path=..." y recortando
@@ -330,6 +359,10 @@ export interface FilaDefinicionFuncionMigracion5 {
   prosecdef: boolean;
   propietario: string;
   search_path: string | null;
+  // CORRECCION punto 2 (Alex, auditoria v11 fallida, 2026-10-23):
+  // pg_get_functiondef(oid) -- definicion COMPLETA y literal (cuerpo
+  // incluido), nunca solo metadatos. Ver evaluarDefinicionesMigracion5().
+  definicion_completa: string;
 }
 
 export interface DiscrepanciaDefinicionMigracion5 {
@@ -341,12 +374,23 @@ const DEFINICIONES_ESPERADAS_MIGRACION_5: ReadonlyArray<{
   proname: string;
   identidadArgumentosEsperada: string;
   securityDefinerEsperado: boolean;
+  // CORRECCION punto 2 (Alex, auditoria v11 fallida, 2026-10-23): patrones
+  // LITERALES (nunca un detector generico -- ver comentario de cabecera
+  // de este bloque) contra pg_get_functiondef(oid). patronProhibidoEnCuerpo:
+  // si matchea, es el defecto exacto de A1/migracion 5 vuelto a aparecer
+  // (referencia sin calificar a "id" dentro del SELECT de verificacion de
+  // correo). patronRequeridoEnCuerpo: la forma corregida por migracion 6
+  // (alias "ev", ambas columnas calificadas) debe estar presente siempre.
+  patronProhibidoEnCuerpo?: RegExp;
+  patronRequeridoEnCuerpo?: RegExp;
 }> = [
   {
     proname: "crear_solicitud_derechos",
     identidadArgumentosEsperada:
       "p_evaluacion_id text, p_correo_hash_entrante text, p_tipo text, p_alcance_retiro text, p_huella_hash text",
     securityDefinerEsperado: true,
+    patronProhibidoEnCuerpo: /FROM\s+public\.evaluaciones_expres_v2\s+WHERE\s+id\s*=\s*p_evaluacion_id/i,
+    patronRequeridoEnCuerpo: /FROM\s+public\.evaluaciones_expres_v2\s+(?:AS\s+)?ev\s+WHERE\s+ev\.id\s*=\s*p_evaluacion_id/i,
   },
   {
     proname: "aplicar_efecto_solicitud_derechos",
@@ -397,6 +441,27 @@ export function evaluarDefinicionesMigracion5(
       discrepancias.push({
         proname: esperada.proname,
         motivo: `search_path inesperado: esperado="public, pg_temp" real=${real.search_path ?? "NULL"}`,
+      });
+    }
+    // CORRECCION punto 2 (Alex, auditoria v11 fallida, 2026-10-23): el
+    // chequeo que faltaba -- contra la definicion COMPLETA (cuerpo
+    // incluido), nunca solo metadatos de pg_proc. Ver comentario de
+    // cabecera de DEFINICIONES_ESPERADAS_MIGRACION_5.
+    if (esperada.patronProhibidoEnCuerpo && esperada.patronProhibidoEnCuerpo.test(real.definicion_completa)) {
+      discrepancias.push({
+        proname: esperada.proname,
+        motivo:
+          `la definicion real (pg_get_functiondef) TODAVIA contiene el patron ambiguo prohibido ` +
+          `${esperada.patronProhibidoEnCuerpo} -- este es exactamente el defecto A1 (SQLSTATE 42702) ` +
+          `que la migracion correctiva debia eliminar`,
+      });
+    }
+    if (esperada.patronRequeridoEnCuerpo && !esperada.patronRequeridoEnCuerpo.test(real.definicion_completa)) {
+      discrepancias.push({
+        proname: esperada.proname,
+        motivo:
+          `la definicion real (pg_get_functiondef) NO contiene la forma corregida y calificada ` +
+          `esperada ${esperada.patronRequeridoEnCuerpo} -- no se puede confirmar que A1 este realmente resuelto`,
       });
     }
   }
@@ -781,7 +846,8 @@ export async function orquestarValidacionRamaTemporalRf24(
                  pg_get_function_identity_arguments(p.oid)::text AS identidad_argumentos,
                  p.prosecdef AS prosecdef,
                  r.rolname::text AS propietario,
-                 (SELECT substring(cfg, 13) FROM unnest(p.proconfig) AS cfg WHERE cfg LIKE 'search_path=%') AS search_path
+                 (SELECT substring(cfg, 13) FROM unnest(p.proconfig) AS cfg WHERE cfg LIKE 'search_path=%') AS search_path,
+                 pg_get_functiondef(p.oid)::text AS definicion_completa
             FROM pg_proc p
             JOIN pg_roles r ON r.oid = p.proowner
             WHERE p.proname = ANY(${FUNCIONES_MIGRACION_5_ESPERADAS}) AND p.pronamespace = 'public'::regnamespace`,

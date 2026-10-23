@@ -24,7 +24,7 @@
 // FUNCION SQL, no solo el calculo en memoria, acepta el reintento como
 // idempotente (mismo hash) en vez de rechazarlo.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { prisma } from "../../prisma/client";
 import {
   derivarToken,
@@ -48,6 +48,15 @@ import { construirClientePrueba, desconectarClientePrueba, type ClientePrueba } 
 // pendiente, confirmar_envio_token) siguen con el cliente de aplicacion
 // normal (`prisma`), sin cambios -- ya tienen EXECUTE otorgado.
 let prismaAdmin: ClientePrueba;
+
+// VERIFICACION punto 1 (Alex, auditoria v11 fallida, 2026-10-23, barrido
+// amplio): revisado archivo completo contra esa regla -- las UNICAS
+// operaciones que usan "prisma" en este archivo son las 4 llamadas a
+// funciones PUBLICAS SECURITY DEFINER de arriba, y cada una es,
+// literalmente, el objeto explicito bajo prueba de su propio describe
+// (Prueba 12/12bis/13/14) -- nunca usadas implicitamente para preparar o
+// limpiar fixtures (eso ya era, y sigue siendo, SIEMPRE prismaAdmin en
+// este archivo). Sin cambios necesarios aqui.
 
 beforeAll(() => {
   const connectionString = process.env.SEED_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -76,6 +85,32 @@ function obtenerFilaUnica<T>(filas: T[], mensaje: string): T {
     throw new Error(mensaje);
   }
   return fila;
+}
+
+// CORRECCION punto 5 (Alex, auditoria v11 fallida, 2026-10-23): la
+// Prueba 13 (mas abajo) llamaba derivarToken() sin que
+// RF24_TOKEN_DERIVE_KEY_V1 estuviera definida -- el unico lugar que la
+// generaba era el beforeAll de la Prueba 14, que corre DESPUES en el
+// mismo archivo (Vitest ejecuta los describe en orden de aparicion), asi
+// que la Prueba 13 siempre fallaba primero con Rf24ClaveDerivacionError.
+// La correccion real queda en el runbook (rf24-validar-rama-temporal-
+// neon-windows.v12-...ps1, Paso 7): genera una clave de prueba EFIMERA de
+// 256 bits con un RNG criptografico (RNGCryptoServiceProvider/
+// RandomNumberGenerator.Create(), nunca Get-Random), la expone SOLO como
+// variable de entorno del subproceso de Vitest que lanza, nunca la
+// imprime, y la borra en su "finally" junto con el resto de
+// $VariablesSensibles -- jamas una clave real de produccion. Esta
+// guardia simplemente CONFIRMA que esa variable ya llego desde el
+// proceso padre antes de usarla, con un mensaje explicito si no -- nunca
+// genera ella misma una clave de repuesto (eso es exactamente el
+// problema que tenia el beforeAll de la Prueba 14: una clave generada
+// ahi mismo, tarde, y solo para esa prueba).
+function requerirClaveDerivacionTokenRf24Confirmada(): void {
+  if (!process.env.RF24_TOKEN_DERIVE_KEY_V1) {
+    throw new Error(
+      "RF24_TOKEN_DERIVE_KEY_V1 no esta definida. Las Pruebas 13 y 14 de este archivo necesitan una clave de derivacion de token EFIMERA (256 bits, base64) -- nunca una clave real de produccion. Esa clave la genera y expone el runbook (rf24-validar-rama-temporal-neon-windows.v12-..., Paso 7) como variable de entorno de este subproceso de Vitest, antes de invocarlo; esta prueba nunca debe generar una por su cuenta. Si estas corriendo este archivo fuera del runbook, exporta tu propia clave efimera de 32 bytes en base64 antes de `npm run test:integration` (por ejemplo: node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"), nunca una clave real.",
+    );
+  }
 }
 
 describe("Prueba 12 -- caida tras incrementar el quinto intento termina en cancelacion por reconciliacion", () => {
@@ -269,6 +304,7 @@ describe("Prueba 13 -- preparacion del token antes del envio", () => {
 
   beforeAll(async () => {
     requerirEntornoDePruebasRf24Confirmado();
+    requerirClaveDerivacionTokenRf24Confirmada();
   });
 
   afterEach(async () => {
@@ -326,13 +362,12 @@ describe("Prueba 14 -- reintentos producen exactamente el mismo hash y version",
 
   beforeAll(async () => {
     requerirEntornoDePruebasRf24Confirmado();
-    // Clave real necesaria para derivarToken() -- solo para esta prueba,
-    // que ejercita la derivacion real (no solo la persistencia). Si no
-    // esta configurada en el entorno de pruebas, la prueba documenta por
-    // que no puede correr en vez de fingir una clave.
-    if (!process.env.RF24_TOKEN_DERIVE_KEY_V1) {
-      process.env.RF24_TOKEN_DERIVE_KEY_V1 = randomBytes(32).toString("base64");
-    }
+    // CORRECCION punto 5 (Alex, auditoria v11 fallida, 2026-10-23): ya
+    // NO se genera una clave aqui -- ver requerirClaveDerivacionTokenRf24
+    // Confirmada() mas arriba. Generarla solo en este beforeAll era
+    // precisamente lo que dejaba a la Prueba 13 (que corre primero) sin
+    // clave disponible.
+    requerirClaveDerivacionTokenRf24Confirmada();
   });
 
   afterEach(async () => {

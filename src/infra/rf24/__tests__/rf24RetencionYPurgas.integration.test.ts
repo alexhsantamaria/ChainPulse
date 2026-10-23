@@ -33,6 +33,13 @@ import { construirClientePrueba, desconectarClientePrueba, type ClientePrueba } 
 // tiene EXECUTE otorgado.
 let prismaAdmin: ClientePrueba;
 
+// VERIFICACION punto 1 (Alex, auditoria v11 fallida, 2026-10-23, barrido
+// amplio): revisado archivo completo -- la UNICA operacion que usa
+// "prisma" es correrPurga() (purgar_solicitudes_derechos_segun_retencion,
+// funcion publica), el objeto explicito bajo prueba de ambas describe --
+// nunca usada implicitamente para fixtures (eso ya era, y sigue siendo,
+// SIEMPRE prismaAdmin en este archivo). Sin cambios necesarios aqui.
+
 beforeAll(() => {
   const connectionString = process.env.SEED_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!connectionString) {

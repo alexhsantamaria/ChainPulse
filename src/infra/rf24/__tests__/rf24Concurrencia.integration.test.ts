@@ -27,17 +27,23 @@ import {
 } from "./entornoPruebasIntegracionRf24";
 import { construirClientePrueba, desconectarClientePrueba, type ClientePrueba } from "../../pruebaRevocacion/clientePrueba";
 
-// CORRECCION B1/B5 (Alex, auditoria de los 24 fallos, 2026-10-23): cliente
-// Prisma conectado como neondb_owner (nunca chainpulse_app) -- mismo
-// patron ya establecido en rf24EsquemaYPrivilegios.integration.test.ts
-// (Ronda 8). Usado SOLO para (B1) sembrar/borrar filas DIRECTAMENTE sobre
-// "solicitudes_derechos" (Ronda 8 revoco su CRUD directo a chainpulse_app)
-// y (B5) para invocar la funcion INTERNA aplicar_efecto_solicitud_derechos,
-// que nunca recibe GRANT EXECUTE para chainpulse_app a proposito -- nunca
-// para el acceso de runtime real de la app, que sigue pasando por las
-// funciones publicas SECURITY DEFINER (crear_solicitud_derechos,
-// reclamar_solicitudes_derechos_para_envio, asignar_token_pendiente,
-// confirmar_envio_token), sin cambios en esta ronda.
+// CORRECCION punto 1 (Alex, auditoria v11 fallida, 2026-10-23): barrido
+// amplio y coherente, aplicado a las 5 suites de integracion de RF24 --
+// prismaAdmin (neondb_owner) para TODA creacion, lectura de inspeccion y
+// limpieza DIRECTA de fixtures; prisma (chainpulse_app) UNICAMENTE cuando
+// el objetivo explicito de la prueba es validar el comportamiento o las
+// restricciones del propio rol de aplicacion. En este archivo, ese
+// contrato legitimo de chainpulse_app son las 4 funciones PUBLICAS
+// SECURITY DEFINER (crear_solicitud_derechos, reclamar_solicitudes_
+// derechos_para_envio, asignar_token_pendiente, confirmar_envio_token) --
+// cada Prueba (8-11) las invoca via $queryRaw con "prisma" PORQUE esa
+// invocacion ES, literalmente, el objetivo explicito bajo prueba (la
+// concurrencia real del camino de produccion de la app); nunca se usan
+// implicitamente para preparar o limpiar fixtures. aplicar_efecto_
+// solicitud_derechos (Prueba 9) es la unica excepcion real: es INTERNA,
+// nunca recibe GRANT EXECUTE para chainpulse_app a proposito, asi que
+// SIEMPRE se invoca via prismaAdmin -- ahi no hay contrato de chainpulse_app
+// que probar, por diseno.
 let prismaAdmin: ClientePrueba;
 
 beforeAll(() => {
@@ -104,7 +110,15 @@ describe("Prueba 8 -- creacion concurrente respetando 3/24h por evaluacion", () 
 
   beforeEach(async () => {
     fixture = await crearFixtureEvaluacionRf24(`concurrencia-8-${randomUUID()}`);
-    const evaluacion = await prisma.evaluacionExpresV2.findUniqueOrThrow({
+    // CORRECCION punto 1 (Alex, auditoria v11 fallida, 2026-10-23):
+    // prismaAdmin, nunca prisma -- esta es una lectura de INSPECCION de
+    // fixture (obtener el correo para calcular el hash), no el contrato
+    // de chainpulse_app bajo prueba en este describe (ese es
+    // crear_solicitud_derechos, invocado mas abajo via $queryRaw con
+    // "prisma"). Aunque "evaluaciones_expres_v2" no tiene RLS ni REVOKE
+    // para chainpulse_app, el barrido amplio pide prismaAdmin para toda
+    // lectura de inspeccion de fixture, sin excepcion por tabla.
+    const evaluacion = await prismaAdmin.evaluacionExpresV2.findUniqueOrThrow({
       where: { id: fixture.evaluacionExpresV2Id },
     });
     correoHash = hashCorreoNormalizado(evaluacion.correo!);
@@ -154,7 +168,25 @@ describe("Prueba 9 -- dos retiros concurrentes de la misma finalidad producen un
     // consentimiento previo registrado" (ver Funcion 2), pero esta
     // prueba quiere el caso real: un consentimiento vigente que se
     // retira.
-    await prisma.consentimientoExpres.create({
+    //
+    // CORRECCION punto 3 (Alex, auditoria v11 fallida, 2026-10-23):
+    // prismaAdmin, nunca prisma, en las 3 operaciones de
+    // "consentimientos_expres" de esta Prueba 9 (create aqui, count()
+    // mas abajo, deleteMany en el afterEach). Esta tabla tiene, desde
+    // 20260916150000_incremento2_evaluacion_expres_v2, GRANT INSERT,
+    // SELECT pero REVOKE UPDATE, DELETE para chainpulse_app (patron
+    // "recibo" append-only) -- el afterEach (deleteMany, una operacion
+    // DELETE) fallaba con "permission denied for table
+    // consentimientos_expres" usando el cliente de aplicacion: root
+    // cause real del fallo de la Prueba 9 en el log de v11. create()/
+    // count() SI tendrian INSERT/SELECT concedidos, pero se mueven
+    // igual a prismaAdmin por instruccion expresa de Alex: ninguno de
+    // los tres es el contrato de acceso que esta prueba valida (eso es
+    // exclusivamente aplicar_efecto_solicitud_derechos via
+    // prismaAdmin.$executeRaw, mas abajo), y mezclar prisma/prismaAdmin
+    // sobre la MISMA tabla dentro de la misma prueba es justo el tipo
+    // de inconsistencia fragil que causo este fallo.
+    await prismaAdmin.consentimientoExpres.create({
       data: {
         evaluacionExpresV2Id: fixture.evaluacionExpresV2Id,
         finalidad: "DIAGNOSTICO",
@@ -166,7 +198,7 @@ describe("Prueba 9 -- dos retiros concurrentes de la misma finalidad producen un
   });
 
   afterEach(async () => {
-    await prisma.consentimientoExpres.deleteMany({
+    await prismaAdmin.consentimientoExpres.deleteMany({
       where: { evaluacionExpresV2Id: fixture.evaluacionExpresV2Id },
     });
     await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
@@ -186,7 +218,7 @@ describe("Prueba 9 -- dos retiros concurrentes de la misma finalidad producen un
       prismaAdmin.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'RETIRO_CONSENTIMIENTO', 'DIAGNOSTICO', 'FORMULARIO_PUBLICO')`,
     ]);
 
-    const eventosDeRetiro = await prisma.consentimientoExpres.count({
+    const eventosDeRetiro = await prismaAdmin.consentimientoExpres.count({
       where: {
         evaluacionExpresV2Id: fixture.evaluacionExpresV2Id,
         finalidad: "DIAGNOSTICO",
@@ -195,7 +227,12 @@ describe("Prueba 9 -- dos retiros concurrentes de la misma finalidad producen un
     });
     expect(eventosDeRetiro).toBe(1);
 
-    const evaluacionFinal = await prisma.evaluacionExpresV2.findUniqueOrThrow({
+    // CORRECCION punto 1 (Alex, auditoria v11 fallida, 2026-10-23):
+    // prismaAdmin, nunca prisma -- lectura de inspeccion del resultado,
+    // no el contrato de chainpulse_app (que aqui no interviene en
+    // absoluto: toda esta prueba invoca aplicar_efecto_solicitud_derechos
+    // directamente via prismaAdmin, nunca a traves del rol de aplicacion).
+    const evaluacionFinal = await prismaAdmin.evaluacionExpresV2.findUniqueOrThrow({
       where: { id: fixture.evaluacionExpresV2Id },
     });
     expect(evaluacionFinal.accesoPublicoRevocadoEn).not.toBeNull();

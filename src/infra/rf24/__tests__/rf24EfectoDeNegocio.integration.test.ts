@@ -10,7 +10,6 @@
 //       eliminacion de contacto.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prisma } from "../../prisma/client";
 import {
   requerirEntornoDePruebasRf24Confirmado,
   crearFixtureEvaluacionRf24,
@@ -19,16 +18,20 @@ import {
 } from "./entornoPruebasIntegracionRf24";
 import { construirClientePrueba, desconectarClientePrueba, type ClientePrueba } from "../../pruebaRevocacion/clientePrueba";
 
-// CORRECCION B1/B5 (Alex, auditoria de los 24 fallos, 2026-10-23): cliente
-// Prisma conectado como neondb_owner -- mismo patron ya establecido en
-// rf24EsquemaYPrivilegios.integration.test.ts (Ronda 8). Usado para (B1)
-// borrarFixtureEvaluacionRf24() (que necesita el admin para su propio
-// deleteMany sobre "solicitudes_derechos") y para (B5) invocar la funcion
-// INTERNA aplicar_efecto_solicitud_derechos, que nunca recibe GRANT
-// EXECUTE para chainpulse_app a proposito -- esta describe SI quiere
-// ejercitar deliberadamente la funcion interna con sus efectos de
-// negocio (no hay una ruta publica equivalente que preserve el proposito
-// de estas 2 pruebas, ver auditoria).
+// CORRECCION punto 1 (Alex, auditoria v11 fallida, 2026-10-23): barrido
+// amplio y coherente -- prismaAdmin (neondb_owner) para TODA creacion,
+// lectura de inspeccion y limpieza DIRECTA de fixtures en las 5 suites de
+// integracion de RF24. Este archivo en particular no tiene ningun
+// contrato de chainpulse_app que validar: su unico objeto bajo prueba es
+// la funcion INTERNA aplicar_efecto_solicitud_derechos (nunca recibe
+// GRANT EXECUTE para chainpulse_app a proposito), siempre invocada via
+// prismaAdmin -- por eso TODA otra operacion directa de este archivo
+// (fixtures de EvaluacionExpresV2/Respuesta/HallazgoExpres/
+// PreguntaVersion, de creacion, lectura de verificacion o limpieza) usa
+// tambien prismaAdmin, sin excepcion por tabla, aunque chainpulse_app SI
+// tendria privilegios sin restriccion sobre varias de ellas en
+// produccion -- ninguna de esas operaciones es, en si misma, el contrato
+// de chainpulse_app bajo prueba aqui.
 let prismaAdmin: ClientePrueba;
 
 beforeAll(() => {
@@ -60,14 +63,14 @@ describe("Prueba 17 -- datos de contacto nulificables sin romper constraints", (
 
   it("aplicar_efecto_solicitud_derechos(ELIMINACION_CONTACTO) nulifica correo/nombreCompleto/empresaNombre/telefono sin violar ningun constraint de EvaluacionExpresV2", async () => {
     fixture = await crearFixtureEvaluacionRf24(`negocio-17-${randomUUID()}`);
-    await prisma.evaluacionExpresV2.update({
+    await prismaAdmin.evaluacionExpresV2.update({
       where: { id: fixture.evaluacionExpresV2Id },
       data: { empresaNombre: "Empresa de prueba RF24", telefono: "+51 999 999 999" },
     });
 
     await prismaAdmin.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'ELIMINACION_CONTACTO', NULL, 'FORMULARIO_PUBLICO')`;
 
-    const evaluacionFinal = await prisma.evaluacionExpresV2.findUniqueOrThrow({
+    const evaluacionFinal = await prismaAdmin.evaluacionExpresV2.findUniqueOrThrow({
       where: { id: fixture.evaluacionExpresV2Id },
     });
     expect(evaluacionFinal.correo).toBeNull();
@@ -83,7 +86,7 @@ describe("Prueba 17 -- datos de contacto nulificables sin romper constraints", (
 
   it("RETIRO_Y_ELIMINACION aplica el retiro de consentimiento Y la nulificacion de contacto en la misma llamada", async () => {
     fixture = await crearFixtureEvaluacionRf24(`negocio-17b-${randomUUID()}`);
-    await prisma.consentimientoExpres.create({
+    await prismaAdmin.consentimientoExpres.create({
       data: {
         evaluacionExpresV2Id: fixture.evaluacionExpresV2Id,
         finalidad: "INVESTIGACION",
@@ -95,12 +98,12 @@ describe("Prueba 17 -- datos de contacto nulificables sin romper constraints", (
 
     await prismaAdmin.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'RETIRO_Y_ELIMINACION', 'INVESTIGACION', 'FORMULARIO_PUBLICO')`;
 
-    const evaluacionFinal = await prisma.evaluacionExpresV2.findUniqueOrThrow({
+    const evaluacionFinal = await prismaAdmin.evaluacionExpresV2.findUniqueOrThrow({
       where: { id: fixture.evaluacionExpresV2Id },
     });
     expect(evaluacionFinal.correo).toBeNull();
 
-    const retiroInvestigacion = await prisma.consentimientoExpres.findFirst({
+    const retiroInvestigacion = await prismaAdmin.consentimientoExpres.findFirst({
       where: { evaluacionExpresV2Id: fixture.evaluacionExpresV2Id, finalidad: "INVESTIGACION", aceptado: false },
       orderBy: { createdAt: "desc" },
     });
@@ -117,9 +120,9 @@ describe("Prueba 18 -- cero cambios en respuestas, hallazgos y agregados durante
 
   afterEach(async () => {
     if (fixture) {
-      await prisma.hallazgoExpres.deleteMany({ where: { evaluacionExpresV2Id: fixture.evaluacionExpresV2Id } });
-      await prisma.respuesta.deleteMany({ where: { evaluacionExpresV2Id: fixture.evaluacionExpresV2Id } });
-      await prisma.preguntaVersion.deleteMany({ where: { cuestionarioVersionId: fixture.cuestionarioVersionId } });
+      await prismaAdmin.hallazgoExpres.deleteMany({ where: { evaluacionExpresV2Id: fixture.evaluacionExpresV2Id } });
+      await prismaAdmin.respuesta.deleteMany({ where: { evaluacionExpresV2Id: fixture.evaluacionExpresV2Id } });
+      await prismaAdmin.preguntaVersion.deleteMany({ where: { cuestionarioVersionId: fixture.cuestionarioVersionId } });
       await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
     }
   });
@@ -130,7 +133,7 @@ describe("Prueba 18 -- cero cambios en respuestas, hallazgos y agregados durante
     // CuestionarioVersion del fixture (FK + @@unique([cuestionarioVersionId, codigo])) --
     // crearFixtureEvaluacionRf24() no crea ninguna (no la necesita para
     // RF24 en si), asi que esta prueba crea la unica que necesita.
-    const preguntaVersion = await prisma.preguntaVersion.create({
+    const preguntaVersion = await prismaAdmin.preguntaVersion.create({
       data: {
         cuestionarioVersionId: fixture.cuestionarioVersionId,
         codigo: "Q1",
@@ -140,14 +143,14 @@ describe("Prueba 18 -- cero cambios en respuestas, hallazgos y agregados durante
         opciones: [{ valor: "SI", texto: "Si", orden: 1 }],
       },
     });
-    const respuesta = await prisma.respuesta.create({
+    const respuesta = await prismaAdmin.respuesta.create({
       data: {
         evaluacionExpresV2Id: fixture.evaluacionExpresV2Id,
         preguntaVersionId: preguntaVersion.id,
         opcionSeleccionada: "SI",
       },
     });
-    const hallazgo = await prisma.hallazgoExpres.create({
+    const hallazgo = await prismaAdmin.hallazgoExpres.create({
       data: {
         evaluacionExpresV2Id: fixture.evaluacionExpresV2Id,
         dimension: "ALINEACION",
@@ -163,8 +166,8 @@ describe("Prueba 18 -- cero cambios en respuestas, hallazgos y agregados durante
 
     await prismaAdmin.$executeRaw`SELECT public.aplicar_efecto_solicitud_derechos(${fixture.evaluacionExpresV2Id}, 'ELIMINACION_CONTACTO', NULL, 'FORMULARIO_PUBLICO')`;
 
-    const respuestaFinal = await prisma.respuesta.findUniqueOrThrow({ where: { id: respuesta.id } });
-    const hallazgoFinal = await prisma.hallazgoExpres.findUniqueOrThrow({ where: { id: hallazgo.id } });
+    const respuestaFinal = await prismaAdmin.respuesta.findUniqueOrThrow({ where: { id: respuesta.id } });
+    const hallazgoFinal = await prismaAdmin.hallazgoExpres.findUniqueOrThrow({ where: { id: hallazgo.id } });
     expect(respuestaFinal).toEqual(respuesta); // ni un campo cambio
     expect(hallazgoFinal).toEqual(hallazgo);
   }, 30000);
