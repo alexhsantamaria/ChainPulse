@@ -38,6 +38,7 @@ import {
   hashCorreoNormalizado,
   type FixtureEvaluacionRf24,
 } from "./entornoPruebasIntegracionRf24";
+import { construirClientePrueba, desconectarClientePrueba, type ClientePrueba } from "../../pruebaRevocacion/clientePrueba";
 
 // CORRECCION Alex 2026-10-22 (ronda noUncheckedIndexedAccess): helper local
 // de pruebas -- extrae la unica fila esperada de un arreglo de resultados
@@ -132,26 +133,57 @@ async function conectarComoOwner(): Promise<Client> {
   return client;
 }
 
+// Ronda 8 (Alex): cliente Prisma conectado como neondb_owner (nunca
+// chainpulse_app) -- ver nota extensa en el parche que introdujo este
+// bloque (parche_ronda8_test_admin_client.py). Usado SOLO por las
+// pruebas de este archivo que siembran/leen/borran filas DIRECTAMENTE
+// sobre solicitudes_derechos/intentos_solicitud_derechos_descartados,
+// para probar CHECK/FK a nivel de esquema -- nunca el acceso de runtime
+// de la app (eso es exactamente lo que Prueba 5 verifica que falle).
+let prismaAdmin: ClientePrueba;
+
+beforeAll(() => {
+  const connectionString = process.env.SEED_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      "Las pruebas de integracion de RF24 necesitan SEED_DATABASE_URL o DATABASE_URL (conexion real a Postgres, como neondb_owner) -- no deberian correr en este entorno. Usar `npm run test:integration` en Windows, nunca `npm run test`.",
+    );
+  }
+  prismaAdmin = construirClientePrueba(connectionString, "rf24-pruebas-integracion:admin");
+});
+
+afterAll(async () => {
+  if (prismaAdmin) {
+    await desconectarClientePrueba(prismaAdmin, "rf24-pruebas-integracion:admin:desconexion");
+  }
+});
+
 describe("Prueba 1 -- migraciones aplicables desde una copia de production", () => {
-  it("las 3 migraciones de RF24 existen, en orden, bajo prisma/migrations/", () => {
+  it("las 4 migraciones de RF24 existen, en orden, bajo prisma/migrations/ (3 originales + la correctiva de privilegios, Ronda 8)", () => {
     // Verificacion estatica (sin red): el ORDEN relativo (enum aislado
-    // primero, tabla despues, funciones al final) es lo que realmente
-    // importa para "aplicable desde una copia de production" -- ALTER
-    // TYPE ... ADD VALUE exige su propia transaccion ya COMMITeada antes
-    // de que cualquier otra migracion use el valor nuevo (ver cabecera de
-    // la migracion 1). La aplicacion real contra una copia de production
-    // (el runbook de rama temporal Neon, bloqueado en esta entrega) es lo
-    // que demuestra esto de punta a punta -- esta asercion es el
-    // chequeo minimo que SI puede correr localmente.
-    const carpetas: string[] = readdirSync("prisma/migrations").filter((c: string) => c.startsWith("202610220"));
+    // primero, tabla despues, funciones despues, correctivo de
+    // privilegios al final -- tiene que ir despues de que la tabla
+    // exista) es lo que realmente importa para "aplicable desde una
+    // copia de production" -- ALTER TYPE ... ADD VALUE exige su propia
+    // transaccion ya COMMITeada antes de que cualquier otra migracion
+    // use el valor nuevo (ver cabecera de la migracion 1). La aplicacion
+    // real contra una copia de production (el runbook de rama temporal
+    // Neon, bloqueado en esta entrega) es lo que demuestra esto de punta
+    // a punta -- esta asercion es el chequeo minimo que SI puede correr
+    // localmente. El filtro es "_rf24_" (presente en las 4, y en
+    // ninguna otra migracion del repo) en vez de un prefijo de fecha fijo
+    // -- la 4a migracion es de 2026-10-23, no de 2026-10-22 como las
+    // primeras 3.
+    const carpetas: string[] = readdirSync("prisma/migrations").filter((c: string) => c.includes("_rf24_"));
     expect(carpetas.sort()).toEqual([
       "20261022080000_rf24_enum_bucket_limite_tasa",
       "20261022090000_rf24_tabla_solicitud_derechos",
       "20261022100000_rf24_funciones_controladas",
+      "20261023053758_rf24_revocar_privilegios_directos_tablas_derechos",
     ]);
   });
 
-  it("aplica las 3 migraciones de RF24, en orden, contra una copia real de production (sin destruir nada preexistente)", async () => {
+  it("aplica las 4 migraciones de RF24, en orden, contra una copia real de production (sin destruir nada preexistente)", async () => {
     requerirEntornoDePruebasRf24Confirmado();
     // Intencionalmente no reimplementado aca: aplicar una migracion
     // nueva contra una copia REAL de production (no una base de prueba
@@ -178,7 +210,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
 
   it("alcance_retiro_coherente rechaza ELIMINACION_CONTACTO con alcanceRetiro no nulo", async () => {
     await expect(
-      prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+      prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
         (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "expiraEn", "createdAt", "actualizadaEn")
         VALUES (${`chk-1-${fixture.evaluacionExpresV2Id}`}, ${fixture.evaluacionExpresV2Id},
                 'ELIMINACION_CONTACTO'::"TipoSolicitudDerechos", 'DIAGNOSTICO'::"AlcanceRetiro",
@@ -188,7 +220,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
 
   it("alcance_retiro_coherente rechaza RETIRO_CONSENTIMIENTO con alcanceRetiro nulo", async () => {
     await expect(
-      prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+      prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
         (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "expiraEn", "createdAt", "actualizadaEn")
         VALUES (${`chk-2-${fixture.evaluacionExpresV2Id}`}, ${fixture.evaluacionExpresV2Id},
                 'RETIRO_CONSENTIMIENTO'::"TipoSolicitudDerechos", NULL,
@@ -198,7 +230,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
 
   it("token_hash_formato rechaza un tokenHash que no sea sha256 hexadecimal de 64 caracteres", async () => {
     await expect(
-      prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+      prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
         (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "expiraEn", "createdAt", "actualizadaEn")
         VALUES (${`chk-3-${fixture.evaluacionExpresV2Id}`}, ${fixture.evaluacionExpresV2Id},
                 'RETIRO_CONSENTIMIENTO'::"TipoSolicitudDerechos", 'DIAGNOSTICO'::"AlcanceRetiro",
@@ -208,33 +240,33 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
 
   it("token_hash_formato acepta NULL (fila aun no preparada)", async () => {
     const id = `chk-4-${fixture.evaluacionExpresV2Id}`;
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "expiraEn", "createdAt", "actualizadaEn")
       VALUES (${id}, ${fixture.evaluacionExpresV2Id},
               'RETIRO_CONSENTIMIENTO'::"TipoSolicitudDerechos", 'DIAGNOSTICO'::"AlcanceRetiro",
               NULL, now() + interval '1 day', now(), now())`;
-    const fila = await prisma.solicitudDerechos.findUnique({ where: { id } });
+    const fila = await prismaAdmin.solicitudDerechos.findUnique({ where: { id } });
     expect(fila?.tokenHash).toBeNull();
-    await prisma.solicitudDerechos.delete({ where: { id } });
+    await prismaAdmin.solicitudDerechos.delete({ where: { id } });
   });
 
   it("solicitudes_derechos_tokenHash_key es unico: dos filas con el mismo tokenHash no coexisten", async () => {
     const tokenHash = "a".repeat(64);
     const idA = `chk-5a-${fixture.evaluacionExpresV2Id}`;
     const idB = `chk-5b-${fixture.evaluacionExpresV2Id}`;
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "expiraEn", "createdAt", "actualizadaEn")
       VALUES (${idA}, ${fixture.evaluacionExpresV2Id},
               'RETIRO_CONSENTIMIENTO'::"TipoSolicitudDerechos", 'DIAGNOSTICO'::"AlcanceRetiro",
               ${tokenHash}, now() + interval '1 day', now(), now())`;
     await expect(
-      prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+      prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
         (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "expiraEn", "createdAt", "actualizadaEn")
         VALUES (${idB}, ${fixture.evaluacionExpresV2Id},
                 'RETIRO_CONSENTIMIENTO'::"TipoSolicitudDerechos", 'DIAGNOSTICO'::"AlcanceRetiro",
                 ${tokenHash}, now() + interval '1 day', now(), now())`,
     ).rejects.toThrow(/solicitudes_derechos_tokenHash_key/);
-    await prisma.solicitudDerechos.delete({ where: { id: idA } });
+    await prismaAdmin.solicitudDerechos.delete({ where: { id: idA } });
   });
 
   // --- CORRECCION Alex 2026-10-22, punto 1 (segunda ronda): la
@@ -259,7 +291,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
       expect(resultado.creada).toBe(true);
       expect(resultado.id).not.toBeNull();
 
-      const fila = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id: resultado.id! } });
+      const fila = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id: resultado.id! } });
       const horasHastaExpirar = (fila.expiraEn.getTime() - antes) / (1000 * 60 * 60);
       // Tolerancia de 1 minuto para el tiempo de ida y vuelta de la
       // prueba -- el punto central es que SIEMPRE es ~24h, nunca un
@@ -267,7 +299,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
       expect(horasHastaExpirar).toBeGreaterThan(23.98);
       expect(horasHastaExpirar).toBeLessThan(24.02);
 
-      await prisma.solicitudDerechos.delete({ where: { id: resultado.id! } });
+      await prismaAdmin.solicitudDerechos.delete({ where: { id: resultado.id! } });
     });
   });
 
@@ -287,7 +319,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("solicitudes_derechos_resueltoPorUsuarioId_fkey rechaza un usuarioId que no existe en usuarios", async () => {
       const id = `chk-fk-1-${fixture.evaluacionExpresV2Id}`;
       await expect(
-        prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+        prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
           (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "resueltoCanal", "resueltoPorUsuarioId",
            "expiraEn", estado, "createdAt", "actualizadaEn")
           VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -300,7 +332,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("resuelto_canal_administrador_coherente rechaza SOPORTE sin administrador", async () => {
       const id = `chk-coh-1-${fixture.evaluacionExpresV2Id}`;
       await expect(
-        prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+        prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
           (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "resueltoCanal", "resueltoPorUsuarioId",
            "expiraEn", estado, "createdAt", "actualizadaEn")
           VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -313,7 +345,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("resuelto_canal_administrador_coherente rechaza AUTOMATICO con un administrador poblado", async () => {
       const id = `chk-coh-2-${fixture.evaluacionExpresV2Id}`;
       await expect(
-        prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+        prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
           (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "resueltoCanal", "resueltoPorUsuarioId",
            "expiraEn", estado, "createdAt", "actualizadaEn")
           VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -325,16 +357,16 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
 
     it("resuelto_canal_administrador_coherente acepta SOPORTE con un administrador REAL poblado", async () => {
       const id = `chk-coh-3-${fixture.evaluacionExpresV2Id}`;
-      await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+      await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
         (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "resueltoCanal", "resueltoPorUsuarioId",
          "expiraEn", estado, "createdAt", "actualizadaEn")
         VALUES (${id}, ${fixture.evaluacionExpresV2Id},
                 'RETIRO_CONSENTIMIENTO'::"TipoSolicitudDerechos", 'DIAGNOSTICO'::"AlcanceRetiro",
                 'SOPORTE'::"EstadoResolucion", ${admin.usuarioId},
                 now() + interval '1 day', 'PROCESADA', now(), now())`;
-      const fila = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id } });
+      const fila = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id } });
       expect(fila.resueltoPorUsuarioId).toBe(admin.usuarioId);
-      await prisma.solicitudDerechos.delete({ where: { id } });
+      await prismaAdmin.solicitudDerechos.delete({ where: { id } });
     });
 
     // --- CORRECCION Alex 2026-10-22 (segunda ronda), punto 2: la FK
@@ -348,7 +380,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("ON DELETE RESTRICT bloquea borrar un administrador mientras exista una SolicitudDerechos que lo referencia", async () => {
       const referenciado = await crearFixtureUsuarioAdminRf24("restrict-referenciado");
       const id = `chk-restrict-1-${fixture.evaluacionExpresV2Id}`;
-      await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+      await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
         (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "resueltoCanal", "resueltoPorUsuarioId",
          "expiraEn", estado, "createdAt", "actualizadaEn")
         VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -362,7 +394,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
 
       // Limpieza en el orden que la propia RESTRICT exige: primero la
       // fila que referencia, despues el Usuario/Empresa.
-      await prisma.solicitudDerechos.delete({ where: { id } });
+      await prismaAdmin.solicitudDerechos.delete({ where: { id } });
       await borrarFixtureUsuarioAdminRf24(referenciado);
     });
 
@@ -385,7 +417,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("token_hash_version_pareja rechaza tokenHash poblado con tokenKeyVersion NULL", async () => {
       const id = `chk-par-1-${fixture.evaluacionExpresV2Id}`;
       await expect(
-        prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+        prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
           (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "tokenKeyVersion",
            "expiraEn", "createdAt", "actualizadaEn")
           VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -397,7 +429,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("token_hash_version_pareja rechaza tokenKeyVersion poblado con tokenHash NULL", async () => {
       const id = `chk-par-2-${fixture.evaluacionExpresV2Id}`;
       await expect(
-        prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+        prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
           (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "tokenKeyVersion",
            "expiraEn", "createdAt", "actualizadaEn")
           VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -409,7 +441,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("envio_confirmado_requiere_token rechaza envioConfirmadoEn poblado sin tokenHash en una fila PENDIENTE", async () => {
       const id = `chk-env-1-${fixture.evaluacionExpresV2Id}`;
       await expect(
-        prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+        prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
           (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "envioConfirmadoEn",
            "expiraEn", estado, "createdAt", "actualizadaEn")
           VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -420,22 +452,22 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
 
     it("envio_confirmado_requiere_token permite envioConfirmadoEn poblado SIN tokenHash cuando el estado es terminal (fila ya purgada -- funcion 12)", async () => {
       const id = `chk-env-2-${fixture.evaluacionExpresV2Id}`;
-      await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+      await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
         (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "envioConfirmadoEn",
          "expiraEn", "consumidoEn", estado, "createdAt", "actualizadaEn")
         VALUES (${id}, ${fixture.evaluacionExpresV2Id},
                 'RETIRO_CONSENTIMIENTO'::"TipoSolicitudDerechos", 'DIAGNOSTICO'::"AlcanceRetiro",
                 NULL, now(), now() - interval '1 day', now(), 'PROCESADA', now(), now())`;
-      const fila = await prisma.solicitudDerechos.findUniqueOrThrow({ where: { id } });
+      const fila = await prismaAdmin.solicitudDerechos.findUniqueOrThrow({ where: { id } });
       expect(fila.tokenHash).toBeNull();
       expect(fila.envioConfirmadoEn).not.toBeNull();
-      await prisma.solicitudDerechos.delete({ where: { id } });
+      await prismaAdmin.solicitudDerechos.delete({ where: { id } });
     });
 
     it("reclamo_lease_pareja rechaza reclamoId poblado con reclamadoHasta NULL", async () => {
       const id = `chk-rec-1-${fixture.evaluacionExpresV2Id}`;
       await expect(
-        prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+        prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
           (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "reclamoId", "reclamadoHasta",
            "expiraEn", estado, "createdAt", "actualizadaEn")
           VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -447,7 +479,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("reclamo_lease_pareja rechaza reclamadoHasta poblado con reclamoId NULL", async () => {
       const id = `chk-rec-2-${fixture.evaluacionExpresV2Id}`;
       await expect(
-        prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+        prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
           (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "reclamoId", "reclamadoHasta",
            "expiraEn", estado, "createdAt", "actualizadaEn")
           VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -459,7 +491,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("intentos_envio_no_negativo rechaza un intentosEnvio negativo", async () => {
       const id = `chk-int-1-${fixture.evaluacionExpresV2Id}`;
       await expect(
-        prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+        prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
           (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "intentosEnvio",
            "expiraEn", estado, "createdAt", "actualizadaEn")
           VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -471,7 +503,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("token_key_version_positivo rechaza tokenKeyVersion = 0", async () => {
       const id = `chk-ver-1-${fixture.evaluacionExpresV2Id}`;
       await expect(
-        prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+        prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
           (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "tokenKeyVersion",
            "expiraEn", "createdAt", "actualizadaEn")
           VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -483,7 +515,7 @@ describe("Prueba 2 -- constraints y firmas reales", () => {
     it("token_key_version_positivo rechaza tokenKeyVersion negativa", async () => {
       const id = `chk-ver-2-${fixture.evaluacionExpresV2Id}`;
       await expect(
-        prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+        prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
           (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "tokenKeyVersion",
            "expiraEn", "createdAt", "actualizadaEn")
           VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -607,7 +639,7 @@ describe("Prueba 5 -- chainpulse_app sin CRUD directo", () => {
     }
   });
 
-  it("una conexion autenticada como chainpulse_app no puede SELECT/INSERT/UPDATE/DELETE directamente sobre solicitudes_derechos", async () => {
+  it("una conexion autenticada como chainpulse_app no puede SELECT/INSERT/UPDATE/DELETE directamente sobre ninguna de las 2 tablas de RF24 (Ronda 8: se agrega UPDATE/DELETE y la segunda tabla, antes solo se cubria SELECT/INSERT sobre solicitudes_derechos)", async () => {
     const connectionStringApp = process.env.CHAINPULSE_APP_DATABASE_URL;
     if (!connectionStringApp) {
       // Documentado, no fingido: esta verificacion a nivel de conexion
@@ -624,6 +656,7 @@ describe("Prueba 5 -- chainpulse_app sin CRUD directo", () => {
     const clienteApp = new Client({ connectionString: connectionStringApp });
     await clienteApp.connect();
     try {
+      // solicitudes_derechos: SELECT/INSERT/UPDATE/DELETE, los 4.
       await expect(clienteApp.query(`SELECT * FROM "solicitudes_derechos" LIMIT 1`)).rejects.toThrow();
       await expect(
         clienteApp.query(
@@ -631,6 +664,33 @@ describe("Prueba 5 -- chainpulse_app sin CRUD directo", () => {
              VALUES ('x', $1, 'ELIMINACION_CONTACTO', now(), now(), now())`,
           [fixture.evaluacionExpresV2Id],
         ),
+      ).rejects.toThrow();
+      // Ronda 8 (Alex, parte del punto "acceso directo SELECT/INSERT/
+      // UPDATE/DELETE falla para chainpulse_app"): el privilegio se
+      // revoca a nivel de ACL, ANTES de evaluar si la fila existe o no
+      // -- por eso un WHERE que no empareja ninguna fila real sigue
+      // siendo una prueba valida del privilegio (el motor rechaza por
+      // falta de permiso, nunca llega a buscar filas).
+      await expect(
+        clienteApp.query(`UPDATE "solicitudes_derechos" SET estado = estado WHERE id = 'no-existe-ronda-8'`),
+      ).rejects.toThrow();
+      await expect(
+        clienteApp.query(`DELETE FROM "solicitudes_derechos" WHERE id = 'no-existe-ronda-8'`),
+      ).rejects.toThrow();
+
+      // intentos_solicitud_derechos_descartados: SELECT/INSERT/UPDATE/
+      // DELETE, los 4 -- Ronda 8, tabla antes no cubierta en esta prueba.
+      await expect(clienteApp.query(`SELECT * FROM "intentos_solicitud_derechos_descartados" LIMIT 1`)).rejects.toThrow();
+      await expect(
+        clienteApp.query(`INSERT INTO "intentos_solicitud_derechos_descartados" (id) VALUES ('no-existe-ronda-8')`),
+      ).rejects.toThrow();
+      await expect(
+        clienteApp.query(
+          `UPDATE "intentos_solicitud_derechos_descartados" SET "creadoEn" = "creadoEn" WHERE id = 'no-existe-ronda-8'`,
+        ),
+      ).rejects.toThrow();
+      await expect(
+        clienteApp.query(`DELETE FROM "intentos_solicitud_derechos_descartados" WHERE id = 'no-existe-ronda-8'`),
       ).rejects.toThrow();
     } finally {
       await clienteApp.end();
@@ -684,7 +744,7 @@ describe("Prueba 7 -- intentos de shadowing con objetos temporales sin efecto", 
     // Siembra una fila PENDIENTE real con un token conocido.
     const tokenHash = "b".repeat(64);
     const id = `shadow-1-${fixture.evaluacionExpresV2Id}`;
-    await prisma.$executeRaw`INSERT INTO "solicitudes_derechos"
+    await prismaAdmin.$executeRaw`INSERT INTO "solicitudes_derechos"
       (id, "evaluacionExpresV2Id", tipo, "alcanceRetiro", "tokenHash", "tokenKeyVersion",
        "expiraEn", estado, "createdAt", "actualizadaEn")
       VALUES (${id}, ${fixture.evaluacionExpresV2Id},
@@ -708,7 +768,7 @@ describe("Prueba 7 -- intentos de shadowing con objetos temporales sin efecto", 
     const { rows } = await clienteSesion.query(`SELECT * FROM procesar_solicitud_derechos($1)`, [tokenHash]);
     expect(rows[0].procesada).toBe(true);
 
-    const filaReal = await prisma.solicitudDerechos.findUnique({ where: { id } });
+    const filaReal = await prismaAdmin.solicitudDerechos.findUnique({ where: { id } });
     expect(filaReal?.estado).toBe("PROCESADA");
 
     const filaSenuelo = await clienteSesion.query(`SELECT * FROM pg_temp.solicitudes_derechos WHERE id = 'fila-senuelo'`);

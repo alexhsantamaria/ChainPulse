@@ -81,6 +81,11 @@ const MIGRACIONES_RF24_ESPERADAS_EN_ORDEN = [
   "20261022080000_rf24_enum_bucket_limite_tasa",
   "20261022090000_rf24_tabla_solicitud_derechos",
   "20261022100000_rf24_funciones_controladas",
+  // Ronda 8 (Alex): 4a migracion, correctiva -- revoca los 8 privilegios
+  // directos inesperados (SELECT/INSERT/UPDATE/DELETE de chainpulse_app)
+  // confirmados por Alex sobre las 2 tablas de RF24. Ver el header de esa
+  // migracion para el detalle completo de la auditoria que la precede.
+  "20261023053758_rf24_revocar_privilegios_directos_tablas_derechos",
 ];
 
 const FUNCIONES_PUBLICAS_RF24 = [
@@ -180,17 +185,18 @@ export function decidirModoMigracionesRf24(
     };
   }
 
+  const pendientesFueraDeRf24 = estado.pendientes.filter((nombre) => !nombresRf24.has(nombre));
+
   const todasPendientes = clasificaciones.every((c) => c.clasificacion === "pendiente");
   const todasAplicadasOResueltas = clasificaciones.every(
     (c) => c.clasificacion === "aplicada" || c.clasificacion === "resuelta",
   );
-  const pendientesFueraDeRf24 = estado.pendientes.filter((nombre) => !nombresRf24.has(nombre));
 
   if (todasPendientes) {
     if (pendientesFueraDeRf24.length > 0) {
       return {
         modo: "bloqueado",
-        motivo: `hay migraciones pendientes fuera de RF24, ademas de las 3 esperadas: ${pendientesFueraDeRf24.join(", ")}.`,
+        motivo: `hay migraciones pendientes fuera de RF24, ademas de las esperadas: ${pendientesFueraDeRf24.join(", ")}.`,
       };
     }
     if (
@@ -199,7 +205,7 @@ export function decidirModoMigracionesRf24(
     ) {
       return {
         modo: "bloqueado",
-        motivo: `las migraciones pendientes no son EXACTAMENTE las 3 de RF24 en su orden exacto: ${estado.pendientes.join(", ")}.`,
+        motivo: `las migraciones pendientes no son EXACTAMENTE las de RF24 en su orden exacto: ${estado.pendientes.join(", ")}.`,
       };
     }
     return { modo: "aplicar" };
@@ -209,16 +215,59 @@ export function decidirModoMigracionesRf24(
     if (estado.pendientes.length > 0) {
       return {
         modo: "bloqueado",
-        motivo: `las 3 migraciones de RF24 ya estan aplicadas o resueltas, pero hay otras migraciones pendientes: ${estado.pendientes.join(", ")}.`,
+        motivo: `las migraciones de RF24 ya estan aplicadas o resueltas, pero hay otras migraciones pendientes: ${estado.pendientes.join(", ")}.`,
       };
     }
     return { modo: "continuar" };
   }
 
+  // Ronda 8 (Alex): generalizacion para reconocer un PREFIJO continuo
+  // aplicado/resuelto seguido de un SUFIJO continuo pendiente dentro del
+  // propio conjunto RF24 -- escenario real una vez que existe una 4a
+  // migracion (la correctiva de privilegios) mientras las primeras 3 ya
+  // estan aplicadas. Antes de esta generalizacion CUALQUIER mezcla caia
+  // en el catch-all "estado mixto" y bloqueaba sin necesidad -- ahora se
+  // distingue explicitamente este unico patron adicional de cualquier
+  // otra mezcla real (aplicada DESPUES de pendiente, huecos, una
+  // migracion "ausente", etc., que siguen bloqueando exactamente igual
+  // que antes, via el catch-all de abajo).
+  const primerIndicePendiente = clasificaciones.findIndex((c) => c.clasificacion === "pendiente");
+  const esPrefijoAplicadoSufijoPendiente =
+    primerIndicePendiente > 0 &&
+    clasificaciones
+      .slice(0, primerIndicePendiente)
+      .every((c) => c.clasificacion === "aplicada" || c.clasificacion === "resuelta") &&
+    clasificaciones.slice(primerIndicePendiente).every((c) => c.clasificacion === "pendiente");
+
+  if (esPrefijoAplicadoSufijoPendiente) {
+    const colaEsperada = migracionesRf24EnOrden.slice(primerIndicePendiente);
+    if (pendientesFueraDeRf24.length > 0) {
+      return {
+        modo: "bloqueado",
+        motivo:
+          "hay un prefijo de RF24 ya aplicado/resuelto y un sufijo pendiente, pero ademas hay migraciones " +
+          `pendientes fuera de RF24: ${pendientesFueraDeRf24.join(", ")}.`,
+      };
+    }
+    if (
+      estado.pendientes.length !== colaEsperada.length ||
+      !estado.pendientes.every((nombre, indice) => nombre === colaEsperada[indice])
+    ) {
+      return {
+        modo: "bloqueado",
+        motivo:
+          "el prefijo aplicado/resuelto de RF24 es valido, pero las migraciones pendientes globales no " +
+          `coinciden EXACTAMENTE con el sufijo pendiente esperado de RF24: pendientes=${estado.pendientes.join(", ") || "(ninguna)"}, ` +
+          `sufijo esperado=${colaEsperada.join(", ")}.`,
+      };
+    }
+    return { modo: "aplicar" };
+  }
+
   const detalle = clasificaciones.map((c) => `${c.nombre}=${c.clasificacion}`).join(", ");
   return {
     modo: "bloqueado",
-    motivo: `estado mixto entre las 3 migraciones de RF24, ni todas pendientes ni todas aplicadas/resueltas: ${detalle}.`,
+    motivo: `estado mixto entre las migraciones de RF24, no es "todas pendientes", "todas aplicadas/resueltas" ni un prefijo aplicado/resuelto + sufijo pendiente valido: ${detalle}.`,
   };
 }
 
@@ -234,6 +283,21 @@ export interface FilaPrivilegioTablaRf24 {
   grantee: string;
   grantor: string;
   is_grantable: string;
+}
+
+// Ronda 8 (Alex): diagnostico de pg_default_acl/aclexplode para el ORIGEN
+// de los 8 privilegios directos inesperados que la ronda 7 confirmo sobre
+// las 2 tablas de RF24. grantee ya viene resuelto a 'PUBLIC' cuando el oid
+// de aclexplode() es 0 (mismo patron ya establecido en la migracion
+// 20261005120000_reconstruccion_rls_auth_grants, Seccion E) o al nombre de
+// rol real en cualquier otro caso. esquema es '(todos los esquemas)' para
+// defaclnamespace = 0 (el default aplica a CUALQUIER esquema donde
+// neondb_owner cree una tabla) o el nombre real del esquema en otro caso.
+export interface FilaDefaultAclTablaRf24 {
+  esquema: string;
+  privilege_type: string | null;
+  grantee: string | null;
+  is_grantable: boolean | null;
 }
 
 export interface ResumenValidacionRamaTemporalRf24 {
@@ -265,6 +329,16 @@ export interface ResumenValidacionRamaTemporalRf24 {
   funcionInternaSinGrant: boolean;
   todasLasFuncionesSonDeNeondbOwner: boolean;
   tablasSinPoliticaRls: boolean;
+  // Ronda 8 (Alex): diagnostico de SOLO LECTURA, NUNCA bloqueante -- ver
+  // diagnosticarDefaultAclTablasNeondbOwner() mas abajo. null cuando la
+  // propia consulta de diagnostico fallo (el motivo saneado queda en
+  // defaultAclTablasNeondbOwnerError); arreglo vacio cuando no existe
+  // ningun ALTER DEFAULT PRIVILEGES de neondb_owner sobre objetos tipo
+  // tabla; arreglo no vacio cuando SI existe (esto es lo que confirmaria
+  // o refutaria, contra catalogo real, la hipotesis de origen externo
+  // documentada en el header de la migracion correctiva).
+  defaultAclTablasNeondbOwner: FilaDefaultAclTablaRf24[] | null;
+  defaultAclTablasNeondbOwnerError?: string;
 }
 
 export interface DependenciasValidacionRamaTemporalRf24 {
@@ -320,6 +394,53 @@ async function consultarCatalogoRf24<T>(etiqueta: string, contexto: string, cons
       `ERROR_CONSULTA_CATALOGO_${etiqueta} -- fallo la consulta de catalogo "${etiqueta}" (post-migracion/post-continuacion). ${detalle}. ` +
         "Nunca se imprime la URL de conexion ni el error crudo del driver -- solo SQLSTATE/severidad/mensaje ya saneados (ver diagnosticoErrorConsultaCruda en src/infra/prisma/errores.ts).",
     );
+  }
+}
+
+/**
+ * Ronda 8 (Alex): diagnostico de SOLO LECTURA, NUNCA bloqueante, sobre el
+ * origen de los 8 privilegios directos inesperados que la ronda 7 confirmo
+ * (SELECT/INSERT/UPDATE/DELETE de chainpulse_app sobre las 2 tablas de
+ * RF24, grantor=neondb_owner en todos los casos). Punto 1 del pedido de
+ * Alex: revisa pg_default_acl/aclexplode para neondb_owner, objetos tipo
+ * tabla (defaclobjtype = 'r'), sin restriccion de esquema (para ver
+ * tambien un posible default "para todos los esquemas", defaclnamespace
+ * = 0). A diferencia de TODAS las demas consultas de este modulo, un
+ * fallo AQUI nunca aborta la validacion -- es un diagnostico adicional
+ * sobre el ORIGEN del problema ya detectado y ya resuelto por la
+ * migracion correctiva, nunca un gate nuevo. Si falla, se reporta el
+ * motivo saneado (nunca la URL de conexion ni el error crudo del driver)
+ * y el resto de la validacion sigue su curso exactamente igual que si
+ * esta funcion no existiera.
+ */
+async function diagnosticarDefaultAclTablasNeondbOwner(
+  prismaAdmin: ClientePrueba,
+  contexto: string,
+): Promise<{ filas: FilaDefaultAclTablaRf24[] | null; error?: string }> {
+  try {
+    const filas = await prismaAdmin.$queryRaw<FilaDefaultAclTablaRf24[]>`
+      SELECT COALESCE(n.nspname::text, '(todos los esquemas)') AS esquema,
+             a.privilege_type,
+             CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE g.rolname::text END AS grantee,
+             a.is_grantable
+        FROM pg_default_acl d
+        JOIN pg_roles r ON r.oid = d.defaclrole
+        LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
+        LEFT JOIN LATERAL aclexplode(d.defaclacl) a ON true
+        LEFT JOIN pg_roles g ON g.oid = a.grantee
+        WHERE r.rolname::text = ${ROL_ADMIN_ESPERADO} AND d.defaclobjtype = 'r'`;
+    return { filas };
+  } catch (err) {
+    const diag = diagnosticoErrorConsultaCruda(err);
+    const detalle =
+      `codigo_prisma=${diag.codigoPrisma ?? "N/A"} sqlstate=${diag.sqlstate ?? "N/A"} ` +
+      `severidad=${diag.severidad ?? "N/A"} tipo_no_soportado=${diag.tipoNoSoportado ?? "N/A"} ` +
+      `mensaje=${diag.mensaje ?? "N/A"}`;
+    logError(
+      `${contexto}:catalogo:DEFAULT_ACL_TABLAS_NEONDB_OWNER`,
+      `DIAGNOSTICO_NO_BLOQUEANTE_FALLO -- ${detalle}`,
+    );
+    return { filas: null, error: detalle };
   }
 }
 
@@ -532,6 +653,13 @@ export async function orquestarValidacionRamaTemporalRf24(
     );
     const tablasSinPoliticaRls = politicasRls.length === 0;
 
+    // Ronda 8 (Alex, punto 1 del pedido): diagnostico de SOLO LECTURA,
+    // nunca bloqueante -- ver diagnosticarDefaultAclTablasNeondbOwner()
+    // arriba. Se corre AL FINAL, despues de todas las verificaciones que
+    // SI bloquean, para que un fallo aqui nunca interrumpa nada que ya
+    // estaba funcionando.
+    const diagnosticoDefaultAcl = await diagnosticarDefaultAclTablasNeondbOwner(prismaAdmin, contexto);
+
     return {
       modoMigraciones: decision.modo,
       migracionesAplicadas: MIGRACIONES_RF24_ESPERADAS_EN_ORDEN,
@@ -545,6 +673,8 @@ export async function orquestarValidacionRamaTemporalRf24(
       funcionInternaSinGrant,
       todasLasFuncionesSonDeNeondbOwner,
       tablasSinPoliticaRls,
+      defaultAclTablasNeondbOwner: diagnosticoDefaultAcl.filas,
+      defaultAclTablasNeondbOwnerError: diagnosticoDefaultAcl.error,
     };
   } finally {
     await desconectarClientePrueba(prismaApp, `${contexto}:desconexion-app`);

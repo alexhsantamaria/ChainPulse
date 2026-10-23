@@ -83,6 +83,28 @@ async function main() {
           .join("\n"),
     );
   }
+  // Ronda 8 (Alex, punto 1): diagnostico de SOLO LECTURA, NUNCA bloqueante
+  // -- nunca participa en todoOk de abajo. Se imprime siempre que haya
+  // algo que mostrar (filas encontradas, o la propia consulta fallo) para
+  // que Alex pueda confirmar o refutar, contra catalogo real, el origen
+  // de los 8 privilegios directos inesperados ya corregidos por la
+  // migracion correctiva.
+  if (resumen.defaultAclTablasNeondbOwnerError) {
+    console.error(
+      "\nDIAGNOSTICO (no bloqueante) -- la consulta de pg_default_acl para neondb_owner fallo: " +
+        resumen.defaultAclTablasNeondbOwnerError,
+    );
+  } else if (resumen.defaultAclTablasNeondbOwner && resumen.defaultAclTablasNeondbOwner.length > 0) {
+    console.log(
+      "\nDIAGNOSTICO (no bloqueante) -- ALTER DEFAULT PRIVILEGES de neondb_owner sobre objetos tipo tabla:\n" +
+        resumen.defaultAclTablasNeondbOwner
+          .map((f) => `  esquema=${f.esquema} privilegio=${f.privilege_type ?? "N/A"} grantee=${f.grantee ?? "N/A"} is_grantable=${f.is_grantable ?? "N/A"}`)
+          .join("\n"),
+    );
+  } else if (resumen.defaultAclTablasNeondbOwner) {
+    console.log("\nDIAGNOSTICO (no bloqueante) -- no existe ningun ALTER DEFAULT PRIVILEGES de neondb_owner sobre objetos tipo tabla.");
+  }
+
   const todoOk =
     resumen.tablasSinPrivilegiosDeChainpulseApp &&
     resumen.tablasSinPrivilegiosParaPublic &&
