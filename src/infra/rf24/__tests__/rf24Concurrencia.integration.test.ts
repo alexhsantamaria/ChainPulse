@@ -103,12 +103,35 @@ async function llamarCrearSolicitud(
 describe("Prueba 8 -- creacion concurrente respetando 3/24h por evaluacion", () => {
   let fixture: FixtureEvaluacionRf24;
   let correoHash: string;
+  // CORRECCION (Alex, auditoria residuos v12, 2026-10-24): esta prueba,
+  // POR DISENO, deja exactamente 2 filas en
+  // "intentos_solicitud_derechos_descartados" en cada corrida -- de las
+  // 5 llamadas concurrentes a crear_solicitud_derechos, el limite real
+  // de 3/24h hace que 2 caigan en la rama "no revela si fue por
+  // no-coincidencia o por limite alcanzado" (ver migracion de funciones,
+  // Funcion 1), que inserta ahi un descarte senuelo SIN ninguna columna
+  // que lo vincule a esta evaluacion (eso es intencional: evita un canal
+  // lateral de identificacion, ver "Tabla senuelo" en el schema real).
+  // Por lo tanto NINGUN afterEach puede borrar esas 2 filas por id/FK --
+  // no existe ninguna columna para hacerlo. La unica limpieza posible es
+  // por VENTANA DE TIEMPO: se toma el reloj del propio servidor
+  // (SELECT now(), nunca Date.now() del proceso de pruebas, para no
+  // depender de ningun desfase de reloj entre el runner y Postgres)
+  // INMEDIATAMENTE ANTES de crear el fixture, y en el afterEach se borra
+  // todo lo que haya caido en esa tabla desde ese instante -- nunca una
+  // ventana mas amplia, nunca por otro criterio. Esto NUNCA relaja el
+  // gate final de fixtures=0 (Paso 8 del runbook): efectivamente lo deja
+  // en cero, en vez de dejarlo encubierto.
+  let ventanaDescartadosDesde: Date;
 
   beforeAll(async () => {
     requerirEntornoDePruebasRf24Confirmado();
   });
 
   beforeEach(async () => {
+    const filaReloj = await prismaAdmin.$queryRaw<{ ahora: Date }[]>`SELECT now() AS ahora`;
+    ventanaDescartadosDesde = obtenerFilaUnica<{ ahora: Date }>(filaReloj, "SELECT now() no devolvio ninguna fila -- no se puede acotar la ventana de limpieza de descartes senuelo.").ahora;
+
     fixture = await crearFixtureEvaluacionRf24(`concurrencia-8-${randomUUID()}`);
     // CORRECCION punto 1 (Alex, auditoria v11 fallida, 2026-10-23):
     // prismaAdmin, nunca prisma -- esta es una lectura de INSPECCION de
@@ -125,6 +148,11 @@ describe("Prueba 8 -- creacion concurrente respetando 3/24h por evaluacion", () 
   });
 
   afterEach(async () => {
+    // Ventana de tiempo -- unica limpieza posible, ver comentario de
+    // arriba. prismaAdmin: Ronda 8 revoco los 4 privilegios directos
+    // (incluido DELETE) de chainpulse_app sobre esta tabla, igual que
+    // sobre "solicitudes_derechos".
+    await prismaAdmin.$executeRaw`DELETE FROM "intentos_solicitud_derechos_descartados" WHERE "creadoEn" >= ${ventanaDescartadosDesde}`;
     await borrarFixtureEvaluacionRf24(fixture, prismaAdmin);
   });
 

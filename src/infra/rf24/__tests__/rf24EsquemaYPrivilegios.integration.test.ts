@@ -28,7 +28,7 @@
 import { Client } from "pg";
 import { readdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "../../prisma/client";
 import { hashPassword } from "../../auth/password";
 import {
@@ -810,6 +810,23 @@ describe("Prueba 6 -- propietario exacto de cada funcion", () => {
 describe("Prueba 7 -- intentos de shadowing con objetos temporales sin efecto", () => {
   let fixture: FixtureEvaluacionRf24;
   let clienteSesion: Client;
+  // CORRECCION (Alex, auditoria residuos v12, 2026-10-24): el `it` de
+  // "tipo temporal" de este describe usa, A PROPOSITO, un correo que NO
+  // coincide con el de la fixture (para probar que el cast homonimo
+  // sigue resolviendo contra el ENUM real, nunca contra el objeto de
+  // pg_temp) -- eso hace que crear_solicitud_derechos caiga en la rama
+  // "no revela si fue por no-coincidencia o por limite alcanzado" (ver
+  // migracion de funciones, Funcion 1) e inserte un descarte senuelo en
+  // "intentos_solicitud_derechos_descartados", tabla que NO tiene (ni
+  // debe tener, ver "Tabla senuelo" en el schema real) ninguna columna
+  // que lo vincule a este fixture -- ningun afterEach puede borrarlo por
+  // id/FK. Misma estrategia de VENTANA DE TIEMPO que Prueba 8
+  // (rf24Concurrencia.integration.test.ts): reloj del propio servidor
+  // (SELECT now()), capturado en beforeEach antes de cada `it` de este
+  // describe (los otros 2 `it` no generan ningun descarte, asi que el
+  // DELETE de abajo no les afecta -- 0 filas, inofensivo). Esto NUNCA
+  // relaja el gate final de fixtures=0: lo deja en cero de verdad.
+  let ventanaDescartadosDesde: Date;
 
   beforeAll(async () => {
     requerirEntornoDePruebasRf24Confirmado();
@@ -822,11 +839,21 @@ describe("Prueba 7 -- intentos de shadowing con objetos temporales sin efecto", 
     if (clienteSesion) await clienteSesion.end();
   });
 
+  beforeEach(async () => {
+    const filaReloj = await prismaAdmin.$queryRaw<{ ahora: Date }[]>`SELECT now() AS ahora`;
+    ventanaDescartadosDesde = obtenerFilaUnica<{ ahora: Date }>(filaReloj, "SELECT now() no devolvio ninguna fila -- no se puede acotar la ventana de limpieza de descartes senuelo.").ahora;
+  });
+
   afterEach(async () => {
     // pg_temp es por-sesion -- se limpia al cerrar la conexion de todos
     // modos, pero se dropean explicitamente entre pruebas para que cada
     // `it` empiece desde un estado limpio conocido.
     await clienteSesion.query(`DROP TABLE IF EXISTS pg_temp.solicitudes_derechos`);
+    // Ventana de tiempo -- unica limpieza posible para el descarte
+    // senuelo del `it` de "tipo temporal" (ver comentario de arriba).
+    // prismaAdmin: Ronda 8 revoco los 4 privilegios directos de
+    // chainpulse_app sobre esta tabla.
+    await prismaAdmin.$executeRaw`DELETE FROM "intentos_solicitud_derechos_descartados" WHERE "creadoEn" >= ${ventanaDescartadosDesde}`;
   });
 
   it("una tabla temporal 'solicitudes_derechos' en la sesion llamante no desvia a procesar_solicitud_derechos de la tabla real", async () => {
