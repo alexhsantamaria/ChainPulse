@@ -114,17 +114,17 @@ export interface VerdictoRol {
 }
 
 /**
- * Verifica el rol EFECTIVO de una conexion ya abierta y aborta (lanza)
- * si: el rol no es exactamente el esperado, o el rol tiene BYPASSRLS o
- * es superusuario (atributos incompatibles con que las politicas RLS se
- * esten aplicando de verdad). Nunca reenvia un error real de Postgres --
+ * Consulta compartida (rol efectivo + atributos) usada por las dos
+ * politicas de abajo. Nunca reenvia un error real de Postgres --
  * cualquier fallo de consulta cae a un codigo fijo.
  */
-export async function verificarRolConexion(
+async function consultarRolYAtributos(
   cliente: ClienteSoloLecturaRol,
   contexto: string,
-  rolEsperado: string,
-): Promise<VerdictoRol> {
+): Promise<{
+  rol: { usuario_actual: string; base_actual: string; esquema_actual: string };
+  atributos: { rolbypassrls: boolean; rolsuper: boolean };
+}> {
   let filaRol: Array<{ usuario_actual: string; base_actual: string; esquema_actual: string }>;
   let filaAtributos: Array<{ rolbypassrls: boolean; rolsuper: boolean }>;
   try {
@@ -145,6 +145,24 @@ export async function verificarRolConexion(
     logError(contexto, "RESPUESTA_VACIA_VERIFICACION_ROL");
     throw new Error("RESPUESTA_VACIA_VERIFICACION_ROL");
   }
+  return { rol, atributos };
+}
+
+/**
+ * Politica de APLICACION (chainpulse_app) -- EXACTAMENTE la misma de
+ * siempre, sin debilitar en absoluto: aborta (lanza) si el rol no es
+ * exactamente el esperado, o si el rol tiene BYPASSRLS o es superusuario
+ * (atributos incompatibles con que las politicas RLS se esten aplicando
+ * de verdad para ese rol). Nunca usar esta funcion para el rol
+ * administrativo real de Neon (neondb_owner) -- para eso existe
+ * verificarRolConexionAdministrativa() mas abajo.
+ */
+export async function verificarRolConexion(
+  cliente: ClienteSoloLecturaRol,
+  contexto: string,
+  rolEsperado: string,
+): Promise<VerdictoRol> {
+  const { rol, atributos } = await consultarRolYAtributos(cliente, contexto);
 
   if (rol.usuario_actual !== rolEsperado) {
     logError(contexto, "ROL_INESPERADO");
@@ -153,6 +171,41 @@ export async function verificarRolConexion(
   if (atributos.rolbypassrls || atributos.rolsuper) {
     logError(contexto, "ROL_CON_ATRIBUTOS_INCOMPATIBLES");
     throw new Error("ROL_CON_ATRIBUTOS_INCOMPATIBLES");
+  }
+
+  return {
+    usuarioActual: rol.usuario_actual,
+    baseActual: rol.base_actual,
+    esquemaActual: rol.esquema_actual,
+    bypassrls: atributos.rolbypassrls,
+    superuser: atributos.rolsuper,
+  };
+}
+
+/**
+ * Politica ADMINISTRATIVA -- para el rol real de administracion de Neon
+ * (neondb_owner), NUNCA para chainpulse_app. Corrige el bug real
+ * reportado en ejecucion: verificarRolConexion() rechazaba
+ * incondicionalmente rolbypassrls/rolsuper, politica correcta para
+ * chainpulse_app pero incorrecta para neondb_owner, al que Neon le
+ * asigna esos atributos administrativos por diseno (para poder
+ * administrar todos los datos sin que las politicas RLS se lo
+ * impidan). Esta funcion exige el mismo usuario EXACTO que
+ * verificarRolConexion() (sigue rechazando cualquier otro rol), pero
+ * NUNCA pide que se degraden esos atributos administrativos en Neon.
+ * El destino exacto (base/esquema) ya lo exige, por separado,
+ * verificarDestinoEfectivo() -- no se duplica aqui.
+ */
+export async function verificarRolConexionAdministrativa(
+  cliente: ClienteSoloLecturaRol,
+  contexto: string,
+  rolEsperado: string,
+): Promise<VerdictoRol> {
+  const { rol, atributos } = await consultarRolYAtributos(cliente, contexto);
+
+  if (rol.usuario_actual !== rolEsperado) {
+    logError(contexto, "ROL_INESPERADO");
+    throw new Error("ROL_INESPERADO");
   }
 
   return {
@@ -188,12 +241,16 @@ export function verificarDestinoEfectivo(veredictoRol: VerdictoRol, destinoEsper
 
 export interface FilaMigracion {
   migration_name: string;
+  started_at: Date | string;
   finished_at: Date | string | null;
   rolled_back_at: Date | string | null;
 }
 
 export interface EstadoMigraciones {
   aplicadas: string[];
+  reversionesResueltas: string[];
+  anomaliasActivas: string[];
+  reversionesSinResolucion: string[];
   pendientes: string[];
   fallidasOInconclusas: string[];
 }
@@ -203,30 +260,90 @@ export interface EstadoMigraciones {
  * fila de _prisma_migrations con rolled_back_at distinto de null
  * (rollback explicito) o con finished_at null (quedo a mitad de
  * aplicar, crasheo o se interrumpio) NO es "aplicada" ni tampoco
- * "pendiente" en el sentido de "nunca se intento" -- es su propia
- * categoria, que debe bloquear la autorizacion hasta que una persona la
- * resuelva a mano (normalmente con "prisma migrate resolve"), nunca
- * intentar seguir como si no hubiera pasado nada.
+ * "pendiente" en el sentido de "nunca se intento".
+ *
+ * Correccion real reportada en ejecucion (bug de clasificacion por FILA,
+ * no por MIGRACION): esta funcion evaluaba cada fila de
+ * "_prisma_migrations" de forma independiente, asi que una reversion
+ * HISTORICA (rolled_back_at poblado) de un nombre que mas tarde se
+ * aplico con exito (otra fila del MISMO migration_name, con finished_at
+ * poblado y rolled_back_at nulo, started_at posterior) seguia
+ * bloqueando para siempre, aunque el estado REAL y actual de esa
+ * migracion fuera "aplicada". Prisma, al reintentar una migracion
+ * fallida, inserta una fila NUEVA en "_prisma_migrations" (nunca
+ * reescribe la fila vieja) -- asi que un mismo migration_name puede
+ * tener varias filas con distinto started_at, y agrupar por nombre
+ * mirando solo la fila MAS RECIENTE (por started_at real, nunca por el
+ * orden del arreglo que llega, aunque la consulta ya pida ORDER BY
+ * started_at ASC) es la unica forma correcta de saber el estado actual.
+ *
+ * Clasificacion por NOMBRE (nunca por fila), usando la fila mas reciente
+ * de cada nombre (por started_at):
+ *   - "aplicada": la mas reciente tiene finished_at poblado y
+ *     rolled_back_at nulo, y ninguna fila de ese nombre tuvo reversion
+ *     en su historial.
+ *   - "anomalia activa" (BLOQUEA): la mas reciente no tiene finished_at
+ *     ni rolled_back_at -- un intento que nunca termino ni se revirtio,
+ *     en curso o colgado.
+ *   - "reversion sin resolucion" (BLOQUEA): la mas reciente esta
+ *     revertida (rolled_back_at poblado) -- nada posterior la aplico
+ *     con exito.
+ *   - "reversion historicamente resuelta" (NO bloquea, informativo): la
+ *     mas reciente esta aplicada con exito, pero una fila ANTERIOR del
+ *     mismo nombre si fue revertida -- el historial tuvo un bache, pero
+ *     el estado actual es correcto.
+ * "fallidasOInconclusas" se mantiene por compatibilidad con quien solo
+ * mira ese campo para bloquear (todos los llamadores actuales): es
+ * exactamente la union, en ese orden, de "anomaliasActivas" y
+ * "reversionesSinResolucion" -- las dos, y unicamente las dos,
+ * categorias que deben alimentar el bloqueo. Las reversiones ya
+ * resueltas nunca bloquean ni aparecen ahi.
  *
  * Funcion PURA (sin tocar la base) a proposito, para poder probar la
  * clasificacion con pruebas unitarias comunes, sin mockear Prisma.
  */
 export function evaluarEstadoMigraciones(filas: FilaMigracion[], todasEnRepo: string[]): EstadoMigraciones {
-  const aplicadas: string[] = [];
-  const fallidasOInconclusas: string[] = [];
-
+  const porNombre = new Map<string, FilaMigracion[]>();
   for (const fila of filas) {
-    if (fila.rolled_back_at) {
-      fallidasOInconclusas.push(fila.migration_name);
-    } else if (!fila.finished_at) {
-      fallidasOInconclusas.push(fila.migration_name);
+    const grupo = porNombre.get(fila.migration_name);
+    if (grupo) {
+      grupo.push(fila);
     } else {
-      aplicadas.push(fila.migration_name);
+      porNombre.set(fila.migration_name, [fila]);
     }
   }
 
-  const yaConsideradas = new Set([...aplicadas, ...fallidasOInconclusas]);
+  const aplicadas: string[] = [];
+  const reversionesResueltas: string[] = [];
+  const anomaliasActivas: string[] = [];
+  const reversionesSinResolucion: string[] = [];
+
+  for (const [nombre, filasDelNombre] of porNombre) {
+    // La fila mas reciente por started_at REAL -- nunca el orden en que
+    // llego el arreglo. filasDelNombre nunca esta vacio por construccion
+    // (solo se crea un grupo al empujarle su primera fila), asi que
+    // reduce() sin valor inicial siempre devuelve una fila real.
+    const masReciente = filasDelNombre.reduce((actualMasReciente, fila) =>
+      new Date(fila.started_at).getTime() > new Date(actualMasReciente.started_at).getTime()
+        ? fila
+        : actualMasReciente,
+    );
+    const huboReversionEnElHistorial = filasDelNombre.some((fila) => fila.rolled_back_at);
+
+    if (!masReciente.finished_at && !masReciente.rolled_back_at) {
+      anomaliasActivas.push(nombre);
+    } else if (masReciente.rolled_back_at) {
+      reversionesSinResolucion.push(nombre);
+    } else if (huboReversionEnElHistorial) {
+      reversionesResueltas.push(nombre);
+    } else {
+      aplicadas.push(nombre);
+    }
+  }
+
+  const fallidasOInconclusas = [...anomaliasActivas, ...reversionesSinResolucion];
+  const yaConsideradas = new Set([...aplicadas, ...reversionesResueltas, ...fallidasOInconclusas]);
   const pendientes = todasEnRepo.filter((nombre) => !yaConsideradas.has(nombre));
 
-  return { aplicadas, pendientes, fallidasOInconclusas };
+  return { aplicadas, reversionesResueltas, anomaliasActivas, reversionesSinResolucion, pendientes, fallidasOInconclusas };
 }

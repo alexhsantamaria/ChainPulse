@@ -12,7 +12,7 @@ import {
   exigirEntornoConfirmado,
   resumenUrl,
   verificarDestinoEfectivo,
-  verificarRolConexion,
+  verificarRolConexionAdministrativa,
 } from "./destinoPrueba";
 import { escribirManifiesto } from "./manifiestoIO";
 import {
@@ -63,7 +63,7 @@ export async function orquestarSiembra(
   // que quien llama distinga "la conexion no es la que se confirmo" de
   // "la transaccion de siembra en si fallo".
   try {
-    const rol = await verificarRolConexion(prisma, "siembra", ROL_ADMIN_ESPERADO);
+    const rol = await verificarRolConexionAdministrativa(prisma, "siembra", ROL_ADMIN_ESPERADO);
     verificarDestinoEfectivo(rol, destino, "siembra");
   } catch (e) {
     await deps.desconectar(prisma);
