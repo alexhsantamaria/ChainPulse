@@ -1,0 +1,23 @@
+[2026-10-28 12:18:09] === RF24 -- verificacion POST-DEPLOY de SOLO LECTURA v3 (independiente de v8; v8 no se modifica) ===
+[2026-10-28 12:18:09] Directorio de trabajo: C:\Users\alx\AppData\Local\Temp\rf24-post-deploy-ro-v3-d901da35a7cf4f93ab1aa595196941d0
+[2026-10-28 12:18:09] OK: Autoauditoria (1/3): el UNICO ejecutable externo invocado en todo este archivo es 'node' -- nunca 'git', nunca el CLI de Prisma, nunca ningun ejecutor de paquetes bajo demanda.
+[2026-10-28 12:18:09] OK: Autoauditoria (2/3): las 27 sentencias SQL embebidas en este archivo son TODAS SELECT/WITH o control de sesion de solo lectura (BEGIN/ROLLBACK/SET default_transaction_read_only=on), y ninguna contiene una palabra clave de mutacion/DDL.
+[2026-10-28 12:18:09] OK: Autoauditoria (3/3): confirmado, fuera de comentarios, que este archivo nunca invoca ningun subcomando de aplicacion de migraciones de Prisma ni ningun ejecutor de paquetes bajo demanda.
+[2026-10-28 12:18:09] OK: 'package.json' y 'node_modules/pg' confirmados en el repositorio real -- los validadores embebidos resolveran 'pg' anclados a 'C:\Users\alx\Documents\BigDevelopment\Proyectos\ChainPulse\package.json' (via 'createRequire').
+[2026-10-28 12:18:09] Introduce la URL de conexion ADMINISTRATIVA (neondb_owner) de PRODUCCION. No se mostrara en pantalla. Esta ejecucion es de SOLO LECTURA -- no se aplicara ningun cambio.
+[2026-10-28 12:20:15] Destino -- hostCoincide=True esPooled=False dbCoincideUrl=True baseActualCoincide=True conectado=True rolCoincide=True sslmode=require channelBinding=require
+[2026-10-28 12:20:15] OK: Destino validado por URL Y por conexion efectiva de SOLO LECTURA: host/db/rol esperados, conexion DIRECTA, TLS fuerte.
+[2026-10-28 12:20:18] OK: '_prisma_migrations': las 6 migraciones de RF24 estan presentes exactamente una vez cada una, completas (finished_at no nulo), sin rollback (rolled_back_at nulo), con checksum no vacio y applied_steps_count > 0.
+[2026-10-28 12:20:18] OK: Los 5 enums de RF24 (incluido 'BucketLimiteTasa' completo) coinciden EXACTO, valor por valor y en orden, con lo esperado.
+[2026-10-28 12:20:18] OK: Las 2 tablas de RF24 presentes en 'public', y cero privilegios directos de chainpulse_app/PUBLIC sobre ninguna de las 2.
+[2026-10-28 12:20:18] OK: Las 2 PRIMARY KEY (una por tabla) coinciden exactamente con lo esperado (NUEVO en v2).
+[2026-10-28 12:20:18] OK: Los 8 CHECK constraints de 'solicitudes_derechos' coinciden exactamente (por nombre) con lo esperado, releido literalmente de la migracion que los crea (NUEVO en v2).
+[2026-10-28 12:20:18] OK: Las 2 FOREIGN KEY de 'solicitudes_derechos' coinciden exactamente por nombre y por definicion real (tabla referenciada, ON DELETE RESTRICT, ON UPDATE CASCADE) (NUEVO en v2).
+[2026-10-28 12:20:18] OK: Los 7 indices sobre las 2 tablas de RF24 coinciden exactamente (por nombre) con lo esperado (NUEVO en v2).
+[2026-10-28 12:20:18] OK: El cuerpo real de 'crear_solicitud_derechos' refleja el patron corregido de la migracion 6, y el patron viejo esta ausente.
+[2026-10-28 12:20:18] OK: Las 12 funciones RF24: firma EXACTA (CORREGIDA -- via 'oidvectortypes', nunca 'pg_get_function_identity_arguments'), propietario exacto, 'SECURITY DEFINER' exacto por funcion, 'proconfig' como conjunto EXACTO (incluye 'search_path=public, pg_temp'), y ACL real exactamente donde corresponde.
+[2026-10-28 12:20:18] OK: RLS desactivado en las 2 tablas de RF24, cero politicas.
+[2026-10-28 12:20:20] Conteos reales (informativo -- nunca se modifican ni se purgan desde este archivo): solicitudes_derechos=0, intentos_solicitud_derechos_descartados=0.
+[2026-10-28 12:20:20] OK: Conteos reportados en modo INFORMATIVO (por defecto -- nunca bloqueante): una ejecucion posterior legitima puede tener solicitudes reales de usuarios, no residuos de prueba. Pasa -ExigirCeroResiduosInmediatamenteTrasDeploy solo si esta ejecucion es inmediatamente posterior al primer deploy, sin trafico real todavia.
+[2026-10-28 12:20:20] Reporte final persistido en: C:\Users\alx\AppData\Local\Temp\rf24-post-deploy-ro-v3-d901da35a7cf4f93ab1aa595196941d0\reporte-verificacion-post-deploy.json
+[2026-10-28 12:20:20] === Codigo de salida final: 0 ===
