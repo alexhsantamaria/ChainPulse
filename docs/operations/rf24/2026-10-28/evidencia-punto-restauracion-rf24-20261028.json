@@ -1,0 +1,10 @@
+{
+  "proyectoNeon": "wispy-river-94382954",
+  "region": "sa-east-1",
+  "ramaProduccion": "production",
+  "idPuntoORamaRespaldo": "br-broad-snow-acj8iyhb",
+  "ramaOrigen": "production",
+  "fechaUtcCreacionPunto": "2026-10-28T08:29:25Z",
+  "estadoReportado": "ready",
+  "hostProduccionAsociado": "ep-steep-firefly-ac5drua5.sa-east-1.aws.neon.tech"
+}

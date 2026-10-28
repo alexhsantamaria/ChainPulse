@@ -1,0 +1,12 @@
+# RF24 -- manifiesto de integridad -- generado 2026-10-28
+# Verificar con: sha256sum -c docs/operations/rf24/2026-10-28/SHA256SUMS.txt  (ejecutar desde la raiz del repositorio)
+3f5647f4a8ff0742e49c5272f1ce774f974cd6ebf50c407b208873c2566c1aca  scripts/operations/rf24/rf24-produccion-aplicar-migraciones-v8-bloqueado.ps1
+650ded13883c26fae8d1383d3c5e5de29911cb35ef62b21a621d91ab40c9ddc6  scripts/operations/rf24/rf24-post-deploy-verificacion-solo-lectura-v3.ps1
+7c8cd3c81e2119c2f104565d64cc76a22033b98aaa6596decf526a4042814c06  scripts/operations/rf24/rf24-prueba-cardinalidad-v1.ps1
+7a5011bf926f1eedaf998ebf9169e94bc56515256e1a1ef1f9bea263f9c5f353  scripts/operations/rf24/rf24-prueba-firma-oidvectortypes-v1.ps1
+1d49ef26a3ad842a119c74c651a8e85ca7f57afa1d2a21b8a312e76862b0e9c2  docs/operations/rf24/2026-10-28/README.md
+a9bc794c8d80b8d081b6f5124a1ec92e1e6e8b564140c908dc6b41dbe30a5b39  docs/operations/rf24/2026-10-28/evidencia-punto-restauracion-rf24-20261028.json
+4e6fd0c60fd892e00934cdf2d3ba7fdde12be274de4dbc9c0446d308012cc053  docs/operations/rf24/2026-10-28/reporte-verificacion-post-deploy.json
+a331c425e23f3dfa2164427abdeef57c5c855eec09275aee7d6d2eb2cd6e16dd  docs/operations/rf24/2026-10-28/verificacion-post-deploy-cruda.json
+df8d5debeea4e474f22fc41b81a88465172130115a061514af90a37e5db3e3c9  docs/operations/rf24/2026-10-28/rf24-post-deploy-v3-verificacion.log
+e6454e0cc92447b69a682e99fddd75698ef00146287976b95730a73c1deb265e  docs/operations/rf24/2026-10-28/rf24-deploy-v8-migraciones-aplicadas-postcheck-bloqueado-80.log

@@ -1,0 +1,19 @@
+﻿{
+    "momentoUtc":  "2026-10-28T17:20:20Z",
+    "host":  "ep-steep-firefly-ac5drua5.sa-east-1.aws.neon.tech",
+    "baseDeDatos":  "neondb",
+    "migracionesVerificadas":  [
+                                   "20261022080000_rf24_enum_bucket_limite_tasa",
+                                   "20261022090000_rf24_tabla_solicitud_derechos",
+                                   "20261022100000_rf24_funciones_controladas",
+                                   "20261023053758_rf24_revocar_privilegios_directos_tablas_derechos",
+                                   "20261023160000_rf24_correccion_ambiguedad_id_y_consentimiento_sin_id",
+                                   "20261023170000_rf24_correccion_referencia_ambigua_id_verificacion_correo"
+                               ],
+    "residuosExigidosEnCero":  false,
+    "conteosResiduos":  {
+                            "solicitudes":  0,
+                            "intentos":  0
+                        },
+    "resultado":  "TODO_OK"
+}
