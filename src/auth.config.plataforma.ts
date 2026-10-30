@@ -57,6 +57,7 @@ export async function crearTokenSesionPlataforma(
   datos: SesionPlataformaToken,
   ahora: number = Date.now(),
 ): Promise<string> {
+  if (!esRolPlataforma(datos.rol)) throw new TypeError("rol de plataforma invalido");
   if (!Number.isInteger(datos.sessionVersion) || datos.sessionVersion < 1) {
     throw new RangeError("sessionVersion debe ser un entero positivo");
   }
@@ -118,12 +119,13 @@ export const opcionesCookieSesionPlataforma = {
   maxAge: TTL_SESION_PLATAFORMA_SEGUNDOS,
 };
 
-export function opcionesCookiePreauthPlataforma(path: "/activar-mfa" | "/verificar-mfa") {
-  return {
-    httpOnly: true,
-    secure: true,
-    sameSite: "strict" as const,
-    path,
-    maxAge: TTL_PREAUTH_PLATAFORMA_SEGUNDOS,
-  };
-}
+export const opcionesCookiePreauthPlataforma = {
+  httpOnly: true,
+  secure: true,
+  sameSite: "strict" as const,
+  // La cookie se consume en las dos APIs MFA. Un Path de pagina
+  // (/activar-mfa o /verificar-mfa) impediria que el navegador la enviara
+  // a /api/plataforma/mfa/*.
+  path: "/api/plataforma/mfa",
+  maxAge: TTL_PREAUTH_PLATAFORMA_SEGUNDOS,
+};

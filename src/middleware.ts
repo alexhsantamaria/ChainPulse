@@ -17,12 +17,17 @@
 // lado del servidor -- mismo criterio de "cinturon y tirantes" que el
 // aislamiento multi-tenant (tenantClient() + RLS).
 import NextAuth from "next-auth";
-import { NextResponse } from "next/server";
+import type { NextFetchEvent } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { authConfig } from "@/auth.config";
+import {
+  COOKIE_SESION_PLATAFORMA,
+  verificarTokenSesionPlataforma,
+} from "@/auth.config.plataforma";
 
 const { auth } = NextAuth(authConfig);
 
-export default auth((req) => {
+const middlewareUsuario = auth((req) => {
   if (!req.auth) {
     const loginUrl = new URL("/login", req.nextUrl.origin);
     return NextResponse.redirect(loginUrl);
@@ -44,9 +49,30 @@ export default auth((req) => {
   }
 });
 
+async function middlewarePlataforma(req: NextRequest) {
+  const ruta = req.nextUrl.pathname;
+  if (ruta === "/plataforma/login") return NextResponse.next();
+
+  if (ruta === "/plataforma/activar-mfa" || ruta === "/plataforma/verificar-mfa") {
+    // El JWT preauth tiene Path=/api/plataforma/mfa para no viajar por el
+    // resto del sitio. Estas paginas solo muestran formularios: la barrera
+    // autoritativa esta en cada API MFA, que si recibe y valida la cookie.
+    return NextResponse.next();
+  }
+
+  const token = req.cookies.get(COOKIE_SESION_PLATAFORMA)?.value;
+  if (token && (await verificarTokenSesionPlataforma(token))) return NextResponse.next();
+  return NextResponse.redirect(new URL("/plataforma/login", req.nextUrl.origin));
+}
+
+export default function middleware(req: NextRequest, event: NextFetchEvent) {
+  if (req.nextUrl.pathname.startsWith("/plataforma")) return middlewarePlataforma(req);
+  return middlewareUsuario(req as never, event as never);
+}
+
 export const config = {
   // /dashboard todavia no existe (ver README "Proximo paso") -- se deja
   // ya en el matcher para que quede protegido desde el momento en que se
   // cree, sin tener que acordarse de volver a tocar este archivo.
-  matcher: ["/activar-mfa", "/dashboard/:path*"],
+  matcher: ["/activar-mfa", "/dashboard/:path*", "/plataforma/:path*"],
 };
