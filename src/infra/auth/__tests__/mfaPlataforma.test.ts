@@ -5,6 +5,7 @@ import {
   activarMfaPlataforma,
   consumirContadorTotpPlataforma,
   enrolarMfaPlataforma,
+  leerMfaPlataforma,
   verificarYCalcularContador,
 } from "../mfaPlataforma";
 
@@ -47,11 +48,13 @@ describe("MFA de plataforma", () => {
   it("wrappers reflejan exactamente la primera fila devuelta por Postgres", async () => {
     const queryRaw = vi
       .fn()
+      .mockResolvedValueOnce([{ mfaSecret: "ABC", mfaHabilitado: false }])
       .mockResolvedValueOnce([{ ok: true, motivo: "PENDIENTE_EXISTENTE", secretoEfectivo: "ABC" }])
       .mockResolvedValueOnce([{ activado: true }])
       .mockResolvedValueOnce([{ consumido: false }]);
     const cliente = { $queryRaw: queryRaw } as never;
 
+    expect(await leerMfaPlataforma("u1", cliente)).toEqual({ mfaSecret: "ABC", mfaHabilitado: false });
     expect(await enrolarMfaPlataforma("u1", "DEF", cliente)).toEqual({
       ok: true,
       motivo: "PENDIENTE_EXISTENTE",

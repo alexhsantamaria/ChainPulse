@@ -25,6 +25,35 @@ export function generarSecretoMfaPlataforma(email: string): {
   return { secretoBase32: totp.secret.base32, otpauthUrl: totp.toString() };
 }
 
+export function construirOtpauthUrlMfaPlataforma(
+  etiqueta: string,
+  secretoBase32: string,
+): string {
+  return new OTPAuth.TOTP({
+    issuer: ISSUER,
+    label: etiqueta,
+    algorithm: "SHA1",
+    digits: DIGITS,
+    period: PERIOD_MFA_PLATAFORMA_SEGUNDOS,
+    secret: OTPAuth.Secret.fromBase32(secretoBase32),
+  }).toString();
+}
+
+export interface EstadoMfaPlataforma {
+  mfaSecret: string | null;
+  mfaHabilitado: boolean;
+}
+
+export async function leerMfaPlataforma(
+  usuarioId: string,
+  cliente: ClienteSql = prisma,
+): Promise<EstadoMfaPlataforma | null> {
+  const filas = await cliente.$queryRaw<EstadoMfaPlataforma[]>`
+    SELECT * FROM public.leer_mfa_plataforma(${usuarioId})
+  `;
+  return filas[0] ?? null;
+}
+
 export function verificarYCalcularContador(
   secretoBase32: string,
   codigo: string,
