@@ -2,3 +2,5 @@
 efab8c15fab4b19b25e53cd34819d5b7a44de17071571b3e136eaae9751a74bd  auditoria-diseno-rf19-rf20.docx
 fcacf8807e6115fab4c6b1fa01086923333b5b2e2717e8bc951cbb9a704484e0  adenda-diseno-rf19-rf20-v6.md
 eebb40e9d51628e9cfd057b2e735e8b8b9e3ce23c9bcd82544eaf8aeaad30714  adenda-diseno-rf19-rf20-v6.docx
+df03b74b3140bb50176af23dc03218fd6573bcdb139691f1e79b4c135be9eccd  adenda-diseno-rf19-rf20-v7.md
+a20da48a17b97585342d013a38a25b139e0d79717a9da89501a511daf47e1ebb  adenda-diseno-rf19-rf20-v7.docx
