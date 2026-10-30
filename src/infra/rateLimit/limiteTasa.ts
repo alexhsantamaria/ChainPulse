@@ -26,7 +26,11 @@ export {
 } from "./huella";
 import { truncarVentanaBucket, BUCKET_MINUTOS_LIMITE_TASA, BUCKETS_POR_VENTANA_LIMITE_TASA } from "./huella";
 
-export type BucketLimiteTasa = "INICIO_EVALUACION" | "DESBLOQUEO_DETALLE";
+export type BucketLimiteTasa =
+  | "INICIO_EVALUACION"
+  | "DESBLOQUEO_DETALLE"
+  | "LOGIN_PLATAFORMA"
+  | "VERIFICACION_MFA_PLATAFORMA";
 
 export interface ResultadoLimiteTasa {
   contador: number;
@@ -60,7 +64,11 @@ export async function registrarIntento(
   limite: number,
   ahora: Date,
   prisma: PrismaClient,
+  ventanaEnBuckets: number = BUCKETS_POR_VENTANA_LIMITE_TASA,
 ): Promise<ResultadoLimiteTasa> {
+  if (!Number.isInteger(ventanaEnBuckets) || ventanaEnBuckets < 1) {
+    throw new RangeError("ventanaEnBuckets debe ser un entero mayor o igual a 1");
+  }
   const ventanaInicio = truncarVentanaBucket(ahora);
   const id = randomUUID();
   await prisma.$executeRaw`
@@ -71,7 +79,7 @@ export async function registrarIntento(
   `;
 
   const inicioVentanaDeslizante = new Date(
-    ventanaInicio.getTime() - (BUCKETS_POR_VENTANA_LIMITE_TASA - 1) * BUCKET_MINUTOS_LIMITE_TASA * 60_000,
+    ventanaInicio.getTime() - (ventanaEnBuckets - 1) * BUCKET_MINUTOS_LIMITE_TASA * 60_000,
   );
   const filas = await prisma.$queryRaw<{ total: bigint | number | null }[]>`
     SELECT COALESCE(SUM("contador"), 0) AS total

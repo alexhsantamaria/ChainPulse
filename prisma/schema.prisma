@@ -84,6 +84,8 @@ enum BucketLimiteTasa {
   DESBLOQUEO_DETALLE
   SOLICITUD_DERECHOS // RF24 -- ALTER TYPE ADD VALUE aislado en su propia migracion, ver prisma/migrations/20261022080000_rf24_enum_bucket_limite_tasa
   CONFIRMAR_DERECHOS // RF24 -- idem
+  LOGIN_PLATAFORMA
+  VERIFICACION_MFA_PLATAFORMA
 }
 
 // RF3, engine v1 (src/engine/criticidad.ts): nivel categorico del impacto
@@ -691,6 +693,9 @@ model UsuarioPlataforma {
   mfaSecret     String?
   mfaHabilitado Boolean              @default(false)
   rol           RolUsuarioPlataforma
+  activo                  Boolean @default(true)
+  sessionVersion          Int     @default(1)
+  mfaUltimoContadorUsado Int?
 
   // Mismo criterio de bloqueo temporal que Usuario (src/infra/auth/rateLimit.ts),
   // pero implementado aparte (Seccion 18.2.F): este actor no tiene empresaId,
