@@ -150,11 +150,17 @@ async function main(): Promise<void> {
 
     const filas = await prismaAdmin.$queryRaw<FilaMigracion[]>`SELECT migration_name, started_at, finished_at, rolled_back_at FROM "_prisma_migrations" ORDER BY started_at`;
     const estado = evaluarEstadoMigraciones(filas, migracionesEnRepo("rf20-temporal:migraciones"));
-    if (estado.fallidasOInconclusas.length) throw new Error("MIGRACIONES_FALLIDAS_O_INCONCLUSAS");
-    const ajenas = estado.pendientes.filter((m) => !MIGRACIONES_AUTORIZADAS.has(m));
+    // Una anomalia activa (intento sin finished_at ni rolled_back_at)
+    // siempre bloquea. Una reversion ya resuelta expresamente mediante
+    // `prisma migrate resolve --rolled-back`, en cambio, es exactamente el
+    // estado desde el que Prisma permite reintentar una migracion corregida.
+    // Solo se admite si pertenece al conjunto RF19/RF20 cerrado.
+    if (estado.anomaliasActivas.length) throw new Error("MIGRACIONES_INCONCLUSAS_ACTIVAS");
+    const porAplicar = [...estado.pendientes, ...estado.reversionesSinResolucion];
+    const ajenas = porAplicar.filter((m) => !MIGRACIONES_AUTORIZADAS.has(m));
     if (ajenas.length) throw new Error("MIGRACIONES_PENDIENTES_AJENAS_A_RF19_RF20");
 
-    if (estado.pendientes.length) {
+    if (porAplicar.length) {
       const anterior = process.env.DATABASE_URL;
       try {
         process.env.DATABASE_URL = adminUrl;
