@@ -37,12 +37,20 @@ type PreguntaFuente = {
   opciones: unknown; esNoPuntuable: boolean;
 };
 
-function exigirAislamiento(host: string): void {
+function normalizarHostNeon(host: string): string {
+  return host.toLowerCase().replace("-pooler.", ".");
+}
+
+function exigirAislamiento(host: string, sslmode: string | null): void {
   const temporal = process.env.NEON_RAMA_TEMPORAL_HOST_CONFIRMADO;
   const produccion = process.env.NEON_PRODUCCION_HOST_BLOQUEADO;
   if (!temporal || temporal !== host) throw new Error("HOST_TEMPORAL_NO_CONFIRMADO");
   if (!produccion) throw new Error("HOST_PRODUCCION_NO_DECLARADO");
-  if (host === produccion) throw new Error("DESTINO_ES_PRODUCCION");
+  // Una rama Neon tiene variantes directa y pooler del mismo hostname.
+  // Normalizarlas evita que produccion pase por distinta solo por "-pooler".
+  if (normalizarHostNeon(host) === normalizarHostNeon(produccion)) throw new Error("DESTINO_ES_PRODUCCION");
+  if (host.toLowerCase().includes("-pooler.")) throw new Error("CONEXION_TEMPORAL_DEBE_SER_DIRECTA");
+  if (sslmode !== "require" && sslmode !== "verify-full") throw new Error("TLS_FUERTE_REQUERIDO");
   if (process.env.AUTORIZO_RF20_RAMA_TEMPORAL !== "si") throw new Error("AUTORIZACION_RF20_FALTANTE");
 }
 
@@ -121,7 +129,12 @@ async function main(): Promise<void> {
   const destinoAdmin = resumenUrl("SEED_DATABASE_URL", adminUrl);
   if (destinoConfirmado(destinoApp) !== destinoConfirmado(destinoAdmin)) throw new Error("DESTINOS_APP_ADMIN_DISTINTOS");
   exigirEntornoConfirmado(destinoApp);
-  exigirAislamiento(destinoApp.host);
+  const appParseada = new URL(appUrl as string);
+  const adminParseada = new URL(adminUrl as string);
+  if (appParseada.searchParams.get("sslmode") !== adminParseada.searchParams.get("sslmode")) {
+    throw new Error("CONFIGURACION_TLS_APP_ADMIN_DISTINTA");
+  }
+  exigirAislamiento(destinoApp.host, appParseada.searchParams.get("sslmode"));
 
   const prismaApp = construirClientePrueba(appUrl as string, "rf20-temporal:app");
   const prismaAdmin = construirClientePrueba(adminUrl as string, "rf20-temporal:admin");
