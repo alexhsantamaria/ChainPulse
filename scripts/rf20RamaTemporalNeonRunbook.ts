@@ -95,6 +95,25 @@ async function carreraPublicacion(pool: Pool, admin: Pool, actorId: string, preg
     [codigo],
   );
   if (exitos !== 1 || perdedoresValidos !== 1 || estado.rows[0]?.total !== 1) {
+    const detalleSeguro = resultados.map((resultado) => {
+      if (resultado.status === "fulfilled") {
+        return {
+          estado: "fulfilled",
+          publicada: resultado.value.rows[0]?.publicada ?? null,
+          motivo: resultado.value.rows[0]?.motivo ?? "SIN_RESULTADO",
+        };
+      }
+      const error = resultado.reason as { code?: string; constraint?: string };
+      return {
+        estado: "rejected",
+        codigo: error?.code ?? "SIN_CODIGO",
+        constraint: error?.constraint ?? "SIN_CONSTRAINT",
+      };
+    });
+    console.error("RF20_DIAGNOSTICO_CARRERA_PUBLICACION=" + JSON.stringify({
+      ronda, exitos, perdedoresValidos, publicadasEnCatalogo: estado.rows[0]?.total ?? null,
+      resultados: detalleSeguro,
+    }));
     throw new Error(`CARRERA_PUBLICACION_${ronda}_INVALIDA`);
   }
 }
