@@ -1,5 +1,22 @@
 # RF19/RF20 — Documentación de diseño
 
+## Errata normativa — ambiguedad `numero` detectada en rama temporal (2026-10-31)
+
+La primera ejecucion de las pruebas de concurrencia, despues de aplicar con
+exito las ocho migraciones RF19/RF20 en la rama temporal, detecto el error
+PL/pgSQL `column reference "numero" is ambiguous` al invocar
+`crear_cuestionario_version()`. La causa es que tanto esa funcion como
+`corregir_cuestionario_version()` declaran `RETURNS TABLE(numero integer)` y
+usaban `max(numero)` sin calificar: el parametro de salida y la columna fisica
+tenian el mismo identificador.
+
+La migracion aditiva
+`20261031010000_rf20_corregir_ambiguedad_numero_funciones` reemplaza solo esas
+dos funciones y califica todas las columnas afectadas mediante el alias `cv`.
+Conserva firmas, propietario `neondb_owner`, `SECURITY DEFINER`, `search_path`
+y grants originales. La migracion original ya aplicada en la rama temporal no
+se reescribe. Produccion no fue contactada ni modificada.
+
 Documentación de arquitectura de RF19 (autenticación de plataforma, MFA obligatorio) y RF20 (gobernanza de versiones del cuestionario de evaluación), consolidada tras un proceso iterativo de revisión y corrección.
 
 - `auditoria-diseno-rf19-rf20.md` / `.docx`: auditoría original de solo lectura, diagnóstico y propuesta inicial de diseño.
