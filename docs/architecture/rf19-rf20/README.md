@@ -29,3 +29,21 @@ IF NOT (v_elemento ? 'orden')
 ```
 
 El operador `?` de existencia de clave jsonb nunca devuelve `NULL`, a diferencia de `->`, asi que la comprobacion de ausencia queda explicita en vez de depender de la propagacion de `NULL`. v7 Seccion 7.8 queda, por tanto, documentalmente desactualizada en este punto exacto hasta que una proxima version del documento (v8 o posterior) incorpore esta correccion de forma integral y recalculada sus hashes; mientras tanto, esta erratum y el propio `migration.sql` preparado son la fuente autoritativa sobre el comportamiento real de `validar_estructura_opciones_pregunta()`.
+
+## Errata normativa — validacion Neon del PR 7 (2026-10-31)
+
+La primera ejecucion real, exclusivamente sobre la rama temporal Neon
+`rf20-pr7-validacion-20261031`, confirmo que PostgreSQL/Neon representa al
+propietario del esquema `public` mediante el rol especial
+`pg_database_owner`; el propietario real de la base actual sigue siendo
+`neondb_owner`. La precondicion de v7 exigia incorrectamente que
+`pg_namespace.nspowner` resolviera directamente a `neondb_owner` y aborto la
+migracion antes de cualquier prueba de concurrencia.
+
+La migracion preparada corrige la precondicion sin debilitarla: conserva
+`current_user = 'neondb_owner'`; acepta como propietario del esquema solo
+`neondb_owner` o `pg_database_owner`; y, cuando encuentra el rol especial,
+exige adicionalmente por catalogo que `pg_database.datdba` de la base actual
+resuelva a `neondb_owner`. La postcondicion de roles nominativos permite
+`pg_database_owner` por la misma razon, despues de que la precondicion haya
+demostrado a quien representa. Produccion no fue contactada ni modificada.
