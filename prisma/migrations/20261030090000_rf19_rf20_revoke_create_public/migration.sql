@@ -16,7 +16,11 @@ BEGIN;
 -- PRECONDICION (bloqueante): dos comprobaciones independientes.
 -- 1) El ejecutor de esta sesion debe ser literalmente neondb_owner.
 -- 2) El propietario REAL del esquema public, leido por catalogo (nunca
---    asumido), tambien debe ser neondb_owner. A diferencia de las
+--    asumido), debe ser neondb_owner o el rol especial
+--    pg_database_owner. En este ultimo caso, el propietario REAL de la
+--    base actual debe ser neondb_owner: pg_database_owner representa
+--    dinamicamente al propietario de la base actual en PostgreSQL 15+.
+--    A diferencia de las
 --    funciones SECURITY DEFINER de 3.3 (que corrigen su propietario
 --    despues con ALTER FUNCTION), un REVOKE no tiene mecanismo de
 --    correccion posterior -- de ahi que esta migracion exija ambas
@@ -24,20 +28,33 @@ BEGIN;
 -- ============================================================
 DO $$
 DECLARE
-  v_propietario_real name;
+  v_propietario_schema name;
+  v_propietario_base name;
 BEGIN
   IF current_user <> 'neondb_owner' THEN
     RAISE EXCEPTION 'RF19RF20_PRECONDICION_EJECUTOR: esta migracion debe ejecutarse con la credencial neondb_owner, credencial actual: %', current_user;
   END IF;
 
   SELECT r.rolname
-  INTO v_propietario_real
+  INTO v_propietario_schema
   FROM pg_namespace AS n
   JOIN pg_roles AS r ON r.oid = n.nspowner
   WHERE n.nspname = 'public';
 
-  IF v_propietario_real IS DISTINCT FROM 'neondb_owner' THEN
-    RAISE EXCEPTION 'RF19RF20_PRECONDICION_PROPIETARIO_REAL: el propietario real del esquema public (pg_namespace.nspowner) es %, se esperaba neondb_owner', v_propietario_real;
+  SELECT r.rolname
+  INTO v_propietario_base
+  FROM pg_database AS d
+  JOIN pg_roles AS r ON r.oid = d.datdba
+  WHERE d.datname = current_database();
+
+  IF v_propietario_schema IS DISTINCT FROM 'neondb_owner'
+     AND v_propietario_schema IS DISTINCT FROM 'pg_database_owner' THEN
+    RAISE EXCEPTION 'RF19RF20_PRECONDICION_PROPIETARIO_SCHEMA: el propietario real del esquema public es %, se esperaba neondb_owner o pg_database_owner', v_propietario_schema;
+  END IF;
+
+  IF v_propietario_schema = 'pg_database_owner'
+     AND v_propietario_base IS DISTINCT FROM 'neondb_owner' THEN
+    RAISE EXCEPTION 'RF19RF20_PRECONDICION_PROPIETARIO_BASE: public pertenece a pg_database_owner, pero el propietario real de la base actual es %, se esperaba neondb_owner', v_propietario_base;
   END IF;
 END;
 $$;
@@ -113,15 +130,16 @@ BEGIN
   END IF;
 
   -- Comprobacion 3 (sujeto de la Prueba D2, 3.2) -- ningun rol con
-  -- nombre, distinto de neondb_owner, conserva CREATE. neondb_owner
-  -- es la unica excepcion esperada: tiene CREATE implicito por ser
-  -- propietario del esquema, no por un GRANT revocable.
+  -- nombre, distinto de neondb_owner/pg_database_owner, conserva CREATE.
+  -- El segundo es el rol especial que representa dinamicamente al
+  -- propietario real de la base; la precondicion ya demostro que ese
+  -- propietario es neondb_owner.
   FOR v_rol_inesperado IN
     SELECT r.rolname
     FROM pg_namespace n, LATERAL aclexplode(n.nspacl) a
     JOIN pg_roles r ON r.oid = a.grantee
     WHERE n.nspname = 'public' AND a.privilege_type = 'CREATE'
-      AND r.rolname NOT IN ('neondb_owner')
+      AND r.rolname NOT IN ('neondb_owner', 'pg_database_owner')
   LOOP
     v_hay_rol_inesperado := true;
     RAISE WARNING 'RF19RF20_POSTCONDICION_3_ROL_INESPERADO: el rol % conserva CREATE sobre public', v_rol_inesperado.rolname;

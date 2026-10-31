@@ -1,5 +1,38 @@
 # RF19/RF20 — Documentación de diseño
 
+## Errata normativa — ambiguedad `motivo` detectada en rama temporal (2026-10-31)
+
+La segunda ejecucion de las pruebas de concurrencia en la rama temporal Neon
+alcanzo `publicar_cuestionario_version()` y detecto SQLSTATE `42702` en ambas
+llamadas. La funcion declara `RETURNS TABLE(publicada boolean, motivo text)` y
+el paso 4.5 seleccionaba `motivo` sin calificar desde
+`validar_estructura_opciones_pregunta()`, por lo que PL/pgSQL no podia decidir
+entre el parametro de salida y la columna devuelta.
+
+La migracion aditiva
+`20261031011000_rf20_calificar_resultado_validacion_publicacion` sustituye de
+forma bloqueante y verificable ese unico fragmento por
+`validacion.valido, validacion.motivo`, conservando la firma, el cuerpo
+restante, el propietario y los grants. La migracion original ya aplicada en
+la rama temporal no se reescribe. Produccion no fue contactada ni modificada.
+
+## Errata normativa — ambiguedad `numero` detectada en rama temporal (2026-10-31)
+
+La primera ejecucion de las pruebas de concurrencia, despues de aplicar con
+exito las ocho migraciones RF19/RF20 en la rama temporal, detecto el error
+PL/pgSQL `column reference "numero" is ambiguous` al invocar
+`crear_cuestionario_version()`. La causa es que tanto esa funcion como
+`corregir_cuestionario_version()` declaran `RETURNS TABLE(numero integer)` y
+usaban `max(numero)` sin calificar: el parametro de salida y la columna fisica
+tenian el mismo identificador.
+
+La migracion aditiva
+`20261031010000_rf20_corregir_ambiguedad_numero_funciones` reemplaza solo esas
+dos funciones y califica todas las columnas afectadas mediante el alias `cv`.
+Conserva firmas, propietario `neondb_owner`, `SECURITY DEFINER`, `search_path`
+y grants originales. La migracion original ya aplicada en la rama temporal no
+se reescribe. Produccion no fue contactada ni modificada.
+
 Documentación de arquitectura de RF19 (autenticación de plataforma, MFA obligatorio) y RF20 (gobernanza de versiones del cuestionario de evaluación), consolidada tras un proceso iterativo de revisión y corrección.
 
 - `auditoria-diseno-rf19-rf20.md` / `.docx`: auditoría original de solo lectura, diagnóstico y propuesta inicial de diseño.
@@ -29,3 +62,21 @@ IF NOT (v_elemento ? 'orden')
 ```
 
 El operador `?` de existencia de clave jsonb nunca devuelve `NULL`, a diferencia de `->`, asi que la comprobacion de ausencia queda explicita en vez de depender de la propagacion de `NULL`. v7 Seccion 7.8 queda, por tanto, documentalmente desactualizada en este punto exacto hasta que una proxima version del documento (v8 o posterior) incorpore esta correccion de forma integral y recalculada sus hashes; mientras tanto, esta erratum y el propio `migration.sql` preparado son la fuente autoritativa sobre el comportamiento real de `validar_estructura_opciones_pregunta()`.
+
+## Errata normativa — validacion Neon del PR 7 (2026-10-31)
+
+La primera ejecucion real, exclusivamente sobre la rama temporal Neon
+`rf20-pr7-validacion-20261031`, confirmo que PostgreSQL/Neon representa al
+propietario del esquema `public` mediante el rol especial
+`pg_database_owner`; el propietario real de la base actual sigue siendo
+`neondb_owner`. La precondicion de v7 exigia incorrectamente que
+`pg_namespace.nspowner` resolviera directamente a `neondb_owner` y aborto la
+migracion antes de cualquier prueba de concurrencia.
+
+La migracion preparada corrige la precondicion sin debilitarla: conserva
+`current_user = 'neondb_owner'`; acepta como propietario del esquema solo
+`neondb_owner` o `pg_database_owner`; y, cuando encuentra el rol especial,
+exige adicionalmente por catalogo que `pg_database.datdba` de la base actual
+resuelva a `neondb_owner`. La postcondicion de roles nominativos permite
+`pg_database_owner` por la misma razon, despues de que la precondicion haya
+demostrado a quien representa. Produccion no fue contactada ni modificada.
