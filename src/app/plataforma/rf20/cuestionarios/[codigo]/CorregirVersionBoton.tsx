@@ -17,22 +17,31 @@ export default function CorregirVersionBoton({ versionId }: { versionId: string 
     setError(null);
     setCargando(true);
 
-    const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}/corregir`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const resultado = await respuesta.json().catch(() => null);
-    setCargando(false);
+    // try/catch/finally (deuda de revision del PR 8, hallazgo Medio) --
+    // mismo motivo que CrearCuestionarioForm.tsx: un fallo de red en
+    // fetch() (no una respuesta HTTP de error) quedaba sin manejar. El
+    // comportamiento para cualquier respuesta HTTP valida no cambia.
+    try {
+      const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}/corregir`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const resultado = await respuesta.json().catch(() => null);
 
-    if (!respuesta.ok || !resultado?.ok) {
-      setError(
-        resultado?.motivo ?? resultado?.error ?? `No se pudo corregir (HTTP ${respuesta.status}).`,
-      );
-      return;
+      if (!respuesta.ok || !resultado?.ok) {
+        setError(
+          resultado?.motivo ?? resultado?.error ?? `No se pudo corregir (HTTP ${respuesta.status}).`,
+        );
+        return;
+      }
+
+      router.push(`/plataforma/rf20/versiones/${resultado.id}`);
+    } catch {
+      setError("No se pudo conectar. Revisá tu conexión e intentá de nuevo.");
+    } finally {
+      setCargando(false);
     }
-
-    router.push(`/plataforma/rf20/versiones/${resultado.id}`);
   }
 
   return (

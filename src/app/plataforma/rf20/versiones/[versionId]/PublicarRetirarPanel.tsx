@@ -27,35 +27,52 @@ export default function PublicarRetirarPanel({
   async function publicar() {
     setError(null);
     setCargando(true);
-    const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}/publicar`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ versionVigenteEsperadaId: versionVigenteActualId }),
-    });
-    const resultado = await respuesta.json().catch(() => null);
-    setCargando(false);
-    if (!respuesta.ok || !resultado?.ok) {
-      setError(resultado?.motivo ?? resultado?.error ?? `No se pudo publicar (HTTP ${respuesta.status}).`);
-      return;
+    // try/catch/finally (deuda de revision del PR 8, hallazgo Medio) --
+    // publicar/retirar son las acciones de mayor impacto de todo el
+    // modulo: un fallo de red en fetch() (no una respuesta HTTP de
+    // error) dejaba el boton trabado y la promesa sin manejar. El
+    // comportamiento para cualquier respuesta HTTP valida no cambia.
+    try {
+      const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}/publicar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ versionVigenteEsperadaId: versionVigenteActualId }),
+      });
+      const resultado = await respuesta.json().catch(() => null);
+      if (!respuesta.ok || !resultado?.ok) {
+        setError(resultado?.motivo ?? resultado?.error ?? `No se pudo publicar (HTTP ${respuesta.status}).`);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("No se pudo conectar. Revisá tu conexión e intentá de nuevo.");
+    } finally {
+      setCargando(false);
     }
-    router.refresh();
   }
 
   async function retirar() {
     setError(null);
     setCargando(true);
-    const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}/retirar`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const resultado = await respuesta.json().catch(() => null);
-    setCargando(false);
-    if (!respuesta.ok || !resultado?.ok) {
-      setError(resultado?.motivo ?? resultado?.error ?? `No se pudo retirar (HTTP ${respuesta.status}).`);
-      return;
+    // try/catch/finally (deuda de revision del PR 8, hallazgo Medio) --
+    // mismo motivo que publicar() arriba.
+    try {
+      const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}/retirar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const resultado = await respuesta.json().catch(() => null);
+      if (!respuesta.ok || !resultado?.ok) {
+        setError(resultado?.motivo ?? resultado?.error ?? `No se pudo retirar (HTTP ${respuesta.status}).`);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("No se pudo conectar. Revisá tu conexión e intentá de nuevo.");
+    } finally {
+      setCargando(false);
     }
-    router.refresh();
   }
 
   return (

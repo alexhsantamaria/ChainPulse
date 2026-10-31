@@ -29,20 +29,29 @@ export default function MetadataForm({
     setOk(false);
     setCargando(true);
 
-    const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notasCambio: notas.trim().length === 0 ? null : notas }),
-    });
-    const resultado = await respuesta.json().catch(() => null);
-    setCargando(false);
+    // try/catch/finally (deuda de revision del PR 8, hallazgo Medio) --
+    // mismo motivo que CrearCuestionarioForm.tsx: un fallo de red en
+    // fetch() (no una respuesta HTTP de error) quedaba sin manejar. El
+    // comportamiento para cualquier respuesta HTTP valida no cambia.
+    try {
+      const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notasCambio: notas.trim().length === 0 ? null : notas }),
+      });
+      const resultado = await respuesta.json().catch(() => null);
 
-    if (!respuesta.ok || !resultado?.ok) {
-      setError(resultado?.motivo ?? resultado?.error ?? `No se pudo guardar (HTTP ${respuesta.status}).`);
-      return;
+      if (!respuesta.ok || !resultado?.ok) {
+        setError(resultado?.motivo ?? resultado?.error ?? `No se pudo guardar (HTTP ${respuesta.status}).`);
+        return;
+      }
+      setOk(true);
+      router.refresh();
+    } catch {
+      setError("No se pudo conectar. Revisá tu conexión e intentá de nuevo.");
+    } finally {
+      setCargando(false);
     }
-    setOk(true);
-    router.refresh();
   }
 
   return (

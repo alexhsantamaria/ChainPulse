@@ -25,23 +25,38 @@ export interface PreguntaEditable {
   esNoPuntuable: boolean;
 }
 
-async function validarOpciones(opcionesTexto: string): Promise<string> {
+// Exportada (deuda de revision del PR 8, hallazgo Medio) para que las
+// pruebas focalizadas puedan ejercer el try/catch sin jsdom -- es una
+// funcion standalone, sin hooks ni JSX, así que es segura de exportar
+// sin cambiar ningún comportamiento del componente.
+export async function validarOpciones(opcionesTexto: string): Promise<string> {
   let opciones: unknown;
   try {
     opciones = JSON.parse(opcionesTexto);
   } catch {
     return "JSON invalido.";
   }
-  const respuesta = await fetch("/api/plataforma/rf20/validar-opciones", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ opciones }),
-  });
-  const resultado = await respuesta.json().catch(() => null);
-  if (!respuesta.ok || !resultado?.ok) {
-    return resultado?.error ?? `No se pudo validar (HTTP ${respuesta.status}).`;
+  // try/catch (deuda de revision del PR 8, hallazgo Medio): un fallo de
+  // red en fetch() (no una respuesta HTTP de error, ya cubierta mas
+  // abajo) quedaba sin manejar -- la promesa del onClick que llama a
+  // esta funcion quedaba rechazada sin capturar. El comportamiento para
+  // cualquier respuesta HTTP valida no cambia. Esta funcion no maneja
+  // ningún estado "cargando" propio (lo decide quien la llama), así
+  // que no hace falta ningún finally aquí.
+  try {
+    const respuesta = await fetch("/api/plataforma/rf20/validar-opciones", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ opciones }),
+    });
+    const resultado = await respuesta.json().catch(() => null);
+    if (!respuesta.ok || !resultado?.ok) {
+      return resultado?.error ?? `No se pudo validar (HTTP ${respuesta.status}).`;
+    }
+    return resultado.valido ? "Estructura válida." : `Inválida: ${resultado.motivo}`;
+  } catch {
+    return "No se pudo conectar. Revisá tu conexión e intentá de nuevo.";
   }
-  return resultado.valido ? "Estructura válida." : `Inválida: ${resultado.motivo}`;
 }
 
 function CamposPregunta({
@@ -159,41 +174,58 @@ function FilaPregunta({
       return;
     }
     setCargando(true);
-    const respuesta = await fetch(`/api/plataforma/rf20/preguntas/${pregunta.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        texto: valores.texto,
-        dimension: valores.dimension,
-        opciones,
-        esNoPuntuable: valores.esNoPuntuable,
-      }),
-    });
-    const resultado = await respuesta.json().catch(() => null);
-    setCargando(false);
-    if (!respuesta.ok || !resultado?.ok) {
-      setError(resultado?.motivo ?? resultado?.error ?? `No se pudo guardar (HTTP ${respuesta.status}).`);
-      return;
+    // try/catch/finally (deuda de revision del PR 8, hallazgo Medio) --
+    // mismo motivo que CrearCuestionarioForm.tsx: un fallo de red en
+    // fetch() (no una respuesta HTTP de error) dejaba el boton trabado
+    // y la promesa sin manejar. El comportamiento para cualquier
+    // respuesta HTTP valida no cambia.
+    try {
+      const respuesta = await fetch(`/api/plataforma/rf20/preguntas/${pregunta.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          texto: valores.texto,
+          dimension: valores.dimension,
+          opciones,
+          esNoPuntuable: valores.esNoPuntuable,
+        }),
+      });
+      const resultado = await respuesta.json().catch(() => null);
+      if (!respuesta.ok || !resultado?.ok) {
+        setError(resultado?.motivo ?? resultado?.error ?? `No se pudo guardar (HTTP ${respuesta.status}).`);
+        return;
+      }
+      setEditando(false);
+      router.refresh();
+    } catch {
+      setError("No se pudo conectar. Revisá tu conexión e intentá de nuevo.");
+    } finally {
+      setCargando(false);
     }
-    setEditando(false);
-    router.refresh();
   }
 
   async function eliminar() {
     setError(null);
     setCargando(true);
-    const respuesta = await fetch(`/api/plataforma/rf20/preguntas/${pregunta.id}`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const resultado = await respuesta.json().catch(() => null);
-    setCargando(false);
-    if (!respuesta.ok || !resultado?.ok) {
-      setError(resultado?.motivo ?? resultado?.error ?? `No se pudo eliminar (HTTP ${respuesta.status}).`);
-      return;
+    // try/catch/finally (deuda de revision del PR 8, hallazgo Medio) --
+    // mismo motivo que guardar() arriba.
+    try {
+      const respuesta = await fetch(`/api/plataforma/rf20/preguntas/${pregunta.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const resultado = await respuesta.json().catch(() => null);
+      if (!respuesta.ok || !resultado?.ok) {
+        setError(resultado?.motivo ?? resultado?.error ?? `No se pudo eliminar (HTTP ${respuesta.status}).`);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("No se pudo conectar. Revisá tu conexión e intentá de nuevo.");
+    } finally {
+      setCargando(false);
     }
-    router.refresh();
   }
 
   async function mover(direccion: "arriba" | "abajo") {
@@ -208,18 +240,25 @@ function FilaPregunta({
     ordenes[vecino]!.orden = ordenPropio;
 
     setCargando(true);
-    const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}/reordenar`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ordenes }),
-    });
-    const resultado = await respuesta.json().catch(() => null);
-    setCargando(false);
-    if (!respuesta.ok || !resultado?.ok) {
-      setError(resultado?.motivo ?? resultado?.error ?? `No se pudo reordenar (HTTP ${respuesta.status}).`);
-      return;
+    // try/catch/finally (deuda de revision del PR 8, hallazgo Medio) --
+    // mismo motivo que guardar() arriba.
+    try {
+      const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}/reordenar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ordenes }),
+      });
+      const resultado = await respuesta.json().catch(() => null);
+      if (!respuesta.ok || !resultado?.ok) {
+        setError(resultado?.motivo ?? resultado?.error ?? `No se pudo reordenar (HTTP ${respuesta.status}).`);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("No se pudo conectar. Revisá tu conexión e intentá de nuevo.");
+    } finally {
+      setCargando(false);
     }
-    router.refresh();
   }
 
   return (
@@ -310,26 +349,33 @@ function AgregarPreguntaForm({ versionId, siguienteOrden }: { versionId: string;
       return;
     }
     setCargando(true);
-    const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}/preguntas`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        codigo: valores.codigo,
-        orden: siguienteOrden,
-        texto: valores.texto,
-        dimension: valores.dimension,
-        opciones,
-        esNoPuntuable: valores.esNoPuntuable,
-      }),
-    });
-    const resultado = await respuesta.json().catch(() => null);
-    setCargando(false);
-    if (!respuesta.ok || !resultado?.ok) {
-      setError(resultado?.motivo ?? resultado?.error ?? `No se pudo agregar (HTTP ${respuesta.status}).`);
-      return;
+    // try/catch/finally (deuda de revision del PR 8, hallazgo Medio) --
+    // mismo motivo que guardar() arriba.
+    try {
+      const respuesta = await fetch(`/api/plataforma/rf20/versiones/${versionId}/preguntas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          codigo: valores.codigo,
+          orden: siguienteOrden,
+          texto: valores.texto,
+          dimension: valores.dimension,
+          opciones,
+          esNoPuntuable: valores.esNoPuntuable,
+        }),
+      });
+      const resultado = await respuesta.json().catch(() => null);
+      if (!respuesta.ok || !resultado?.ok) {
+        setError(resultado?.motivo ?? resultado?.error ?? `No se pudo agregar (HTTP ${respuesta.status}).`);
+        return;
+      }
+      setValores({ codigo: "", texto: "", dimension: DIMENSIONES[0], opcionesTexto: "[]", esNoPuntuable: false });
+      router.refresh();
+    } catch {
+      setError("No se pudo conectar. Revisá tu conexión e intentá de nuevo.");
+    } finally {
+      setCargando(false);
     }
-    setValores({ codigo: "", texto: "", dimension: DIMENSIONES[0], opcionesTexto: "[]", esNoPuntuable: false });
-    router.refresh();
   }
 
   return (

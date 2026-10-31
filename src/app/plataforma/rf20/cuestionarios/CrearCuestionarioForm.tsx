@@ -19,24 +19,38 @@ export default function CrearCuestionarioForm() {
     setError(null);
     setCargando(true);
 
-    const respuesta = await fetch("/api/plataforma/rf20/cuestionarios", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigo }),
-    });
-    const resultado = await respuesta.json().catch(() => null);
-    setCargando(false);
+    // try/catch/finally (deuda de revision del PR 8, hallazgo Medio): un
+    // fallo de RED (no una respuesta HTTP de error, que el bloque de
+    // abajo ya cubre, sino que fetch() mismo rechace -- sin conexion,
+    // DNS, CORS) quedaba sin manejar -- el boton se trababa en
+    // "Creando..." para siempre y la promesa de handleSubmit quedaba
+    // rechazada sin capturar. Mismo criterio que LoginForm.tsx/
+    // CodigoMfaPlataformaForm.tsx: nunca se expone el detalle crudo del
+    // error, solo un mensaje generico. El comportamiento para cualquier
+    // respuesta HTTP valida (ok o no) no cambia.
+    try {
+      const respuesta = await fetch("/api/plataforma/rf20/cuestionarios", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codigo }),
+      });
+      const resultado = await respuesta.json().catch(() => null);
 
-    if (!respuesta.ok || !resultado?.ok) {
-      setError(
-        resultado?.motivo ?? resultado?.error ?? `No se pudo crear (HTTP ${respuesta.status}).`,
-      );
-      return;
+      if (!respuesta.ok || !resultado?.ok) {
+        setError(
+          resultado?.motivo ?? resultado?.error ?? `No se pudo crear (HTTP ${respuesta.status}).`,
+        );
+        return;
+      }
+
+      setCodigo("");
+      router.push(`/plataforma/rf20/cuestionarios/${encodeURIComponent(codigo)}`);
+      router.refresh();
+    } catch {
+      setError("No se pudo conectar. Revisá tu conexión e intentá de nuevo.");
+    } finally {
+      setCargando(false);
     }
-
-    setCodigo("");
-    router.push(`/plataforma/rf20/cuestionarios/${encodeURIComponent(codigo)}`);
-    router.refresh();
   }
 
   return (
