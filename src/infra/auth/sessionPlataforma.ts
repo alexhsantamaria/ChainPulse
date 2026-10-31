@@ -3,6 +3,8 @@
 // usan las funciones SECURITY DEFINER creadas por el PR 3.
 import type { PrismaClient } from "@prisma/client";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { NextResponse } from "next/server";
 import {
   COOKIE_SESION_PLATAFORMA,
   verificarTokenSesionPlataforma,
@@ -146,4 +148,77 @@ export async function requireSesionPlataforma(
   }
 
   return { ...payload, activo: true };
+}
+
+// Guardas de ruta para RF20 (PR 8) -- mismo patron que requireSession()/
+// requireAdmin() en src/infra/auth/session.ts (el actor tenant): un unico
+// lugar que arma la respuesta 401/403 para que ninguna ruta nueva pueda
+// repetir el chequeo a mano y desviarse por accidente. No duplica logica
+// SQL: solo envuelve requireSesionPlataforma(), que ya hace la lectura de
+// estado contra Postgres via leer_estado_sesion_plataforma().
+export type ResultadoSesionPlataforma =
+  | { sesion: SesionPlataformaValida }
+  | { respuesta: NextResponse };
+
+const SESION_PLATAFORMA_INVALIDA_RESPUESTA = () =>
+  NextResponse.json({ ok: false, error: "SESION_PLATAFORMA_INVALIDA" }, { status: 401 });
+const NO_AUTORIZADO_PLATAFORMA_RESPUESTA = () =>
+  NextResponse.json({ ok: false, error: "NO_AUTORIZADO" }, { status: 403 });
+
+/** Exige una sesion de plataforma vigente (cualquier rol). Usar en toda ruta de /api/plataforma que no sea login/MFA. */
+export async function requireSesionPlataformaRuta(
+  cliente: ClienteSql = prisma,
+): Promise<ResultadoSesionPlataforma> {
+  try {
+    const sesion = await requireSesionPlataforma(undefined, cliente);
+    return { sesion };
+  } catch {
+    // Mismo criterio de no distinguir el motivo (token ausente, invalido,
+    // usuario inactivo, sessionVersion desfasada) que el resto de este
+    // modulo: siempre la misma respuesta generica.
+    return { respuesta: SESION_PLATAFORMA_INVALIDA_RESPUESTA() };
+  }
+}
+
+/** Exige una sesion de plataforma vigente Y rol ADMINISTRADOR_PLATAFORMA. Usar en publicar/retirar (RF20, §7) -- decision de autorizacion fina tomada en PR 8, ver informe de entrega. */
+export async function requireAdministradorPlataformaRuta(
+  cliente: ClienteSql = prisma,
+): Promise<ResultadoSesionPlataforma> {
+  const resultado = await requireSesionPlataformaRuta(cliente);
+  if ("respuesta" in resultado) return resultado;
+  if (resultado.sesion.rol !== "ADMINISTRADOR_PLATAFORMA") {
+    return { respuesta: NO_AUTORIZADO_PLATAFORMA_RESPUESTA() };
+  }
+  return resultado;
+}
+
+// Equivalentes para Server Components (paginas RF20 de PR 8) -- mismo
+// patron que requireSessionOrRedirect()/requireAdminOrRedirect() en
+// src/infra/auth/session.ts (el actor tenant): un Server Component no
+// puede devolver NextResponse, asi que en vez de eso redirige. No
+// duplica logica: ambas envuelven requireSesionPlataforma(), que ya hace
+// la lectura de estado contra Postgres.
+//
+// "/plataforma/login" existe (ronda 2 de revision, Alex: paginas de
+// login, activacion de MFA y verificacion de MFA para UsuarioPlataforma,
+// reutilizando las APIs de RF19) -- la redireccion de abajo apunta a una
+// ruta real, no a un placeholder.
+export async function requireSesionPlataformaOrRedirect(
+  rutaSinSesion = "/plataforma/login",
+): Promise<SesionPlataformaValida> {
+  try {
+    return await requireSesionPlataforma();
+  } catch {
+    redirect(rutaSinSesion);
+  }
+}
+
+/** Equivalente a requireAdministradorPlataformaRuta() para Server Components -- ver requireSesionPlataformaOrRedirect(). */
+export async function requireAdministradorPlataformaOrRedirect(
+  rutaNoAutorizado = "/plataforma/rf20/cuestionarios",
+  rutaSinSesion = "/plataforma/login",
+): Promise<SesionPlataformaValida> {
+  const sesion = await requireSesionPlataformaOrRedirect(rutaSinSesion);
+  if (sesion.rol !== "ADMINISTRADOR_PLATAFORMA") redirect(rutaNoAutorizado);
+  return sesion;
 }
