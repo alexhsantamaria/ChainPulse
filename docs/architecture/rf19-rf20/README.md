@@ -1,5 +1,21 @@
 # RF19/RF20 — Documentación de diseño
 
+## Errata normativa — ambiguedad `motivo` detectada en rama temporal (2026-10-31)
+
+La segunda ejecucion de las pruebas de concurrencia en la rama temporal Neon
+alcanzo `publicar_cuestionario_version()` y detecto SQLSTATE `42702` en ambas
+llamadas. La funcion declara `RETURNS TABLE(publicada boolean, motivo text)` y
+el paso 4.5 seleccionaba `motivo` sin calificar desde
+`validar_estructura_opciones_pregunta()`, por lo que PL/pgSQL no podia decidir
+entre el parametro de salida y la columna devuelta.
+
+La migracion aditiva
+`20261031011000_rf20_calificar_resultado_validacion_publicacion` sustituye de
+forma bloqueante y verificable ese unico fragmento por
+`validacion.valido, validacion.motivo`, conservando la firma, el cuerpo
+restante, el propietario y los grants. La migracion original ya aplicada en
+la rama temporal no se reescribe. Produccion no fue contactada ni modificada.
+
 ## Errata normativa — ambiguedad `numero` detectada en rama temporal (2026-10-31)
 
 La primera ejecucion de las pruebas de concurrencia, despues de aplicar con

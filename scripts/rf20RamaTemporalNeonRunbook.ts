@@ -31,6 +31,7 @@ const MIGRACIONES_AUTORIZADAS = new Set([
   "20261030120000_rf20_bitacora_version_cuestionario",
   "20261030121000_rf20_funciones_controladas",
   "20261031010000_rf20_corregir_ambiguedad_numero_funciones",
+  "20261031011000_rf20_calificar_resultado_validacion_publicacion",
 ]);
 
 type PreguntaFuente = {
