@@ -139,6 +139,12 @@ enum EstadoVersionContenido {
   RETIRADA
 }
 
+enum AccionBitacoraVersion {
+  CORREGIR
+  PUBLICAR
+  RETIRAR
+}
+
 // RF21, motor v2 (src/engine/v2/) — estado categorico por dimension del
 // cuestionario condensado. NO es lo mismo que el campo existente
 // "indiceIntegracion" (float, motor v1, RF16): una es un estado categorico
@@ -707,6 +713,7 @@ model UsuarioPlataforma {
 
   cuestionariosPublicados CuestionarioVersion[]
   definicionesKpiCuradas  DefinicionKpi[]
+  bitacorasVersion        BitacoraVersionCuestionario[]
 
   @@map("usuarios_plataforma")
 }
@@ -745,6 +752,8 @@ model CuestionarioVersion {
 
   preguntas          PreguntaVersion[]
   evaluacionesExpres EvaluacionExpresV2[]
+  bitacoraComoVersion BitacoraVersionCuestionario[] @relation("BitacoraDeVersion")
+  bitacoraComoOrigen  BitacoraVersionCuestionario[] @relation("BitacoraOrigenDeVersion")
 
   @@unique([codigo, numero])
   // R5-25 -- sin este indice, "que versiones curo este usuario de
@@ -778,6 +787,25 @@ model PreguntaVersion {
 
   @@unique([cuestionarioVersionId, codigo])
   @@map("pregunta_versiones")
+}
+
+// RF20 — registro historico append-only de las transiciones gobernadas de
+// una version. Solo las funciones SECURITY DEFINER de RF20 insertan filas;
+// chainpulse_app conserva lectura, pero no escritura directa.
+model BitacoraVersionCuestionario {
+  id                    String               @id
+  cuestionarioVersionId String
+  cuestionarioVersion   CuestionarioVersion  @relation("BitacoraDeVersion", fields: [cuestionarioVersionId], references: [id], onDelete: Restrict)
+  versionOrigenId       String?
+  versionOrigen         CuestionarioVersion? @relation("BitacoraOrigenDeVersion", fields: [versionOrigenId], references: [id], onDelete: Restrict)
+  actorId               String
+  actor                 UsuarioPlataforma    @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  accion                AccionBitacoraVersion
+  createdAt             DateTime             @default(now())
+
+  @@index([cuestionarioVersionId])
+  @@index([actorId])
+  @@map("bitacora_version_cuestionario")
 }
 
 // RF21 — evaluacion anonima V2, tabla nueva y paralela a EvaluacionExpres
