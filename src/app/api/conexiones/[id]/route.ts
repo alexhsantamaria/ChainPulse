@@ -6,13 +6,20 @@ import { z } from "zod";
 import { requireSession } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import { calcularCompletitud } from "@/infra/conexiones/completitud";
+import { esViolacionUnica } from "@/infra/prisma/errores";
+import { logError } from "@/infra/log";
 
 const actualizarSchema = z.object({
+  origenId: z.string().min(1),
+  destinoId: z.string().min(1),
   gradoDependencia: z.enum(["BAJA", "MEDIA", "ALTA", "CRITICA"]).optional().nullable(),
   impactoPromesaCliente: z.enum(["BAJO", "MEDIO", "ALTO", "CRITICO"]).optional().nullable(),
   tieneAlternativa: z.boolean().optional().nullable(),
   tiempoTolerable: z.enum(["CORTO", "MEDIO", "LARGO"]).optional().nullable(),
   tiempoRecuperacion: z.enum(["CORTO", "MEDIO", "LARGO"]).optional().nullable(),
+}).refine((datos) => datos.origenId !== datos.destinoId, {
+  message: "origenId y destinoId no pueden ser el mismo eslabon",
+  path: ["destinoId"],
 });
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -32,6 +39,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return NextResponse.json({ ok: false, error: "CONEXION_INEXISTENTE" }, { status: 404 });
   }
 
+  const [origen, destino] = await Promise.all([
+    client.eslabon.findUnique({ where: { id: parsed.data.origenId } }),
+    client.eslabon.findUnique({ where: { id: parsed.data.destinoId } }),
+  ]);
+  if (!origen || !destino) {
+    return NextResponse.json({ ok: false, error: "ESLABON_INEXISTENTE" }, { status: 400 });
+  }
+
   // Merge sobre los datos ya guardados: PATCH permite completar solo los
   // campos que faltaban sin obligar a reenviar los que ya estaban.
   const datosCombinados = {
@@ -44,15 +59,24 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   };
   const completa = calcularCompletitud(datosCombinados);
 
-  const conexion = await client.conexion.update({
-    where: { id },
-    data: {
-      ...datosCombinados,
-      completa,
-      // Solo se marca la fecha de confirmacion la primera vez que pasa a completa.
-      criticidadConfirmadaEn: completa && !existente.completa ? new Date() : existente.criticidadConfirmadaEn,
-    },
-  });
-
-  return NextResponse.json({ ok: true, conexion });
+  try {
+    const conexion = await client.conexion.update({
+      where: { id },
+      data: {
+        origenId: parsed.data.origenId,
+        destinoId: parsed.data.destinoId,
+        ...datosCombinados,
+        completa,
+        // Solo se marca la fecha de confirmacion la primera vez que pasa a completa.
+        criticidadConfirmadaEn: completa && !existente.completa ? new Date() : existente.criticidadConfirmadaEn,
+      },
+    });
+    return NextResponse.json({ ok: true, conexion });
+  } catch (err) {
+    if (esViolacionUnica(err)) {
+      return NextResponse.json({ ok: false, error: "CONEXION_YA_EXISTE" }, { status: 409 });
+    }
+    logError("api/conexiones/[id] PATCH", err);
+    return NextResponse.json({ ok: false, error: "ERROR_INTERNO" }, { status: 500 });
+  }
 }

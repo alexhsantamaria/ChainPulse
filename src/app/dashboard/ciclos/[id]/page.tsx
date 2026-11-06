@@ -46,6 +46,11 @@ export default async function ResultadosCicloPage({ params }: { params: Promise<
         <div className="rounded border border-slate-200 p-4">
           <p className="text-sm text-slate-500">Índice de integración</p>
           <p className="text-3xl font-semibold">{datos.resultadoCiclo.indiceIntegracion.toFixed(0)}</p>
+          {datos.ciclo.coberturaRespuesta === 0 && (
+            <p className="mt-2 text-xs text-amber-700">
+              Este valor es 0 porque el ciclo se cerró sin respuestas válidas; no representa un diagnóstico negativo de la cadena.
+            </p>
+          )}
         </div>
       )}
 

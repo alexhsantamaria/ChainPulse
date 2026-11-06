@@ -22,7 +22,14 @@ export default async function CiclosPage() {
   // manual aparte, a diferencia de infra/ciclos/resultados.ts.
   const ciclos = await tenantClient(sesion.empresaId).cicloPulso.findMany({
     orderBy: { abiertoEn: "desc" },
-    include: { resultadoCiclo: { select: { indiceIntegracion: true, ruleVersion: true } } },
+    take: 50,
+    select: {
+      id: true,
+      estado: true,
+      abiertoEn: true,
+      coberturaRespuesta: true,
+      resultadoCiclo: { select: { indiceIntegracion: true, ruleVersion: true } },
+    },
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
   const hayCicloAbierto = ciclos.some((c: any) => c.estado === "ABIERTO");
@@ -85,6 +92,11 @@ export default async function CiclosPage() {
                   {ciclo.resultadoCiclo &&
                     `Índice de integración: ${ciclo.resultadoCiclo.indiceIntegracion.toFixed(0)}`}
                 </p>
+                {ciclo.estado === "CERRADO" && ciclo.coberturaRespuesta === 0 && (
+                  <p className="mt-1 text-xs text-amber-700">
+                    Sin respuestas válidas: por eso la cobertura y el índice son 0.
+                  </p>
+                )}
               </div>
               <span className="flex items-center gap-3">
                 {ciclo.estado === "ABIERTO" && sesion.rol === "RESPONSABLE" && sesion.eslabonId && (

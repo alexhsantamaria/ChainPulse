@@ -13,6 +13,7 @@ export default async function EslabonesPage() {
 
   const eslabones = await tenantClient(sesion.empresaId).eslabon.findMany({
     orderBy: { createdAt: "asc" },
+    select: { id: true, nombre: true, esProveedorExterno: true },
   });
 
   return (

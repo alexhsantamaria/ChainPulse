@@ -39,6 +39,8 @@ export default function ConexionForm({
   modo: "crear" | "editar";
   conexionExistente?: {
     id: string;
+    origenId: string;
+    destinoId: string;
     origenNombre: string;
     destinoNombre: string;
     gradoDependencia: string | null;
@@ -49,8 +51,8 @@ export default function ConexionForm({
   };
 }) {
   const router = useRouter();
-  const [origenId, setOrigenId] = useState("");
-  const [destinoId, setDestinoId] = useState("");
+  const [origenId, setOrigenId] = useState(conexionExistente?.origenId ?? "");
+  const [destinoId, setDestinoId] = useState(conexionExistente?.destinoId ?? "");
   const [datos, setDatos] = useState<DatosCriticidad>(
     conexionExistente
       ? {
@@ -80,7 +82,8 @@ export default function ConexionForm({
     setCargando(true);
 
     const payload = {
-      ...(modo === "crear" ? { origenId, destinoId } : {}),
+      origenId,
+      destinoId,
       gradoDependencia: datos.gradoDependencia || null,
       impactoPromesaCliente: datos.impactoPromesaCliente || null,
       tieneAlternativa: datos.tieneAlternativa === "" ? null : datos.tieneAlternativa === "si",
@@ -163,10 +166,24 @@ export default function ConexionForm({
           </label>
         </fieldset>
       ) : (
-        <p className="text-sm text-slate-600">
-          <span className="font-medium">{conexionExistente!.origenNombre}</span> →{" "}
-          <span className="font-medium">{conexionExistente!.destinoNombre}</span>
-        </p>
+        <fieldset className="flex flex-col gap-3">
+          <legend className="font-medium">Conexión</legend>
+          <p className="text-xs text-slate-500">
+            Actual: {conexionExistente!.origenNombre} → {conexionExistente!.destinoNombre}
+          </p>
+          <label className="flex flex-col gap-1 text-sm">
+            Desde (eslabón origen)
+            <select required value={origenId} onChange={(e) => setOrigenId(e.target.value)} className="rounded border border-slate-300 px-3 py-2">
+              {eslabones.map((e) => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Hacia (eslabón destino)
+            <select required value={destinoId} onChange={(e) => setDestinoId(e.target.value)} className="rounded border border-slate-300 px-3 py-2">
+              {eslabones.map((e) => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+            </select>
+          </label>
+        </fieldset>
       )}
 
       <fieldset className="flex flex-col gap-3">

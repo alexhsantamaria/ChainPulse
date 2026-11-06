@@ -38,7 +38,17 @@ export default async function ImportadorCoberturaPage() {
     client.importacionCsv.findMany({
       orderBy: { createdAt: "desc" },
       take: 20,
-      include: { cadena: { select: { nombre: true } } },
+      select: {
+        id: true,
+        createdAt: true,
+        estado: true,
+        procesadaEn: true,
+        filasDetectadas: true,
+        filasConError: true,
+        erroresMuestra: true,
+        estrategia: true,
+        cadena: { select: { nombre: true } },
+      },
     }),
   ]);
 
@@ -76,15 +86,17 @@ export default async function ImportadorCoberturaPage() {
           <ul className="flex flex-col divide-y divide-slate-200 rounded border border-slate-200">
             {/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003) */}
             {importaciones.map((imp: any) => (
-              <li key={imp.id} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                <div>
+              <li key={imp.id} className="px-4 py-3 text-sm">
+                <details>
+                  <summary className="flex cursor-pointer list-none flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
                   <p className="font-medium">{imp.cadena.nombre}</p>
                   <p className="text-xs text-slate-500">
                     Subida {formatearFechaHora(imp.createdAt)} · {imp.filasDetectadas}{" "}
                     {imp.filasDetectadas === 1 ? "fila" : "filas"}
                     {imp.filasConError > 0 && ` · ${imp.filasConError} con error`}
                   </p>
-                </div>
+                    </div>
                 <span
                   className={
                     "self-start rounded px-2 py-1 text-xs font-medium sm:self-center " +
@@ -103,6 +115,24 @@ export default async function ImportadorCoberturaPage() {
                       ? "Procesada"
                       : ETIQUETA_ESTADO[imp.estado] ?? imp.estado}
                 </span>
+                  </summary>
+                  <div className="mt-3 rounded bg-slate-50 p-3 text-xs text-slate-600">
+                    <p><span className="font-medium">ID:</span> {imp.id}</p>
+                    <p><span className="font-medium">Estado:</span> {ETIQUETA_ESTADO[imp.estado] ?? imp.estado}</p>
+                    <p><span className="font-medium">Estrategia:</span> {imp.estrategia === "REEMPLAZO_ALCANCE" ? "Reemplazo de alcance" : "Carga parcial"}</p>
+                    <p><span className="font-medium">Procesada:</span> {imp.procesadaEn ? formatearFechaHora(imp.procesadaEn) : "Todavía no"}</p>
+                    {Array.isArray(imp.erroresMuestra) && imp.erroresMuestra.length > 0 && (
+                      <div className="mt-2 text-red-700">
+                        <p className="font-medium">Muestra de errores:</p>
+                        <ul className="list-disc pl-5">
+                          {imp.erroresMuestra.slice(0, 5).map((error: { numeroFila?: number; error?: string }, indice: number) => (
+                            <li key={indice}>{error.numeroFila ? `Fila ${error.numeroFila}: ` : ""}{error.error ?? "Error sin detalle"}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </details>
               </li>
             ))}
           </ul>
