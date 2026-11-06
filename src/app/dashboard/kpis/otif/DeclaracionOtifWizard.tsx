@@ -10,6 +10,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { fetchJsonSeguro, type RespuestaApiBase } from "@/infra/http/fetchJsonSeguro";
 
 interface CadenaOpcion {
@@ -190,6 +191,7 @@ export default function DeclaracionOtifWizard({ cadenas }: { cadenas: CadenaOpci
   const [denominador, setDenominador] = useState("");
   const [textoPegado, setTextoPegado] = useState("");
   const [resultado, setResultado] = useState<ResultadoCalculoKpiUI | null>(null);
+  const [observacionId, setObservacionId] = useState<string | null>(null);
   const [filasInterpretadas, setFilasInterpretadas] = useState<FilaOtifUI[] | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
@@ -250,6 +252,7 @@ export default function DeclaracionOtifWizard({ cadenas }: { cadenas: CadenaOpci
       return;
     }
     setResultado(respuesta.resultado);
+    setObservacionId(respuesta.observacionId ?? null);
     setPaso("confirmado");
     router.refresh();
   }
@@ -261,6 +264,11 @@ export default function DeclaracionOtifWizard({ cadenas }: { cadenas: CadenaOpci
         <p className="text-sm text-emerald-700">
           Valor: {resultado.valor === null ? "--" : `${(resultado.valor * 100).toFixed(1)}%`} · versión de regla: {resultado.ruleVersion}
         </p>
+        {observacionId && (
+          <Link href={`/dashboard/kpis/otif/observaciones/${observacionId}`} className="self-start text-sm text-emerald-800 underline">
+            Ver detalle duradero →
+          </Link>
+        )}
         <button
           type="button"
           className="self-start rounded bg-slate-800 px-3 py-2 text-sm text-white"
@@ -268,6 +276,7 @@ export default function DeclaracionOtifWizard({ cadenas }: { cadenas: CadenaOpci
             setPaso("formulario");
             setResultado(null);
             setFilasInterpretadas(undefined);
+            setObservacionId(null);
           }}
         >
           Declarar otra observación

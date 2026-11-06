@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { fetchJsonSeguro, type RespuestaApiBase } from "@/infra/http/fetchJsonSeguro";
 import { CAMPOS_COBERTURA_CSV, type MapeoColumnasCobertura, type CampoCoberturaCsv } from "@/domain/mapeoColumnasCsv";
 
@@ -366,7 +367,15 @@ export default function ImportadorCoberturaWizard({ cadenas }: { cadenas: Cadena
           </p>
         )}
         {resultadoImportId && (
-          <p className="text-xs text-slate-400">ID de importación: {resultadoImportId}</p>
+          <>
+            <p className="text-xs text-slate-400">ID de importación: {resultadoImportId}</p>
+            <Link
+              href={`/dashboard/kpis/cobertura/importaciones/${resultadoImportId}`}
+              className="self-start text-sm text-emerald-800 underline"
+            >
+              Ver resultado por SKU →
+            </Link>
+          </>
         )}
         <button
           type="button"
