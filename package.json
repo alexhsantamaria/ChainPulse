@@ -5,6 +5,7 @@
   "description": "ChainPulse — SaaS de diagnostico de cadenas de suministro. Incremento 1 (ver requirements.md Secciones 9-12 y docs/ADR).",
   "scripts": {
     "dev": "next dev",
+    "dev:windows": "node --max-old-space-size=4096 node_modules/next/dist/bin/next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

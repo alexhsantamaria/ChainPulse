@@ -13,10 +13,15 @@ export default async function ConexionesPage() {
 
   const client = tenantClient(sesion.empresaId);
   const [eslabones, conexiones] = await Promise.all([
-    client.eslabon.findMany({ orderBy: { createdAt: "asc" } }),
+    client.eslabon.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, nombre: true } }),
     client.conexion.findMany({
       orderBy: { createdAt: "asc" },
-      include: { origen: true, destino: true },
+      select: {
+        id: true,
+        completa: true,
+        origen: { select: { nombre: true } },
+        destino: { select: { nombre: true } },
+      },
     }),
   ]);
 
@@ -50,18 +55,23 @@ export default async function ConexionesPage() {
                   <span>
                     {conexion.origen.nombre} → {conexion.destino.nombre}
                   </span>
-                  {conexion.completa ? (
-                    <span className="rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">
-                      completa
-                    </span>
-                  ) : (
+                  <span className="flex items-center gap-2">
+                    {conexion.completa ? (
+                      <span className="rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">
+                        completa
+                      </span>
+                    ) : (
+                      <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+                        incompleta
+                      </span>
+                    )}
                     <Link
                       href={`/dashboard/conexiones/${conexion.id}/editar`}
-                      className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700 hover:bg-amber-200"
+                      className="text-xs text-slate-500 underline hover:text-slate-700"
                     >
-                      incompleta — completar →
+                      Editar
                     </Link>
-                  )}
+                  </span>
                 </li>
               ))}
             </ul>

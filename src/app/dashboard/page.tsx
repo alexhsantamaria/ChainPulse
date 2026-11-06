@@ -17,12 +17,11 @@ export default async function DashboardPage() {
   const sesion = await requireSessionOrRedirect();
 
   const client = tenantClient(sesion.empresaId);
-  const [eslabones, conexiones] = await Promise.all([
-    client.eslabon.findMany(),
-    client.conexion.findMany(),
+  const [totalEslabones, totalConexiones, conexionesCompletas] = await Promise.all([
+    client.eslabon.count(),
+    client.conexion.count(),
+    client.conexion.count({ where: { completa: true } }),
   ]);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- engineType="client" tipa PrismaClient como any (ver ADR-0003)
-  const conexionesCompletas = conexiones.filter((c: any) => c.completa).length;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 px-4 py-12">
@@ -40,7 +39,7 @@ export default async function DashboardPage() {
           className="rounded border border-slate-200 p-4 hover:border-slate-400"
         >
           <p className="text-sm text-slate-500">Eslabones declarados</p>
-          <p className="text-3xl font-semibold">{eslabones.length}</p>
+          <p className="text-3xl font-semibold">{totalEslabones}</p>
           <p className="mt-2 text-sm text-slate-600">Ver / declarar eslabones →</p>
         </Link>
         <Link
@@ -49,7 +48,7 @@ export default async function DashboardPage() {
         >
           <p className="text-sm text-slate-500">Conexiones declaradas</p>
           <p className="text-3xl font-semibold">
-            {conexionesCompletas} / {conexiones.length}{" "}
+            {conexionesCompletas} / {totalConexiones}{" "}
             <span className="text-base font-normal text-slate-500">completas</span>
           </p>
           <p className="mt-2 text-sm text-slate-600">Ver / declarar conexiones →</p>
@@ -127,7 +126,7 @@ export default async function DashboardPage() {
         )}
       </div>
 
-      {eslabones.length === 0 && (
+      {totalEslabones === 0 && (
         <p className="text-sm text-slate-500">
           Todavía no declaraste ningún eslabón. Empezá por{" "}
           <Link href="/dashboard/eslabones" className="underline">

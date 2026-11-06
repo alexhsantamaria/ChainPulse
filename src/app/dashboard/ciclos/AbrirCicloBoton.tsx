@@ -9,10 +9,12 @@ export default function AbrirCicloBoton() {
   const router = useRouter();
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resultadoEnvio, setResultadoEnvio] = useState<string | null>(null);
 
   async function handleClick() {
     setCargando(true);
     setError(null);
+    setResultadoEnvio(null);
 
     const resultado = await fetchJsonSeguro("/api/ciclos", { method: "POST" });
     setCargando(false);
@@ -28,6 +30,13 @@ export default function AbrirCicloBoton() {
       return;
     }
 
+    const notificados = typeof resultado.responsablesNotificados === "number" ? resultado.responsablesNotificados : 0;
+    const total = typeof resultado.totalResponsables === "number" ? resultado.totalResponsables : 0;
+    setResultadoEnvio(
+      total === 0
+        ? "Ciclo abierto. No había responsables elegibles para notificar."
+        : `Ciclo abierto. Resend aceptó ${notificados} de ${total} ${total === 1 ? "correo" : "correos"} para envío.`,
+    );
     router.refresh();
   }
 
@@ -41,6 +50,7 @@ export default function AbrirCicloBoton() {
         {cargando ? "Abriendo..." : "Abrir nuevo ciclo"}
       </button>
       {error && <p className="text-sm text-red-600">{error}</p>}
+      {resultadoEnvio && <p className="text-sm text-emerald-700">{resultadoEnvio}</p>}
     </div>
   );
 }

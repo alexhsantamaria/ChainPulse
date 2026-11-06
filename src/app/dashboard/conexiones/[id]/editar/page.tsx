@@ -17,10 +17,14 @@ export default async function EditarConexionPage({
   const sesion = await requireSessionOrRedirect();
 
   const { id } = await params;
-  const conexion = await tenantClient(sesion.empresaId).conexion.findUnique({
-    where: { id },
-    include: { origen: true, destino: true },
-  });
+  const client = tenantClient(sesion.empresaId);
+  const [conexion, eslabones] = await Promise.all([
+    client.conexion.findUnique({
+      where: { id },
+      include: { origen: true, destino: true },
+    }),
+    client.eslabon.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, nombre: true } }),
+  ]);
 
   if (!conexion) {
     notFound();
@@ -32,14 +36,16 @@ export default async function EditarConexionPage({
         <Link href="/dashboard/conexiones" className="text-sm text-slate-500 underline">
           ← Volver a conexiones
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold">Completar datos de la conexión</h1>
+        <h1 className="mt-2 text-2xl font-semibold">Editar conexión</h1>
       </div>
 
       <ConexionForm
-        eslabones={[]}
+        eslabones={eslabones}
         modo="editar"
         conexionExistente={{
           id: conexion.id,
+          origenId: conexion.origenId,
+          destinoId: conexion.destinoId,
           origenNombre: conexion.origen.nombre,
           destinoNombre: conexion.destino.nombre,
           gradoDependencia: conexion.gradoDependencia,
