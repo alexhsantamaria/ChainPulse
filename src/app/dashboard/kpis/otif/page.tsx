@@ -70,16 +70,21 @@ export default async function DeclaracionOtifPage() {
         ) : (
           <ul className="flex flex-col divide-y divide-slate-200 rounded border border-slate-200">
             {observaciones.map((obs) => (
-              <li key={obs.id} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="font-medium">{obs.cadena.nombre}</p>
-                  <p className="text-xs text-slate-500">
-                    {formatearFecha(obs.periodoInicio)} – {formatearFecha(obs.periodoFin)} · {obs.fuente}
-                  </p>
-                </div>
-                <span className="self-start rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 sm:self-center">
-                  OTIF: {formatearPorcentaje(obs.valor)}
-                </span>
+              <li key={obs.id}>
+                <Link
+                  href={`/dashboard/kpis/otif/observaciones/${obs.id}`}
+                  className="flex flex-col gap-1 px-4 py-3 text-sm hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="font-medium">{obs.cadena.nombre}</p>
+                    <p className="text-xs text-slate-500">
+                      {formatearFecha(obs.periodoInicio)} – {formatearFecha(obs.periodoFin)} · {obs.fuente}
+                    </p>
+                  </div>
+                  <span className="self-start rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 sm:self-center">
+                    OTIF: {formatearPorcentaje(obs.valor)} · Ver detalle →
+                  </span>
+                </Link>
               </li>
             ))}
           </ul>

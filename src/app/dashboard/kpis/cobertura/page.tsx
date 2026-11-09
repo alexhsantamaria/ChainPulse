@@ -121,6 +121,11 @@ export default async function ImportadorCoberturaPage() {
                     <p><span className="font-medium">Estado:</span> {ETIQUETA_ESTADO[imp.estado] ?? imp.estado}</p>
                     <p><span className="font-medium">Estrategia:</span> {imp.estrategia === "REEMPLAZO_ALCANCE" ? "Reemplazo de alcance" : "Carga parcial"}</p>
                     <p><span className="font-medium">Procesada:</span> {imp.procesadaEn ? formatearFechaHora(imp.procesadaEn) : "Todavía no"}</p>
+                    <p className="mt-2">
+                      <Link href={`/dashboard/kpis/cobertura/importaciones/${imp.id}`} className="font-medium text-slate-900 underline">
+                        Ver resultado por SKU →
+                      </Link>
+                    </p>
                     {Array.isArray(imp.erroresMuestra) && imp.erroresMuestra.length > 0 && (
                       <div className="mt-2 text-red-700">
                         <p className="font-medium">Muestra de errores:</p>

@@ -91,3 +91,91 @@ export function diagnosticoErrorConsultaCruda(err: unknown): DiagnosticoErrorCon
   const mensajeOriginal = comoCadena(cause?.originalMessage) ?? (err instanceof Error ? err.message : undefined);
   return { codigoPrisma, sqlstate, severidad, tipoNoSoportado, mensaje: comoMensajeSaneado(mensajeOriginal) };
 }
+
+// Diagnostico MINIMO y seguro para loggear un FALLO DE LECTURA (nunca de
+// escritura) sin exponer su contenido -- a pedido de Alex (incidente real
+// de validacion manual Windows, 2026-11-06: "DriverAdapterError:
+// Authentication timed out" en una consulta de SOLO LECTURA de
+// ObservacionCobertura). Nunca el objeto `error` completo ni su
+// message/stack/query/params/detail/hint/causa sin filtrar.
+//
+// Correccion de Alex (2026-11-07, antes del staging): la allowlist
+// ESTRUCTURAL (que campos se loguean) no alcanza -- el CONTENIDO de cada
+// valor tambien debe estar restringido, o un error disenado a proposito
+// (o una version futura de una libreria que decida meter algo sensible
+// en uno de estos mismos campos) podria filtrar una cadena arbitraria
+// igual, aunque el NOMBRE del campo este permitido. Misma logica que ya
+// usa este mismo repositorio en etiquetaSegura()
+// (src/infra/auth/etiquetaErrorSegura.ts): un valor crudo SOLO se acepta
+// cuando coincide EXACTAMENTE (nombreClase) o con un FORMATO fijo
+// (codigo) con una constante cerrada de este archivo -- NUNCA se
+// interpola el valor de entrada tal cual. Cualquier valor que no
+// coincida se convierte en una categoria fija ("ERROR_DESCONOCIDO") o en
+// `null`, nunca en el valor original.
+//
+// El campo `tipo`/`kind` (meta.driverAdapterError.cause.kind o
+// cause.kind directo) que existia en la version anterior de esta
+// funcion se elimino por completo: este mismo archivo ya documenta
+// arriba (ver diagnosticoErrorConsultaCruda) que
+// `meta.driverAdapterError` NO es una API publica documentada de Prisma
+// (issue real: prisma/orm#29496) -- los unicos 2 valores de `kind`
+// conocidos ("postgres", "UnsupportedNativeDataType") se confirmaron
+// leyendo el codigo fuente INSTALADO de una version puntual de la
+// libreria, no una garantia de Prisma. No existe, por lo tanto, una
+// lista ESTABLE de valores permitidos para este campo -- y un
+// diagnostico menos detallado (sin `tipo`) es preferible a validar
+// contra una lista que podria quedar incompleta en la proxima version
+// de la libreria y dejar pasar un valor no confiable.
+const NOMBRES_CLASE_CONOCIDOS = new Set<string>([
+  "DriverAdapterError",
+  "PrismaClientKnownRequestError",
+  "PrismaClientUnknownRequestError",
+  "PrismaClientRustPanicError",
+  "PrismaClientInitializationError",
+  "PrismaClientValidationError",
+  "Error",
+  "TypeError",
+  "RangeError",
+]);
+
+// Limites estrictos de longitud, ANTES de comparar contra la allowlist
+// -- nunca se compara (ni se guarda, ni se loguea) un valor de entrada
+// mas largo que el mayor nombre de clase realmente conocido de arriba.
+const LONGITUD_MAXIMA_NOMBRE_CLASE = 40;
+// "P" + 4 digitos (codigo de Prisma, p.ej. "P2002", "P2010" -- ver
+// https://www.prisma.io/docs/orm/reference/error-reference) o un
+// SQLSTATE de Postgres de EXACTAMENTE 5 caracteres (clase + subclase,
+// p.ej. "28000", "42501", "08006") -- ambos formatos tienen longitud
+// fija 5, asi que CUALQUIER valor mas largo se descarta de entrada, sin
+// siquiera llegar a los regex de abajo.
+const LONGITUD_MAXIMA_CODIGO = 5;
+const PATRON_CODIGO_PRISMA = /^P[0-9]{4}$/;
+const PATRON_SQLSTATE = /^[0-9A-Z]{5}$/;
+
+function nombreClaseSeguro(valorCrudo: unknown): string {
+  if (typeof valorCrudo !== "string" || valorCrudo.length === 0 || valorCrudo.length > LONGITUD_MAXIMA_NOMBRE_CLASE) {
+    return "ERROR_DESCONOCIDO";
+  }
+  return NOMBRES_CLASE_CONOCIDOS.has(valorCrudo) ? valorCrudo : "ERROR_DESCONOCIDO";
+}
+
+function codigoSeguro(valorCrudo: unknown): string | null {
+  if (typeof valorCrudo !== "string" || valorCrudo.length === 0 || valorCrudo.length > LONGITUD_MAXIMA_CODIGO) {
+    return null;
+  }
+  return PATRON_CODIGO_PRISMA.test(valorCrudo) || PATRON_SQLSTATE.test(valorCrudo) ? valorCrudo : null;
+}
+
+export interface DiagnosticoLecturaSeguro {
+  nombreClase: string;
+  codigo: string | null;
+}
+
+export function diagnosticoLecturaSeguro(err: unknown): DiagnosticoLecturaSeguro {
+  const registro = comoRegistro(err);
+  const nombreClaseCruda = (registro?.constructor as { name?: unknown } | undefined)?.name;
+  return {
+    nombreClase: nombreClaseSeguro(nombreClaseCruda),
+    codigo: codigoSeguro(codigoErrorPrisma(err)),
+  };
+}
