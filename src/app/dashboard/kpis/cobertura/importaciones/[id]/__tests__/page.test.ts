@@ -39,7 +39,10 @@ const SESION_ADMIN = { usuarioId: "usuario-1", empresaId: "empresa-aislada", rol
 
 interface OpcionesClienteFalso {
   importacion: Record<string, unknown> | null;
-  porEstado?: Array<{ estado: string; _count: { _all: number } }>;
+  // RONDA 2 (punto 4): ruleVersion opcional por grupo -- default "v1"
+  // (ver construirClienteFalso) para que las fixtures de PR1/ronda 1 que
+  // no la declaran sigan funcionando exactamente igual.
+  porEstado?: Array<{ estado: string; ruleVersion?: string; _count: { _all: number } }>;
   calculadaConCeroDias?: number;
   rangoMin?: Date | null;
   rangoMax?: Date | null;
@@ -49,13 +52,91 @@ interface OpcionesClienteFalso {
   // DriverAdapterError de timeout), para probar que la pagina muestra un
   // estado recuperable en vez de propagar la excepcion.
   fallarGroupBy?: unknown;
+  // Incremento 4 PR2 -- historico para "Analisis y decision". Por
+  // defecto no hay ninguna importacion historica (array vacio), para que
+  // las pruebas de PR1 de arriba (que no conocen esta consulta nueva)
+  // sigan pasando exactamente igual: con el historico vacio,
+  // cargarHistoricoResumenCobertura() hace un early return SIN llamar a
+  // observacionCobertura.groupBy una segunda vez -- el conteo de
+  // llamadas de groupByMock para el resultado actual no cambia.
+  //
+  // RONDA 2 (punto 1): `confirmadaEn` opcional por importacion
+  // historica -- EXCLUSIVAMENTE usada por el mock de abajo para simular
+  // el filtro `confirmadaEn: { lt }` que el codigo real envia (ver
+  // importacionCsvFindManyMock) -- si el codigo real dejara de enviar
+  // ese filtro, el mock devolveria TODAS las importaciones (incluidas
+  // las posteriores a la actual), y una prueba que las distinga fallaria
+  // por la razon correcta.
+  importacionesHistoricas?: Array<{
+    id: string;
+    periodoReferenciaConsumoInicio?: Date | null;
+    periodoReferenciaConsumoFin?: Date | null;
+    confirmadaEn?: Date;
+  }>;
+  porEstadoHistoricoPorImport?: Record<string, Array<{ estado: string; ruleVersion?: string; _count: { _all: number } }>>;
+  ceroDiasHistoricoPorImport?: Record<string, number>;
+  fallarHistoricoImportaciones?: unknown;
 }
 
 function construirClienteFalso(opciones: OpcionesClienteFalso) {
   const importacionCsvFindFirstMock = vi.fn().mockResolvedValue(opciones.importacion);
+  // RONDA 2 (punto 1): simula de verdad el filtro `confirmadaEn: { lt }`
+  // que el codigo real envia -- si `where.confirmadaEn.lt` viene en el
+  // args, se filtran las importaciones historicas que lo declaran (las
+  // que no lo declaran, con el campo `confirmadaEn` opcional sin usar,
+  // se consideran sin fecha conocida en el fixture y se excluyen tambien
+  // para no dar un falso positivo). Si el codigo real DEJARA de enviar
+  // ese filtro, `limiteSuperior` seria undefined y se devolverian TODAS
+  // las importaciones sin filtrar -- exactamente el bug que la prueba de
+  // cronologia de abajo esta hecha para detectar.
+  const importacionCsvFindManyMock = opciones.fallarHistoricoImportaciones
+    ? vi.fn().mockRejectedValue(opciones.fallarHistoricoImportaciones)
+    : vi.fn().mockImplementation((args: { where?: { confirmadaEn?: { lt?: Date } } }) => {
+        const todas = opciones.importacionesHistoricas ?? [];
+        const limiteSuperior = args?.where?.confirmadaEn?.lt;
+        if (!limiteSuperior) {
+          return Promise.resolve(todas);
+        }
+        const filtradas = todas.filter((imp) => imp.confirmadaEn !== undefined && imp.confirmadaEn.getTime() < limiteSuperior.getTime());
+        return Promise.resolve(filtradas);
+      });
+
+  // groupBy se usa para 3 cosas distintas en este archivo: el resultado
+  // de la importacion ACTUAL (agrupado por "estado"+"ruleVersion", RONDA
+  // 2 punto 4), el historico por importacion (agrupado por
+  // "importId"+"estado"+"ruleVersion", misma RONDA 2) y, aparte, el
+  // historico de CALCULADA+coberturaDias=0 (agrupado solo por
+  // "importId") -- se dispatchea por la forma de `by` en vez de usar un
+  // mock por caso, para que sea el MISMO mock (observacionCobertura.
+  // groupBy) que usa el codigo real. ruleVersion default "v1" en ambas
+  // ramas -- las fixtures de ronda 1 que no la declaran siguen
+  // comparables entre si (mismo valor implicito), y una fixture que SI
+  // quiere probar una version distinta la declara explicitamente.
   const groupByMock = opciones.fallarGroupBy
     ? vi.fn().mockRejectedValue(opciones.fallarGroupBy)
-    : vi.fn().mockResolvedValue(opciones.porEstado ?? []);
+    : vi.fn().mockImplementation((args: { by: string[] }) => {
+        if (!args.by.includes("importId")) {
+          // Resultado actual: by ["estado", "ruleVersion"].
+          const filas = (opciones.porEstado ?? []).map((g) => ({
+            estado: g.estado,
+            ruleVersion: g.ruleVersion ?? "v1",
+            _count: g._count,
+          }));
+          return Promise.resolve(filas);
+        }
+        if (args.by.includes("estado")) {
+          // Historico por importacion: by ["importId", "estado", "ruleVersion"].
+          const mapa = opciones.porEstadoHistoricoPorImport ?? {};
+          const salida: Array<{ importId: string; estado: string; ruleVersion: string; _count: { _all: number } }> = [];
+          for (const [importId, grupos] of Object.entries(mapa)) {
+            for (const grupo of grupos) salida.push({ importId, estado: grupo.estado, ruleVersion: grupo.ruleVersion ?? "v1", _count: grupo._count });
+          }
+          return Promise.resolve(salida);
+        }
+        // Historico de CALCULADA+coberturaDias=0: by ["importId"] solamente.
+        const mapaCero = opciones.ceroDiasHistoricoPorImport ?? {};
+        return Promise.resolve(Object.entries(mapaCero).map(([importId, cantidad]) => ({ importId, _count: { _all: cantidad } })));
+      });
   // Correccion de Alex (2026-11-06): count() ya solo se llama UNA vez
   // dentro del Promise.all (filtrando coberturaDias:0, para separar
   // CERO_REAL de VALOR) -- el total real de filas persistidas ahora se
@@ -69,31 +150,36 @@ function construirClienteFalso(opciones: OpcionesClienteFalso) {
   });
   const findManyMock = vi.fn().mockResolvedValue(opciones.filas ?? []);
   return {
-    importacionCsv: { findFirst: importacionCsvFindFirstMock },
+    importacionCsv: { findFirst: importacionCsvFindFirstMock, findMany: importacionCsvFindManyMock },
     observacionCobertura: { groupBy: groupByMock, count: countMock, aggregate: aggregateMock, findMany: findManyMock },
-    __mocks: { importacionCsvFindFirstMock, groupByMock, countMock, aggregateMock, findManyMock },
+    __mocks: { importacionCsvFindFirstMock, importacionCsvFindManyMock, groupByMock, countMock, aggregateMock, findManyMock },
   };
 }
 
-// Las 4 consultas de resultado (groupBy/count/aggregate/findMany) --
-// NINGUNA debe haberse llamado para un estado que no sea PROCESADA (ver
-// comentario de cabecera del archivo).
+// Las 4 consultas de resultado (groupBy/count/aggregate/findMany) y la
+// consulta historica (importacionCsv.findMany) -- NINGUNA debe haberse
+// llamado para un estado que no sea PROCESADA (ver comentario de
+// cabecera del archivo).
 function expectCeroConsultasDeResultado(cliente: ReturnType<typeof construirClienteFalso>) {
   expect(cliente.__mocks.groupByMock).not.toHaveBeenCalled();
   expect(cliente.__mocks.countMock).not.toHaveBeenCalled();
   expect(cliente.__mocks.aggregateMock).not.toHaveBeenCalled();
   expect(cliente.__mocks.findManyMock).not.toHaveBeenCalled();
+  expect(cliente.__mocks.importacionCsvFindManyMock).not.toHaveBeenCalled();
 }
 
 function importacionBase(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "import-1",
+    cadenaId: "cadena-1",
     estado: "CONFIRMADA",
     confirmadaEn: new Date("2026-10-20T10:00:00.000Z"),
     procesadaEn: new Date("2026-10-20T10:05:00.000Z"),
     filasDetectadas: 3,
     filasConError: 0,
     erroresMuestra: null,
+    periodoReferenciaConsumoInicio: new Date("2026-10-01T00:00:00.000Z"),
+    periodoReferenciaConsumoFin: new Date("2026-10-31T00:00:00.000Z"),
     cadena: { nombre: "Cadena Norte" },
     definicionKpi: { nombre: "Cobertura de inventario", formula: "inventario disponible / consumo diario esperado", unidad: "días" },
     ...overrides,
@@ -506,5 +592,407 @@ describe("DetalleImportacionCoberturaPage -- fallo de lectura del resultado (rec
 
     expect(html).toContain("No se pudo cargar el resultado");
     consoleErrorSpy.mockRestore();
+  });
+});
+
+describe("DetalleImportacionCoberturaPage -- analisis y decision (Incremento 4 PR2)", () => {
+  it("sin importaciones historicas -- informacion insuficiente en tendencia, comparacion, causas y recomendacion, con la nota metodologica siempre visible", async () => {
+    const cliente = construirClienteFalso({
+      importacion: importacionBase(),
+      porEstado: [{ estado: "CALCULADA", _count: { _all: 2 } }],
+      calculadaConCeroDias: 0,
+    });
+    tenantClientMock.mockReturnValue(cliente);
+    const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+    const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    expect(html).toContain("Análisis y decisión");
+    expect(html).toContain("No existe todavía una metodología acordada");
+    expect(html).toContain("todavía no hay suficientes importaciones procesadas");
+    expect(html).toContain("no hay una importación procesada anterior (con filas, de la misma");
+    expect(html).toContain("versión de regla) de esta cadena para comparar");
+    expect(html).not.toContain("Siguiente acción propuesta");
+    // La consulta del historico SI se llama (para confirmar que no hay
+    // ninguna) -- pero al no haber ninguna, nunca pide los conteos por
+    // categoria (early return, ver comentario de cabecera de
+    // cargarHistoricoResumenCobertura()): el groupBy sigue llamandose
+    // UNA sola vez (el del resultado actual).
+    expect(cliente.__mocks.importacionCsvFindManyMock).toHaveBeenCalledTimes(1);
+    expect(cliente.__mocks.groupByMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("con una importacion anterior y un aumento grande de filas con errores -- EMPEORA, causas observables, prioridad ALTA y siguiente accion propuesta", async () => {
+    const cliente = construirClienteFalso({
+      importacion: importacionBase(),
+      porEstado: [
+        { estado: "CALCULADA", _count: { _all: 8 } },
+        { estado: "VALOR_NEGATIVO", _count: { _all: 7 } },
+      ],
+      calculadaConCeroDias: 0,
+      importacionesHistoricas: [
+        {
+          id: "import-historico-1",
+          confirmadaEn: new Date("2026-09-15T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-09-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-09-30T00:00:00.000Z"),
+        },
+      ],
+      porEstadoHistoricoPorImport: {
+        "import-historico-1": [
+          { estado: "CALCULADA", _count: { _all: 8 } },
+          { estado: "VALOR_NEGATIVO", _count: { _all: 1 } },
+        ],
+      },
+      ceroDiasHistoricoPorImport: { "import-historico-1": 0 },
+    });
+    tenantClientMock.mockReturnValue(cliente);
+    const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+    const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    // RONDA 2, punto 2: la causa ahora se expresa como TASA (con los
+    // conteos como contexto entre parentesis) -- 1/9 (11.1%) -> 7/15 (46.7%).
+    expect(html).toContain("1/9");
+    expect(html).toContain("7/15");
+    expect(html).toContain("Prioridad alta");
+    expect(html).toContain("Siguiente acción propuesta");
+    expect(html).toContain("El registro y seguimiento de acciones estará disponible en una próxima versión.");
+
+    // El historico se pide acotado a la MISMA cadena, excluyendo la
+    // importacion actual -- nunca de otra cadena ni incluyendose a si
+    // misma.
+    expect(cliente.__mocks.importacionCsvFindManyMock.mock.calls[0]?.[0]?.where).toEqual({
+      cadenaId: "cadena-1",
+      definicionKpi: { codigo: "COBERTURA" },
+      estado: "CONFIRMADA",
+      procesadaEn: { not: null },
+      id: { not: "import-1" },
+      // RONDA 2, punto 1: estrictamente anterior a la confirmadaEn de LA
+      // ACTUAL (importacionBase() la fija en 2026-10-20T10:00 UTC).
+      confirmadaEn: { lt: new Date("2026-10-20T10:00:00.000Z") },
+    });
+  });
+
+  it("fallo de lectura del historico -- pantalla recuperable para el analisis, pero el resultado principal (resumen/tabla) sigue mostrandose completo", async () => {
+    const cliente = construirClienteFalso({
+      importacion: importacionBase(),
+      porEstado: [{ estado: "CALCULADA", _count: { _all: 2 } }],
+      calculadaConCeroDias: 0,
+      fallarHistoricoImportaciones: new Error("Authentication timed out"),
+    });
+    tenantClientMock.mockReturnValue(cliente);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+    const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    expect(html).toContain("No se pudo cargar el análisis histórico");
+    expect(html).not.toContain("Authentication timed out");
+    // El resultado principal (resumen de arriba) NO se oculta por un
+    // fallo del analisis historico -- son 2 try/catch independientes.
+    expect(html).toContain("Filas válidas");
+    expect(html).toContain(">Procesada<");
+
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy.mock.calls[0]).toEqual([
+      "COBERTURA_HISTORICO_LECTURA_FALLIDA",
+      { importId: "import-1", nombreClase: "Error", codigo: null },
+    ]);
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("RONDA 2 punto 1: una importacion historica POSTERIOR a la actual (confirmadaEn mayor) nunca se usa, aunque exista en la tabla", async () => {
+    // importacionBase().confirmadaEn = 2026-10-20T10:00 UTC. Se declaran
+    // 2 importaciones historicas candidatas: una ESTRICTAMENTE anterior
+    // (periodo de referencia en septiembre) y otra POSTERIOR a la actual
+    // (periodo de referencia en diciembre, confirmadaEn tambien
+    // posterior) -- si el codigo real dejara de filtrar por
+    // `confirmadaEn: { lt }`, el mock (ver construirClienteFalso)
+        // devolveria AMBAS y la evolucion reciente tendria 3 puntos, no 2.
+    const cliente = construirClienteFalso({
+      importacion: importacionBase(),
+      porEstado: [{ estado: "CALCULADA", _count: { _all: 2 } }],
+      calculadaConCeroDias: 0,
+      importacionesHistoricas: [
+        {
+          id: "import-pasado",
+          confirmadaEn: new Date("2026-09-15T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-09-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-09-30T00:00:00.000Z"),
+        },
+        {
+          id: "import-futuro",
+          confirmadaEn: new Date("2026-12-15T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-12-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-12-31T00:00:00.000Z"),
+        },
+      ],
+      porEstadoHistoricoPorImport: {
+        "import-pasado": [{ estado: "CALCULADA", _count: { _all: 2 } }],
+        "import-futuro": [{ estado: "CALCULADA", _count: { _all: 2 } }],
+      },
+      ceroDiasHistoricoPorImport: { "import-pasado": 0, "import-futuro": 0 },
+    });
+    tenantClientMock.mockReturnValue(cliente);
+    const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+    const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    // Evolucion reciente: SOLO la actual + import-pasado (2 importaciones) -- import-futuro excluida.
+    expect(html).toContain("Evolución reciente (2 importaci");
+    expect(cliente.__mocks.importacionCsvFindManyMock.mock.calls[0]?.[0]?.where).toEqual(
+      expect.objectContaining({ confirmadaEn: { lt: new Date("2026-10-20T10:00:00.000Z") } }),
+    );
+  });
+
+  it("RONDA 3: una importacion historica con ruleVersion distinta se excluye -- motivo RULE_VERSION_INCOMPATIBLE, mensaje especifico, nunca una comparacion entre motores de calculo distintos", async () => {
+    const cliente = construirClienteFalso({
+      importacion: importacionBase(),
+      porEstado: [{ estado: "CALCULADA", ruleVersion: "v1", _count: { _all: 2 } }],
+      calculadaConCeroDias: 0,
+      importacionesHistoricas: [
+        {
+          id: "import-historico-1",
+          confirmadaEn: new Date("2026-09-15T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-09-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-09-30T00:00:00.000Z"),
+        },
+      ],
+      porEstadoHistoricoPorImport: {
+        "import-historico-1": [{ estado: "CALCULADA", ruleVersion: "v0-legacy", _count: { _all: 2 } }],
+      },
+      ceroDiasHistoricoPorImport: { "import-historico-1": 0 },
+    });
+    tenantClientMock.mockReturnValue(cliente);
+    const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+    const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    expect(html).toContain("Evolución reciente (1 importación)");
+    expect(html).toContain("los períodos anteriores usan otra versión de cálculo y no son comparables");
+    expect(html).not.toContain("versión de regla) de esta cadena para comparar");
+    expect(html).not.toContain("Prioridad alta");
+    expect(html).not.toContain("Siguiente acción propuesta");
+  });
+
+  it("RONDA 3, punto 2: la importacion ACTUAL mezcla ruleVersion distintas -- motivo VERSION_MEZCLADA, mensaje especifico aunque SI exista historico", async () => {
+    const cliente = construirClienteFalso({
+      importacion: importacionBase(),
+      porEstado: [
+        { estado: "CALCULADA", ruleVersion: "v1", _count: { _all: 5 } },
+        { estado: "CALCULADA", ruleVersion: "v2", _count: { _all: 3 } },
+      ],
+      calculadaConCeroDias: 0,
+      importacionesHistoricas: [
+        {
+          id: "import-historico-1",
+          confirmadaEn: new Date("2026-09-15T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-09-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-09-30T00:00:00.000Z"),
+        },
+      ],
+      porEstadoHistoricoPorImport: {
+        "import-historico-1": [{ estado: "CALCULADA", ruleVersion: "v1", _count: { _all: 8 } }],
+      },
+      ceroDiasHistoricoPorImport: { "import-historico-1": 0 },
+    });
+    tenantClientMock.mockReturnValue(cliente);
+    const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+    const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    expect(html).toContain("esta importación mezcla más de una versión de cálculo y no se puede comparar hasta que se resuelva");
+    expect(html).not.toContain("los períodos anteriores usan otra versión de cálculo y no son comparables");
+    expect(html).not.toContain("versión de regla) de esta cadena para comparar");
+    expect(html).not.toContain("Prioridad alta");
+    expect(html).not.toContain("Siguiente acción propuesta");
+  });
+
+  it("RONDA 3, punto 1: variacionTasaSinDatos se muestra con tasa anterior/actual y conteos sobre su denominador, igual que validas y errores", async () => {
+    const cliente = construirClienteFalso({
+      importacion: importacionBase(),
+      // Actual: 90 validas, 0 con errores, 10 sin datos -- total 100 (tasa sin datos 10%).
+      porEstado: [
+        { estado: "CALCULADA", ruleVersion: "v1", _count: { _all: 90 } },
+        { estado: "SIN_CONSUMO_REFERENCIA", ruleVersion: "v1", _count: { _all: 10 } },
+      ],
+      calculadaConCeroDias: 0,
+      importacionesHistoricas: [
+        {
+          id: "import-historico-1",
+          confirmadaEn: new Date("2026-09-15T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-09-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-09-30T00:00:00.000Z"),
+        },
+      ],
+      // Anterior: 9 validas, 0 con errores, 1 sin datos -- total 10 (tasa sin datos tambien 10%,
+      // IDENTICA a la actual) para probar que, aunque el CONTEO suba de 1 a 10, la tasa se
+      // mantiene ESTABLE y nunca se presenta como deterioro (RONDA 3, punto 1).
+      porEstadoHistoricoPorImport: {
+        "import-historico-1": [
+          { estado: "CALCULADA", ruleVersion: "v1", _count: { _all: 9 } },
+          { estado: "SIN_CONSUMO_REFERENCIA", ruleVersion: "v1", _count: { _all: 1 } },
+        ],
+      },
+      ceroDiasHistoricoPorImport: { "import-historico-1": 0 },
+    });
+    tenantClientMock.mockReturnValue(cliente);
+    const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+    const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    expect(html).toContain("Tasa de filas sin datos: Estable");
+    expect(html).toContain("10 sin datos sobre 100 filas en total");
+    expect(html).not.toContain("La tasa de filas sin datos pasó de");
+  });
+
+  it("RONDA 4, punto 1/3: la importacion ACTUAL sin filas es TOTAL_CERO, NUNCA VERSION_MEZCLADA, aunque SI exista historico compatible", async () => {
+    const cliente = construirClienteFalso({
+      importacion: importacionBase(),
+      porEstado: [], // 0 filas en la importacion actual
+      calculadaConCeroDias: 0,
+      importacionesHistoricas: [
+        {
+          id: "import-historico-1",
+          confirmadaEn: new Date("2026-09-15T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-09-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-09-30T00:00:00.000Z"),
+        },
+      ],
+      porEstadoHistoricoPorImport: {
+        "import-historico-1": [{ estado: "CALCULADA", ruleVersion: "v1", _count: { _all: 8 } }],
+      },
+      ceroDiasHistoricoPorImport: { "import-historico-1": 0 },
+    });
+    tenantClientMock.mockReturnValue(cliente);
+    const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+    const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    expect(html).toContain("esta importación (o la anterior comparable) no tiene ninguna fila");
+    expect(html).not.toContain("esta importación mezcla más de una versión de cálculo");
+    expect(html).not.toContain("Prioridad alta");
+  });
+
+  it("RONDA 4, punto 3: el periodo INMEDIATO anterior sin filas es TOTAL_CERO, aunque uno MAS ANTIGUO si tenga filas y version compatible -- nunca se salta", async () => {
+    const cliente = construirClienteFalso({
+      importacion: importacionBase(),
+      porEstado: [{ estado: "CALCULADA", ruleVersion: "v1", _count: { _all: 10 } }],
+      calculadaConCeroDias: 0,
+      // Orden DESCENDENTE por confirmadaEn (igual que el orderBy real) --
+      // "import-inmediato" es la mas reciente de las 2 (y por lo tanto la
+      // INMEDIATA anterior a la actual); "import-antiguo" es la mas vieja.
+      importacionesHistoricas: [
+        {
+          id: "import-inmediato",
+          confirmadaEn: new Date("2026-10-10T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-10-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-10-15T00:00:00.000Z"),
+        },
+        {
+          id: "import-antiguo",
+          confirmadaEn: new Date("2026-09-15T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-09-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-09-30T00:00:00.000Z"),
+        },
+      ],
+      // "import-inmediato" no aparece en el mapa -> 0 filas (SIN_FILAS).
+      porEstadoHistoricoPorImport: {
+        "import-antiguo": [{ estado: "CALCULADA", ruleVersion: "v1", _count: { _all: 8 } }],
+      },
+      ceroDiasHistoricoPorImport: { "import-antiguo": 0 },
+    });
+    tenantClientMock.mockReturnValue(cliente);
+    const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+    const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    expect(html).toContain("esta importación (o la anterior comparable) no tiene ninguna fila");
+    expect(html).not.toContain("los períodos anteriores usan otra versión de cálculo y no son comparables");
+    expect(html).not.toContain("Prioridad alta");
+  });
+
+  it("RONDA 4, punto 2/3: el periodo INMEDIATO anterior incompatible bloquea la comparacion, aunque uno MAS ANTIGUO si sea de la MISMA version -- nunca se salta", async () => {
+    const cliente = construirClienteFalso({
+      importacion: importacionBase(),
+      porEstado: [{ estado: "CALCULADA", ruleVersion: "v1", _count: { _all: 10 } }],
+      calculadaConCeroDias: 0,
+      importacionesHistoricas: [
+        {
+          id: "import-inmediato-incompatible",
+          confirmadaEn: new Date("2026-10-10T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-10-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-10-15T00:00:00.000Z"),
+        },
+        {
+          id: "import-antiguo-compatible",
+          confirmadaEn: new Date("2026-09-15T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-09-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-09-30T00:00:00.000Z"),
+        },
+      ],
+      porEstadoHistoricoPorImport: {
+        "import-inmediato-incompatible": [{ estado: "CALCULADA", ruleVersion: "v2-nueva-regla", _count: { _all: 9 } }],
+        "import-antiguo-compatible": [{ estado: "CALCULADA", ruleVersion: "v1", _count: { _all: 8 } }],
+      },
+      ceroDiasHistoricoPorImport: { "import-inmediato-incompatible": 0, "import-antiguo-compatible": 0 },
+    });
+    tenantClientMock.mockReturnValue(cliente);
+    const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+    const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    expect(html).toContain("los períodos anteriores usan otra versión de cálculo y no son comparables");
+    expect(html).not.toContain("esta importación (o la anterior comparable) no tiene ninguna fila");
+    expect(html).not.toContain("Prioridad alta");
+  });
+
+  it("RONDA 2 punto 5/6: etiquetas renombradas y texto de roadmap, nunca los nombres/texto anteriores", async () => {
+    const cliente = construirClienteFalso({
+      importacion: importacionBase(),
+      porEstado: [
+        { estado: "CALCULADA", _count: { _all: 8 } },
+        { estado: "VALOR_NEGATIVO", _count: { _all: 7 } },
+      ],
+      calculadaConCeroDias: 0,
+      importacionesHistoricas: [
+        {
+          id: "import-historico-1",
+          confirmadaEn: new Date("2026-09-15T10:00:00.000Z"),
+          periodoReferenciaConsumoInicio: new Date("2026-09-01T00:00:00.000Z"),
+          periodoReferenciaConsumoFin: new Date("2026-09-30T00:00:00.000Z"),
+        },
+      ],
+      porEstadoHistoricoPorImport: {
+        "import-historico-1": [
+          { estado: "CALCULADA", _count: { _all: 8 } },
+          { estado: "VALOR_NEGATIVO", _count: { _all: 1 } },
+        ],
+      },
+      ceroDiasHistoricoPorImport: { "import-historico-1": 0 },
+    });
+    tenantClientMock.mockReturnValue(cliente);
+    const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+    const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    expect(html).toContain("Evolución reciente");
+    expect(html).toContain("Descomposición del cambio");
+    expect(html).not.toMatch(/>Tendencia[\s(<]/);
+    expect(html).not.toContain(">Causas observables<");
+    expect(html).toContain("El registro y seguimiento de acciones estará disponible en una próxima versión.");
+    expect(html).not.toContain("requiere una migración de esquema nueva");
   });
 });
