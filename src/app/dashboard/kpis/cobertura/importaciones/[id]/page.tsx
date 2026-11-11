@@ -61,15 +61,14 @@
 // migracion de esquema se sustituye por un mensaje generico de roadmap.
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import type { EstadoObservacionCobertura } from "@prisma/client";
 import { requireAdminOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import { diagnosticoLecturaSeguro } from "@/infra/prisma/errores";
+import AccionesDecisionKpi from "@/app/dashboard/kpis/_compartido/AccionesDecisionKpi";
 import {
   clasificarFilaCobertura,
   motivoFilaCobertura,
   clasificarImportacion,
-  resumirFilasCobertura,
   type EstadoVisualizacionFilaCobertura,
   type EstadoVisualizacionImportacion,
   type ResumenFilasCobertura,
@@ -80,6 +79,7 @@ import {
   type MotivoInformacionInsuficiente,
   type EstadoVersionCobertura,
 } from "@/infra/kpis/analisisDecision";
+import { cargarResumenYVersionCobertura, cargarHistoricoResumenCobertura } from "@/infra/kpis/cobertura/resumenCobertura";
 
 // Tope de filas que se muestran en la tabla -- una importacion puede
 // traer miles de filas y esta pagina no agrega paginacion todavia (fuera
@@ -89,13 +89,8 @@ import {
 // -- nunca se "miente" el resumen por el tope de la tabla.
 const LIMITE_FILAS_TABLA = 500;
 
-// Tope de importaciones PROCESADA anteriores a traer para el analisis de
-// tendencia -- mismo criterio que LIMITE_FILAS_TABLA: un numero fijo,
-// documentado, no "todo el historico". Mas bajo que el de OTIF/Fill Rate
-// (12) porque una importacion de Cobertura suele ser un lote completo,
-// no un periodo corto -- 6 lotes anteriores alcanza para una tendencia
-// util sin pedir un historico enorme.
-const LIMITE_HISTORICO_COBERTURA = 6;
+// LIMITE_HISTORICO_COBERTURA vive ahora en src/infra/kpis/cobertura/resumenCobertura.ts
+// (correccion de ronda de revision, bloqueante 1) -- reutilizado tal cual.
 
 const ETIQUETA_ESTADO_IMPORTACION: Record<EstadoVisualizacionImportacion, string> = {
   PENDIENTE_REVISION: "Pendiente de revisión",
@@ -215,16 +210,22 @@ interface ResultadoImportacionCobertura {
 // quinta consulta redundante (nunca puede dar un numero distinto, ambas
 // cuentan las mismas filas de la misma tabla con el mismo `where`).
 // Quedan 4 consultas concurrentes, no 5.
+// Correccion de ronda de revision (bloqueante 1): el groupBy+count de
+// abajo (resumen/estadoVersion/ruleVersion) ahora vive en
+// cargarResumenYVersionCobertura() (src/infra/kpis/cobertura/
+// resumenCobertura.ts), reutilizado tal cual por derivarOrigenActual.ts
+// para derivar lo mismo en el servidor al crear una AccionDecisionKpi
+// nueva -- esta funcion solo agrega, en el MISMO Promise.all, las 2
+// consultas que son exclusivas de la pagina (rangoFechaCorte para
+// mostrar el rango de fechas de corte, `filas` para la tabla) -- ninguna
+// de las 2 hace falta para derivar una prioridad, asi que
+// derivarOrigenActual.ts nunca las pide.
 async function cargarResultadoImportacionCobertura(
   client: ReturnType<typeof tenantClient>,
   importId: string,
 ): Promise<ResultadoImportacionCobertura> {
-  const [porEstadoBruto, calculadaConCeroDias, rangoFechaCorte, filas] = await Promise.all([
-    // RONDA 2 (punto 4): se agrega "ruleVersion" al `by` de este MISMO
-    // groupBy (ya existente) para derivar la version de regla de esta
-    // importacion sin una consulta nueva -- ver el reduce de abajo.
-    client.observacionCobertura.groupBy({ by: ["estado", "ruleVersion"], where: { importId }, _count: { _all: true } }),
-    client.observacionCobertura.count({ where: { importId, estado: "CALCULADA", coberturaDias: 0 } }),
+  const [{ resumen, estadoVersion, ruleVersion, totalFilasPersistidas }, rangoFechaCorte, filas] = await Promise.all([
+    cargarResumenYVersionCobertura(client, importId),
     client.observacionCobertura.aggregate({ where: { importId }, _min: { fechaCorte: true }, _max: { fechaCorte: true } }),
     client.observacionCobertura.findMany({
       where: { importId },
@@ -248,35 +249,8 @@ async function cargarResultadoImportacionCobertura(
     }),
   ]);
 
-  const porEstado: Partial<Record<EstadoObservacionCobertura, number>> = {};
-  let totalFilasPersistidas = 0;
-  // RONDA 2 (punto 4): mismo groupBy, ahora agrupado tambien por
-  // ruleVersion -- se acumulan los conteos por estado (idéntico a
-  // antes, sumando entre versiones si las hubiera) Y se juntan las
-  // ruleVersion distintas vistas, para derivar una version unica (o
-  // detectar mezcla) sin pedir nada nuevo.
-  const versionesVistas = new Set<string>();
-  for (const grupo of porEstadoBruto as Array<{
-    estado: EstadoObservacionCobertura;
-    ruleVersion: string;
-    _count: { _all: number };
-  }>) {
-    porEstado[grupo.estado] = (porEstado[grupo.estado] ?? 0) + grupo._count._all;
-    totalFilasPersistidas += grupo._count._all;
-    versionesVistas.add(grupo.ruleVersion);
-  }
-  // RONDA 4, punto 1: estado explicito -- antes se colapsaba "0
-  // versiones vistas" (SIN_FILAS) y "2+ versiones vistas" (MEZCLADA) en
-  // el mismo `ruleVersion = null`, lo cual escondia que una importacion
-  // ACTUAL sin filas terminara mostrando VERSION_MEZCLADA en vez de
-  // TOTAL_CERO (ver analisisDecision.ts).
-  const estadoVersion: EstadoVersionCobertura =
-    versionesVistas.size === 0 ? "SIN_FILAS" : versionesVistas.size === 1 ? "UNICA" : "MEZCLADA";
-  // Solo no-null cuando estadoVersion === "UNICA".
-  const ruleVersion = estadoVersion === "UNICA" ? [...versionesVistas][0] ?? null : null;
-
   return {
-    resumen: resumirFilasCobertura(porEstado, calculadaConCeroDias),
+    resumen,
     totalFilasPersistidas,
     rangoFechaCorte: { min: rangoFechaCorte._min.fechaCorte, max: rangoFechaCorte._max.fechaCorte },
     estadoVersion,
@@ -285,138 +259,10 @@ async function cargarResultadoImportacionCobertura(
   };
 }
 
-// Historico de importaciones PROCESADA anteriores (misma cadena), con el
-// resumen por categoria de cada una -- para "Analisis y decision" (PR2).
-// NUNCA calcula un promedio de dias de cobertura entre SKU (ver el
-// comentario de cabecera de analisisDecision.ts) -- solo los conteos que
-// ya produce resumirFilasCobertura(), exactamente igual que el resultado
-// de la importacion actual.
-//
-// 2 consultas SIEMPRE, sin importar cuantas importaciones historicas
-// haya (nunca N+1): un groupBy agrupado por (importId, estado) y otro
-// agrupado por importId (para aislar CALCULADA+coberturaDias=0, igual
-// separacion que ya hace cargarResultadoImportacionCobertura con su
-// count() filtrado) -- ambos sobre TODOS los importIds del lote a la
-// vez. Si no hay ninguna importacion historica, ninguna de las 2 se
-// ejecuta (early return) -- mismo criterio de "no consultar lo que no
-// hace falta" que el resto de este archivo.
-//
-// Orden cronologico: se usa `confirmadaEn` (garantizado no nulo por el
-// filtro estado=CONFIRMADA + procesadaEn no nulo, ver el invariante
-// documentado en EstadoImportacion de prisma/schema.prisma), no
-// `periodoReferenciaConsumoInicio` -- ese campo puede faltar en
-// importaciones antiguas sin el, y mezclar "con periodo declarado" y
-// "sin el" en un mismo orderBy con nulls habria sido mas complejidad de
-// la que justifica esta simplificacion deliberada.
-async function cargarHistoricoResumenCobertura(
-  client: ReturnType<typeof tenantClient>,
-  cadenaId: string,
-  importIdActual: string,
-  // RONDA 2 (Alex, 2026-11-09, punto 1): `confirmadaEn` de la
-  // importacion ACTUAL -- el historico se limita a importaciones
-  // ESTRICTAMENTE anteriores a esta fecha (nunca a importaciones
-  // posteriores, aunque por algun motivo existieran). Si la actual no
-  // tiene esta fecha (defensivo -- no deberia ocurrir para una
-  // importacion PROCESADA, ver el invariante de EstadoImportacion en
-  // prisma/schema.prisma), no hay ancla temporal valida: se devuelve []
-  // SIN ejecutar ninguna consulta, informacion insuficiente.
-  confirmadaEnActual: Date | null,
-): Promise<PuntoResumenCobertura[]> {
-  if (confirmadaEnActual === null) {
-    return [];
-  }
-
-  const importaciones = await client.importacionCsv.findMany({
-    where: {
-      cadenaId,
-      definicionKpi: { codigo: "COBERTURA" },
-      estado: "CONFIRMADA",
-      procesadaEn: { not: null },
-      id: { not: importIdActual },
-      // RONDA 2, punto 1: estrictamente anterior, nunca <=  -- 2
-      // importaciones no pueden "atarse" y nunca se compara contra una
-      // importacion posterior a la actual.
-      confirmadaEn: { lt: confirmadaEnActual },
-    },
-    orderBy: { confirmadaEn: "desc" },
-    take: LIMITE_HISTORICO_COBERTURA,
-    select: { id: true, periodoReferenciaConsumoInicio: true, periodoReferenciaConsumoFin: true },
-  });
-
-  if (importaciones.length === 0) {
-    return [];
-  }
-
-  const importIds = importaciones.map((imp: { id: string }) => imp.id);
-
-  const [porEstadoBruto, calculadaConCeroDiasBruto] = await Promise.all([
-    // RONDA 2 (punto 4): se agrega "ruleVersion" al `by` de este MISMO
-    // groupBy (ya existente) para derivar, por importId, su version de
-    // regla SIN una consulta nueva -- igual tecnica que en
-    // cargarResultadoImportacionCobertura() de arriba.
-    client.observacionCobertura.groupBy({
-      by: ["importId", "estado", "ruleVersion"],
-      where: { importId: { in: importIds } },
-      _count: { _all: true },
-    }),
-    client.observacionCobertura.groupBy({
-      by: ["importId"],
-      where: { importId: { in: importIds }, estado: "CALCULADA", coberturaDias: 0 },
-      _count: { _all: true },
-    }),
-  ]);
-
-  const porImportEstado = new Map<string, Partial<Record<EstadoObservacionCobertura, number>>>();
-  const versionesPorImport = new Map<string, Set<string>>();
-  for (const grupo of porEstadoBruto as Array<{
-    importId: string | null;
-    estado: EstadoObservacionCobertura;
-    ruleVersion: string;
-    _count: { _all: number };
-  }>) {
-    if (!grupo.importId) continue;
-    const actual = porImportEstado.get(grupo.importId) ?? {};
-    actual[grupo.estado] = (actual[grupo.estado] ?? 0) + grupo._count._all;
-    porImportEstado.set(grupo.importId, actual);
-    const versiones = versionesPorImport.get(grupo.importId) ?? new Set<string>();
-    versiones.add(grupo.ruleVersion);
-    versionesPorImport.set(grupo.importId, versiones);
-  }
-  // RONDA 4, punto 1: estado explicito por importId -- mismo criterio
-  // que estadoVersion en cargarResultadoImportacionCobertura() de
-  // arriba (SIN_FILAS/UNICA/MEZCLADA en vez de colapsar "0 filas" y
-  // "mezclada" al mismo null). Un importId que nunca aparecio en
-  // `versionesPorImport` (0 filas) no tiene entrada en el Map -- se
-  // trata como SIN_FILAS mas abajo, al leerlo con `.get(...) ??`.
-  const estadoVersionPorImport = new Map<string, EstadoVersionCobertura>();
-  const ruleVersionPorImport = new Map<string, string | null>();
-  for (const [importId, versiones] of versionesPorImport) {
-    const estado: EstadoVersionCobertura = versiones.size === 1 ? "UNICA" : "MEZCLADA";
-    estadoVersionPorImport.set(importId, estado);
-    ruleVersionPorImport.set(importId, estado === "UNICA" ? [...versiones][0] ?? null : null);
-  }
-
-  const ceroDiasPorImport = new Map<string, number>();
-  for (const grupo of calculadaConCeroDiasBruto as Array<{ importId: string | null; _count: { _all: number } }>) {
-    if (!grupo.importId) continue;
-    ceroDiasPorImport.set(grupo.importId, grupo._count._all);
-  }
-
-  // La consulta de arriba vino en orden desc (mas reciente primero) --
-  // generarAnalisisImportacionCobertura() espera orden cronologico
-  // ascendente, mismo criterio que cargarHistoricoObservacionesKpi() en
-  // DetalleObservacionKpi.tsx.
-  const importacionesAscendente = [...importaciones].reverse();
-
-  return importacionesAscendente.map((imp: { id: string; periodoReferenciaConsumoInicio: Date | null; periodoReferenciaConsumoFin: Date | null }) => ({
-    importId: imp.id,
-    periodoReferencia: { inicio: imp.periodoReferenciaConsumoInicio, fin: imp.periodoReferenciaConsumoFin },
-    resumen: resumirFilasCobertura(porImportEstado.get(imp.id) ?? {}, ceroDiasPorImport.get(imp.id) ?? 0),
-    // RONDA 4, punto 1: sin entrada en el Map == 0 filas == SIN_FILAS.
-    estadoVersion: estadoVersionPorImport.get(imp.id) ?? "SIN_FILAS",
-    ruleVersion: ruleVersionPorImport.get(imp.id) ?? null,
-  }));
-}
+// cargarHistoricoResumenCobertura() vive ahora en
+// src/infra/kpis/cobertura/resumenCobertura.ts (correccion de ronda de
+// revision, bloqueante 1) -- relocacion exacta, sin cambios de
+// comportamiento; reutilizada tal cual por derivarOrigenActual.ts.
 
 export default async function DetalleImportacionCoberturaPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -522,6 +368,25 @@ export default async function DetalleImportacionCoberturaPage({ params }: { para
           historicoCobertura,
         )
       : null;
+
+  // Incremento 4 PR3 -- candidatos a responsable/creador/finalizador para
+  // el formulario de AccionesDecisionKpi.tsx, mismo criterio que
+  // DetalleObservacionKpi.tsx (propio try/catch, nunca tira abajo el
+  // resto de la pagina si falla).
+  let usuariosEmpresa: { id: string; nombre: string; email: string }[] = [];
+  try {
+    usuariosEmpresa = await client.usuario.findMany({
+      select: { id: true, nombre: true, email: true },
+      orderBy: { nombre: "asc" },
+    });
+  } catch (error) {
+    const diagnostico = diagnosticoLecturaSeguro(error);
+    console.error("COBERTURA_USUARIOS_LECTURA_FALLIDA", {
+      importId: id,
+      nombreClase: diagnostico.nombreClase,
+      codigo: diagnostico.codigo,
+    });
+  }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-4 py-12">
@@ -797,15 +662,29 @@ export default async function DetalleImportacionCoberturaPage({ params }: { para
                     )}
                   </div>
 
-                  {analisisCobertura.siguienteAccionPropuesta && (
-                    <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                      <p className="font-medium">Siguiente acción propuesta</p>
-                      <p className="mt-1">{analisisCobertura.siguienteAccionPropuesta}</p>
-                      <p className="mt-2 text-amber-700">
-                        El registro y seguimiento de acciones estará disponible en una próxima versión.
-                      </p>
-                    </div>
-                  )}
+                  {/* Correccion de ronda de revision (bloqueante 4): el
+                      historial siempre se muestra -- solo el formulario
+                      de alta se condiciona a una recomendacion actual de
+                      prioridad ALTA/MEDIA. Ver el comentario equivalente
+                      en DetalleObservacionKpi.tsx. resultado.ruleVersion
+                      no nulo esta garantizado en la practica cuando SI
+                      hay recomendacion (solo UNICA produce una
+                      comparacion posible), pero se valida explicitamente
+                      en vez de forzar el tipo con "!" -- defensivo, sin
+                      costo real. */}
+                  <AccionesDecisionKpi
+                    origen={{ tipo: "IMPORTACION_CSV", importacionCsvId: importacion.id }}
+                    recomendacionActual={
+                      analisisCobertura.siguienteAccionPropuesta && analisisCobertura.recomendacion && resultado.ruleVersion
+                        ? {
+                            prioridad: analisisCobertura.recomendacion.prioridad,
+                            ruleVersion: resultado.ruleVersion,
+                            descripcionSugerida: analisisCobertura.siguienteAccionPropuesta,
+                          }
+                        : null
+                    }
+                    usuarios={usuariosEmpresa}
+                  />
                 </div>
               )
             )}

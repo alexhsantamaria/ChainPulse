@@ -79,6 +79,11 @@ export const TENANT_SCOPED_MODELS = new Set([
   "ObservacionCobertura",
   "ImportacionCsv",
   "ConsultaLog",
+  // Incremento 4 PR3 (Alex, 2026-11-11) -- AccionDecisionKpi tiene
+  // empresaId propio (ver prisma/schema.prisma), entra aqui en la misma
+  // migracion que la crea (20261111090000_incremento4_pr3_acciones_decision_kpi),
+  // mismo criterio documentado arriba para toda tabla nueva con tenant.
+  "AccionDecisionKpi",
 ]);
 
 export function uncapitalize(model: string): string {

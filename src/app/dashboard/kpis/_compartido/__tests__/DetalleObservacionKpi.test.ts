@@ -36,9 +36,15 @@ vi.mock("@/infra/auth/session", () => ({
 
 const observacionKpiFindFirstMock = vi.fn();
 const observacionKpiFindManyMock = vi.fn();
+// Incremento 4 PR3 -- candidatos a responsable/creador/finalizador que
+// la pagina pasa a AccionesDecisionKpi.tsx. Default [] en beforeEach
+// (ver mas abajo), para que las pruebas de rondas anteriores (que no
+// conocen esta consulta nueva) sigan pasando sin cambios.
+const usuarioFindManyMock = vi.fn();
 const tenantClientMock = vi.fn((empresaId: string) => ({
   __empresaId: empresaId,
   observacionKpi: { findFirst: observacionKpiFindFirstMock, findMany: observacionKpiFindManyMock },
+  usuario: { findMany: usuarioFindManyMock },
 }));
 vi.mock("@/infra/prisma/tenantClient", () => ({
   tenantClient: (empresaId: string) => tenantClientMock(empresaId),
@@ -90,6 +96,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   requireAdminOrRedirectMock.mockResolvedValue(SESION_ADMIN);
   observacionKpiFindManyMock.mockResolvedValue([]);
+  usuarioFindManyMock.mockResolvedValue([]);
 });
 
 describe("DetalleObservacionKpi -- autorizacion", () => {
@@ -211,6 +218,12 @@ describe("DetalleObservacionKpi -- analisis y decision (Incremento 4 PR2)", () =
     expect(html).not.toContain("Prioridad alta");
     expect(html).not.toContain("Prioridad media");
     expect(html).not.toContain("Siguiente acción propuesta");
+    // Correccion de ronda de revision (bloqueante 4): el historial de
+    // acciones se muestra SIEMPRE que la seccion de analisis este
+    // disponible -- sin recomendacion actual, solo se oculta el
+    // formulario de alta ("Registrar accion"), nunca el historial.
+    expect(html).toContain("Acciones de decisión");
+    expect(html).not.toContain("Registrar acción");
   });
 
   it("con un periodo anterior peor -- muestra tendencia, variacion EMPEORA, causas observables y recomendacion con siguiente accion propuesta", async () => {
@@ -226,7 +239,8 @@ describe("DetalleObservacionKpi -- analisis y decision (Incremento 4 PR2)", () =
     expect(html).toContain("El numerador pasó de 80 a 65");
     expect(html).toContain("Prioridad alta");
     expect(html).toContain("Siguiente acción propuesta");
-    expect(html).toContain("El registro y seguimiento de acciones estará disponible en una próxima versión.");
+    expect(html).toContain("Acciones de decisión");
+    expect(html).toContain("Registrar acción");
   });
 
   it("fallo de lectura del historico -- pantalla recuperable, nunca el detalle interno del error, y el resto de la pagina sigue mostrandose", async () => {

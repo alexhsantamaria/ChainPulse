@@ -76,6 +76,12 @@ interface OpcionesClienteFalso {
   porEstadoHistoricoPorImport?: Record<string, Array<{ estado: string; ruleVersion?: string; _count: { _all: number } }>>;
   ceroDiasHistoricoPorImport?: Record<string, number>;
   fallarHistoricoImportaciones?: unknown;
+  // Incremento 4 PR3 -- candidatos a responsable/creador/finalizador que
+  // la pagina pasa a AccionesDecisionKpi.tsx. Default [] (ninguna
+  // fixture anterior a PR3 lo declara, y con [] el componente solo
+  // deshabilita el selector de responsable -- no afecta ninguna
+  // aserción de las rondas anteriores).
+  usuarios?: Array<{ id: string; nombre: string; email: string }>;
 }
 
 function construirClienteFalso(opciones: OpcionesClienteFalso) {
@@ -149,10 +155,12 @@ function construirClienteFalso(opciones: OpcionesClienteFalso) {
     _max: { fechaCorte: opciones.rangoMax ?? null },
   });
   const findManyMock = vi.fn().mockResolvedValue(opciones.filas ?? []);
+  const usuarioFindManyMock = vi.fn().mockResolvedValue(opciones.usuarios ?? []);
   return {
     importacionCsv: { findFirst: importacionCsvFindFirstMock, findMany: importacionCsvFindManyMock },
     observacionCobertura: { groupBy: groupByMock, count: countMock, aggregate: aggregateMock, findMany: findManyMock },
-    __mocks: { importacionCsvFindFirstMock, importacionCsvFindManyMock, groupByMock, countMock, aggregateMock, findManyMock },
+    usuario: { findMany: usuarioFindManyMock },
+    __mocks: { importacionCsvFindFirstMock, importacionCsvFindManyMock, groupByMock, countMock, aggregateMock, findManyMock, usuarioFindManyMock },
   };
 }
 
@@ -621,6 +629,11 @@ describe("DetalleImportacionCoberturaPage -- analisis y decision (Incremento 4 P
     // UNA sola vez (el del resultado actual).
     expect(cliente.__mocks.importacionCsvFindManyMock).toHaveBeenCalledTimes(1);
     expect(cliente.__mocks.groupByMock).toHaveBeenCalledTimes(1);
+    // Correccion de ronda de revision (bloqueante 4): el historial se
+    // muestra SIEMPRE que la seccion de analisis este disponible --
+    // sin recomendacion actual, solo se oculta el formulario de alta.
+    expect(html).toContain("Acciones de decisión");
+    expect(html).not.toContain("Registrar acción");
   });
 
   it("con una importacion anterior y un aumento grande de filas con errores -- EMPEORA, causas observables, prioridad ALTA y siguiente accion propuesta", async () => {
@@ -659,7 +672,8 @@ describe("DetalleImportacionCoberturaPage -- analisis y decision (Incremento 4 P
     expect(html).toContain("7/15");
     expect(html).toContain("Prioridad alta");
     expect(html).toContain("Siguiente acción propuesta");
-    expect(html).toContain("El registro y seguimiento de acciones estará disponible en una próxima versión.");
+    expect(html).toContain("Acciones de decisión");
+    expect(html).toContain("Registrar acción");
 
     // El historico se pide acotado a la MISMA cadena, excluyendo la
     // importacion actual -- nunca de otra cadena ni incluyendose a si
@@ -992,7 +1006,8 @@ describe("DetalleImportacionCoberturaPage -- analisis y decision (Incremento 4 P
     expect(html).toContain("Descomposición del cambio");
     expect(html).not.toMatch(/>Tendencia[\s(<]/);
     expect(html).not.toContain(">Causas observables<");
-    expect(html).toContain("El registro y seguimiento de acciones estará disponible en una próxima versión.");
+    expect(html).toContain("Acciones de decisión");
+    expect(html).toContain("Registrar acción");
     expect(html).not.toContain("requiere una migración de esquema nueva");
   });
 });
