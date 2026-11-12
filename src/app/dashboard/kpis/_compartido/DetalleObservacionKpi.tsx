@@ -41,6 +41,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requireAdminOrRedirect } from "@/infra/auth/session";
+import AccionesDecisionKpi from "./AccionesDecisionKpi";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import { diagnosticoLecturaSeguro } from "@/infra/prisma/errores";
 import { clasificarValorObservacionKpi, esCodigoConDetalleHabilitado } from "@/infra/kpis/estadoVisualizacion";
@@ -49,6 +50,7 @@ import {
   type PuntoObservacionKpi,
   type MotivoInformacionInsuficiente,
 } from "@/infra/kpis/analisisDecision";
+import { cargarHistoricoObservacionesKpi } from "@/infra/kpis/historicoObservacionKpi";
 
 type CodigoHabilitado = "OTIF" | "FILL_RATE";
 
@@ -62,11 +64,6 @@ const ETIQUETA_ESTADO_DATO: Record<string, string> = {
   INFERIDO: "Inferido",
   VERIFICADO: "Verificado",
 };
-
-// Tope de periodos anteriores a traer para la tendencia -- mismo
-// criterio que LIMITE_FILAS_TABLA en cobertura/importaciones/[id]/
-// page.tsx: un numero fijo, documentado, no "todo el historico".
-const LIMITE_HISTORICO = 12;
 
 const ETIQUETA_DIRECCION: Record<string, string> = { MEJORA: "Mejora", EMPEORA: "Empeora", ESTABLE: "Estable" };
 const ESTILO_DIRECCION: Record<string, string> = {
@@ -137,25 +134,10 @@ function formatearDeltaConUnidad(deltaAbsoluto: number, unidad: string): string 
   return `${signo}${deltaAbsoluto.toFixed(2)} ${unidad}`;
 }
 
-// Historico de periodos ANTERIORES al actual, misma cadena+definicionKpi
-// -- orden cronologico ascendente (lo que espera generarAnalisisObservacionKpi()).
-// Pedido en su propio try/catch por el llamador, no aca -- esta funcion
-// se mantiene "ingenua" (deja que el error se propague), igual criterio
-// que cargarResultadoImportacionCobertura() en PR1.
-async function cargarHistoricoObservacionesKpi(
-  client: ReturnType<typeof tenantClient>,
-  cadenaId: string,
-  definicionKpiId: string,
-  periodoInicioActual: Date,
-): Promise<PuntoObservacionKpi[]> {
-  const historico = await client.observacionKpi.findMany({
-    where: { cadenaId, definicionKpiId, periodoInicio: { lt: periodoInicioActual } },
-    orderBy: { periodoInicio: "desc" },
-    take: LIMITE_HISTORICO,
-    select: { id: true, periodoInicio: true, periodoFin: true, valor: true, numerador: true, denominador: true, ruleVersion: true },
-  });
-  return [...historico].reverse();
-}
+// Correccion de ronda de revision (bloqueante 1): cargarHistoricoObservacionesKpi()
+// se movio a src/infra/kpis/historicoObservacionKpi.ts -- la misma funcion
+// ahora la reutiliza tambien derivarOrigenActual.ts para derivar
+// ruleVersionOrigen/prioridadOrigen en el servidor, sin duplicar la consulta.
 
 export default async function DetalleObservacionKpi({ codigo, id }: { codigo: CodigoHabilitado; id: string }) {
   if (!esCodigoConDetalleHabilitado(codigo)) {
@@ -220,6 +202,28 @@ export default async function DetalleObservacionKpi({ codigo, id }: { codigo: Co
   };
 
   const analisis = errorLecturaHistorico ? null : generarAnalisisObservacionKpi(puntoActual, historico);
+
+  // Incremento 4 PR3 -- candidatos a responsable/creador/finalizador para
+  // el formulario de AccionesDecisionKpi.tsx (nunca el componente cliente
+  // consulta usuarios por su cuenta). Propio try/catch -- mismo criterio
+  // "un fallo de LECTURA nunca tira abajo toda la pagina" ya aplicado al
+  // historico de arriba: sin usuarios, el componente simplemente no deja
+  // elegir responsable (ver AccionesDecisionKpi.tsx), el resto de la
+  // pagina sigue mostrandose igual.
+  let usuariosEmpresa: { id: string; nombre: string; email: string }[] = [];
+  try {
+    usuariosEmpresa = await client.usuario.findMany({
+      select: { id: true, nombre: true, email: true },
+      orderBy: { nombre: "asc" },
+    });
+  } catch (error) {
+    const diagnostico = diagnosticoLecturaSeguro(error);
+    console.error("KPI_USUARIOS_LECTURA_FALLIDA", {
+      observacionId: id,
+      nombreClase: diagnostico.nombreClase,
+      codigo: diagnostico.codigo,
+    });
+  }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-12">
@@ -394,15 +398,29 @@ export default async function DetalleObservacionKpi({ codigo, id }: { codigo: Co
                 )}
               </div>
 
-              {analisis.siguienteAccionPropuesta && (
-                <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                  <p className="font-medium">Siguiente acción propuesta</p>
-                  <p className="mt-1">{analisis.siguienteAccionPropuesta}</p>
-                  <p className="mt-2 text-amber-700">
-                    El registro y seguimiento de acciones estará disponible en una próxima versión.
-                  </p>
-                </div>
-              )}
+              {/* Correccion de ronda de revision (bloqueante 4): el
+                  historial de acciones ya registradas se muestra SIEMPRE
+                  que esta seccion de analisis este disponible -- antes,
+                  todo el componente (historial incluido) se ocultaba si
+                  el motor no sugeria una accion nueva en ESTE momento,
+                  lo cual escondia acciones ya registradas en un analisis
+                  anterior. Ahora SOLO el formulario de alta ("Registrar
+                  accion") se condiciona a que haya una recomendacion
+                  actual de prioridad ALTA/MEDIA -- `recomendacionActual`
+                  es null en cualquier otro caso (ver AccionesDecisionKpi.tsx). */}
+              <AccionesDecisionKpi
+                origen={{ tipo: "OBSERVACION_KPI", observacionKpiId: observacion.id }}
+                recomendacionActual={
+                  analisis.siguienteAccionPropuesta && analisis.recomendacion
+                    ? {
+                        prioridad: analisis.recomendacion.prioridad,
+                        ruleVersion: observacion.ruleVersion,
+                        descripcionSugerida: analisis.siguienteAccionPropuesta,
+                      }
+                    : null
+                }
+                usuarios={usuariosEmpresa}
+              />
             </div>
           )
         )}
