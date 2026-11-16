@@ -107,8 +107,18 @@ function formatearFechaHora(fecha: Date): string {
   return fecha.toLocaleString("es-PE", { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+/** Correccion de validacion real en Windows (2026-11-16): esta funcion
+ * solo formatea campos date-only (periodoInicio/periodoFin, siempre
+ * persistidos a medianoche UTC exacta -- ver
+ * parsearFechaCalendarioEstricta() en src/infra/kpis/otif/declarar.ts).
+ * Sin timeZone, toLocaleDateString usa la zona del host; en una zona con
+ * offset negativo (ej. America/Lima) la medianoche UTC cae un dia
+ * calendario antes en hora local. timeZone: "UTC" fuerza leer el mismo
+ * dia que se guardo. formatearFechaHora() (abajo) formatea timestamps
+ * reales (createdAt) y queda intencionalmente sin tocar: ahi si
+ * corresponde mostrar la hora local del que mira la pantalla. */
 function formatearFecha(fecha: Date): string {
-  return fecha.toLocaleDateString("es-PE", { year: "numeric", month: "short", day: "2-digit" });
+  return fecha.toLocaleDateString("es-PE", { year: "numeric", month: "short", day: "2-digit", timeZone: "UTC" });
 }
 
 // `unidad` viene de DefinicionKpi.unidad -- hoy siempre "%" para OTIF y
@@ -356,7 +366,7 @@ export default async function DetalleObservacionKpi({ codigo, id }: { codigo: Co
                   <div className="mt-1 flex items-center gap-2">
                     <span className={"rounded px-2 py-0.5 text-xs font-medium " + ESTILO_DIRECCION[analisis.variacion.direccion]}>
                       {ETIQUETA_DIRECCION[analisis.variacion.direccion]}
-                    </span>
+                    </span>{" "}
                     <span className="text-xs text-slate-600">{formatearDeltaConUnidad(analisis.variacion.deltaAbsoluto, unidad)}</span>
                   </div>
                 )}
@@ -392,7 +402,7 @@ export default async function DetalleObservacionKpi({ codigo, id }: { codigo: Co
                       }
                     >
                       {ETIQUETA_PRIORIDAD[analisis.recomendacion.prioridad]}
-                    </span>
+                    </span>{" "}
                     <span className="text-xs text-slate-600">{analisis.recomendacion.texto}</span>
                   </div>
                 )}

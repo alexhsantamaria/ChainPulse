@@ -28,6 +28,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
+import { fijarZonaHorariaDePrueba } from "./entornoPruebaZonaHoraria";
 
 const requireAdminOrRedirectMock = vi.fn();
 vi.mock("@/infra/auth/session", () => ({
@@ -201,6 +202,31 @@ describe("DetalleObservacionKpi -- renderizado de resultados", () => {
     expect(html).toContain("Cadena Norte");
     expect(html).toContain("/dashboard/kpis/fill-rate");
   });
+
+  // Correccion de validacion real en Windows (2026-11-16, bloqueante 1):
+  // periodoInicio/periodoFin son date-only, persistidas a medianoche
+  // UTC exacta (ver parsearFechaCalendarioEstricta() en
+  // src/infra/kpis/otif/declarar.ts). America/Lima (UTC-5) es la misma
+  // zona de offset negativo ya usada en este repo para esta clase de
+  // defecto (ver src/engine/kpis/__tests__/cobertura.test.ts y
+  // src/domain/__tests__/interpretarFilaCoberturaCsv.test.ts), y la que
+  // reprodujo el defecto original (2026-09-30 mostrado como 29/09).
+  it("en America/Lima (UTC-5), el periodo se muestra con el dia calendario correcto (30 set., no 29 set.)", async () => {
+    const restaurarTZ = fijarZonaHorariaDePrueba("America/Lima");
+    try {
+      observacionKpiFindFirstMock.mockResolvedValue(observacionBase());
+      const { default: DetalleObservacionKpi } = await import("../DetalleObservacionKpi");
+
+      const elemento = (await DetalleObservacionKpi({ codigo: "OTIF", id: "obs-1" })) as ReactElement;
+      const html = renderToStaticMarkup(elemento);
+
+      expect(html).toContain("01 set. 2026");
+      expect(html).toContain("30 set. 2026");
+      expect(html).not.toContain("29 set. 2026");
+    } finally {
+      restaurarTZ();
+    }
+  });
 });
 
 describe("DetalleObservacionKpi -- analisis y decision (Incremento 4 PR2)", () => {
@@ -241,6 +267,29 @@ describe("DetalleObservacionKpi -- analisis y decision (Incremento 4 PR2)", () =
     expect(html).toContain("Siguiente acción propuesta");
     expect(html).toContain("Acciones de decisión");
     expect(html).toContain("Registrar acción");
+  });
+
+  // Correccion de validacion real en Windows (2026-11-16, bloqueantes 3
+  // y 4): el badge "Empeora"/"Prioridad alta" y el texto que lo sigue
+  // ("-15.0 puntos" / la recomendacion) estaban en <span> hermanos
+  // separados solo por gap-* de flexbox (espaciado visual, sin nodo de
+  // texto real en el DOM) -- al copiar o leer el texto quedaban
+  // pegados ("Empeora-15.0 puntos", "Prioridad altaSe recomienda..").
+  // Esta prueba verifica el espacio real (no solo visual) insertado via
+  // {" "} entre esos spans.
+  it("hay un espacio real (no solo visual) entre el badge Empeora y los puntos, y entre Prioridad alta y la recomendacion", async () => {
+    observacionKpiFindFirstMock.mockResolvedValue(observacionBase({ valor: 0.65, numerador: 65, denominador: 100 }));
+    observacionKpiFindManyMock.mockResolvedValue([puntoHistorico({ valor: 0.8, numerador: 80, denominador: 100 })]);
+    const { default: DetalleObservacionKpi } = await import("../DetalleObservacionKpi");
+
+    const elemento = (await DetalleObservacionKpi({ codigo: "OTIF", id: "obs-1" })) as ReactElement;
+    const html = renderToStaticMarkup(elemento);
+
+    expect(html).not.toContain("Empeora-15.0 puntos");
+    expect(html).toMatch(/Empeora<\/span>\s+<span[^>]*>-15\.0 puntos/);
+
+    expect(html).not.toContain("Prioridad altaSe recomienda");
+    expect(html).toMatch(/Prioridad alta<\/span>\s+<span[^>]*>/);
   });
 
   it("fallo de lectura del historico -- pantalla recuperable, nunca el detalle interno del error, y el resto de la pagina sigue mostrandose", async () => {

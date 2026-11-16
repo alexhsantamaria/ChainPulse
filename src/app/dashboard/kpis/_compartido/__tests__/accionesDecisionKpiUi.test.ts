@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { estadosSiguientesPosibles, mensajeParaError, validarFormularioCrearAccion } from "../accionesDecisionKpiUi";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  estadosSiguientesPosibles,
+  formatearFechaObjetivo,
+  mensajeParaError,
+  validarFormularioCrearAccion,
+} from "../accionesDecisionKpiUi";
+import { fijarZonaHorariaDePrueba } from "./entornoPruebaZonaHoraria";
 
 describe("estadosSiguientesPosibles", () => {
   it("desde PENDIENTE permite EN_PROGRESO, COMPLETADA y DESCARTADA (nunca PENDIENTE)", () => {
@@ -68,5 +74,49 @@ describe("mensajeParaError", () => {
 
   it("ACCION_MODIFICADA_CONCURRENTEMENTE (bloqueante 3) -- mensaje especifico", () => {
     expect(mensajeParaError("ACCION_MODIFICADA_CONCURRENTEMENTE")).toMatch(/otra persona/i);
+  });
+});
+
+// Correccion de validacion real en Windows (2026-11-16, bloqueante 1):
+// fechaObjetivo es date-only, persistida a medianoche UTC exacta. Sin
+// timeZone: "UTC" en toLocaleDateString, el resultado depende de la
+// zona horaria del HOST que ejecuta la UI -- en Node, process.env.TZ.
+// America/Lima (UTC-5) es la zona de offset negativo que ya se usa como
+// fixture en este repo para esta misma clase de defecto (ver
+// src/engine/kpis/__tests__/cobertura.test.ts y
+// src/domain/__tests__/interpretarFilaCoberturaCsv.test.ts) y es,
+// ademas, la que reprodujo el defecto reportado por el usuario en
+// Windows. Node (confirmado en esta version, v22.23.4) relee
+// process.env.TZ en cada llamada a Intl/Date, asi que mutarla en
+// beforeEach/afterEach alcanza para simular el entorno sin cambiar la
+// configuracion del sistema operativo.
+describe("formatearFechaObjetivo", () => {
+  // Correccion de ronda de revision (2026-11-16): la restauracion de TZ
+  // se delega a fijarZonaHorariaDePrueba()/su funcion de restauracion
+  // (ver entornoPruebaZonaHoraria.ts) -- restaura la AUSENCIA real de
+  // TZ cuando no estaba definida antes, nunca el string literal
+  // "undefined" que resultaba de `process.env.TZ = tzOriginal` cuando
+  // tzOriginal es `undefined` (el caso real en este sandbox).
+  let restaurarTZ: () => void;
+
+  beforeEach(() => {
+    restaurarTZ = fijarZonaHorariaDePrueba("America/Lima");
+  });
+
+  afterEach(() => {
+    restaurarTZ();
+  });
+
+  it("en America/Lima (UTC-5), 2026-11-20T00:00:00.000Z se muestra como 20, no como 19 (defecto reportado)", () => {
+    expect(formatearFechaObjetivo("2026-11-20T00:00:00.000Z")).toBe("20 de nov de 2026");
+  });
+
+  it("en America/Lima (UTC-5), 2026-09-30T00:00:00.000Z se muestra como 30, no como 29", () => {
+    expect(formatearFechaObjetivo("2026-09-30T00:00:00.000Z")).toBe("30 de sept de 2026");
+  });
+
+  it("en una zona de offset positivo (Europe/Moscow, UTC+3) tambien muestra el dia correcto", () => {
+    process.env.TZ = "Europe/Moscow";
+    expect(formatearFechaObjetivo("2026-11-20T00:00:00.000Z")).toBe("20 de nov de 2026");
   });
 });

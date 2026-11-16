@@ -171,6 +171,20 @@ function formatearFecha(fecha: Date): string {
   return fecha.toLocaleDateString("es-PE", { year: "numeric", month: "short", day: "2-digit" });
 }
 
+/** Correccion de validacion real en Windows (2026-11-16): esta funcion
+ * es para campos date-only (periodo.inicio/.fin, rangoFechaCorte.min/.max,
+ * fila.fechaCorte -- todos persistidos a medianoche UTC exacta, ver
+ * `new Date(\`${iso}T00:00:00.000Z\`)` en src/infra/kpis/cobertura/importar.ts).
+ * formatearFecha() (arriba) queda intencionalmente sin tocar y se sigue
+ * usando solo para fila.reemplazadaEn, que es un timestamp real (debe
+ * seguir mostrandose en hora local de quien mira la pantalla). Sin
+ * timeZone, toLocaleDateString usa la zona del host; en una zona con
+ * offset negativo (ej. America/Lima) la medianoche UTC cae un dia antes
+ * en hora local. timeZone: "UTC" fuerza leer el mismo dia que se guardo. */
+function formatearFechaCorte(fecha: Date): string {
+  return fecha.toLocaleDateString("es-PE", { year: "numeric", month: "short", day: "2-digit", timeZone: "UTC" });
+}
+
 function formatearCoberturaDias(dias: number | null): string {
   return dias === null ? "--" : `${dias.toFixed(1)} días`;
 }
@@ -178,8 +192,8 @@ function formatearCoberturaDias(dias: number | null): string {
 function formatearPeriodoReferencia(periodo: { inicio: Date | null; fin: Date | null }): string {
   if (!periodo.inicio || !periodo.fin) return "Sin período de referencia declarado";
   return periodo.inicio.getTime() === periodo.fin.getTime()
-    ? formatearFecha(periodo.inicio)
-    : `${formatearFecha(periodo.inicio)} – ${formatearFecha(periodo.fin)}`;
+    ? formatearFechaCorte(periodo.inicio)
+    : `${formatearFechaCorte(periodo.inicio)} – ${formatearFechaCorte(periodo.fin)}`;
 }
 
 // Forma del resultado de UNA importacion ya PROCESADA -- separado del
@@ -400,8 +414,8 @@ export default async function DetalleImportacionCoberturaPage({ params }: { para
         <p className="text-sm text-slate-600">
           {resultado?.rangoFechaCorte.min && resultado?.rangoFechaCorte.max
             ? resultado.rangoFechaCorte.min.getTime() === resultado.rangoFechaCorte.max.getTime()
-              ? `Fecha de corte: ${formatearFecha(resultado.rangoFechaCorte.min)}`
-              : `Periodo: ${formatearFecha(resultado.rangoFechaCorte.min)} – ${formatearFecha(resultado.rangoFechaCorte.max)}`
+              ? `Fecha de corte: ${formatearFechaCorte(resultado.rangoFechaCorte.min)}`
+              : `Periodo: ${formatearFechaCorte(resultado.rangoFechaCorte.min)} – ${formatearFechaCorte(resultado.rangoFechaCorte.max)}`
             : "Todavía no hay filas con fecha de corte para esta importación."}
         </p>
       </div>
@@ -718,7 +732,7 @@ export default async function DetalleImportacionCoberturaPage({ params }: { para
                       <tr key={fila.id}>
                         <td className="px-3 py-2 font-medium">{fila.skuOriginal}</td>
                         <td className="px-3 py-2">{fila.ubicacionOriginal}</td>
-                        <td className="px-3 py-2">{formatearFecha(fila.fechaCorte)}</td>
+                        <td className="px-3 py-2">{formatearFechaCorte(fila.fechaCorte)}</td>
                         <td className="px-3 py-2">
                           {fila.inventarioDisponible === null ? "--" : `${fila.inventarioDisponible} ${fila.unidadInventario}`}
                         </td>

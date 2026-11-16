@@ -110,3 +110,29 @@ const MENSAJE_POR_ERROR: Record<string, string> = {
 export function mensajeParaError(error: string | undefined): string {
   return MENSAJE_POR_ERROR[error ?? ""] ?? "No se pudo guardar. Intentá de nuevo.";
 }
+
+/** Correccion de validacion real en Windows (2026-11-16): fechaObjetivo
+ * es date-only -- siempre persistida como medianoche UTC exacta (ver
+ * z.coerce.date() sobre un <input type="date"> en
+ * src/app/api/kpis/acciones/route.ts). Formatearla con
+ * toLocaleDateString SIN timeZone usa la zona horaria del host -- en
+ * cualquier zona con offset negativo (ej. America/Lima, UTC-5) la
+ * medianoche UTC cae en el dia calendario ANTERIOR en hora local,
+ * mostrando un dia menos del que se guardo (asi se reprodujo el defecto
+ * reportado: 2026-11-20 se veia como 19/11 en Windows). timeZone: "UTC"
+ * fuerza leer el mismo dia calendario que se escribio, sin importar la
+ * zona del host.
+ *
+ * No se reutiliza el helper diaEnZona() de src/engine/kpis/compartido.ts:
+ * ese resuelve un problema distinto (el dia calendario de una fecha de
+ * corte segun la zona horaria CONFIGURADA de la cadena, para calculo de
+ * KPIs en engine/) y devuelve "AAAA-MM-DD" crudo, no una fecha ya
+ * formateada en castellano para mostrar en la UI.
+ *
+ * Vive en este modulo (y no en AccionesDecisionKpi.tsx) por el mismo
+ * motivo que el resto de las piezas de este archivo: para poder probarla
+ * con una prueba de funcion pura, sin renderizar nada a DOM (ver
+ * comentario de cabecera). */
+export function formatearFechaObjetivo(iso: string): string {
+  return new Date(iso).toLocaleDateString("es-AR", { year: "numeric", month: "short", day: "2-digit", timeZone: "UTC" });
+}

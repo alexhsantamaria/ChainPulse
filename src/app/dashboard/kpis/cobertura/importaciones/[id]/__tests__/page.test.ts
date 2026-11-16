@@ -17,6 +17,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
+import { fijarZonaHorariaDePrueba } from "../../../../_compartido/__tests__/entornoPruebaZonaHoraria";
 
 const requireAdminOrRedirectMock = vi.fn();
 vi.mock("@/infra/auth/session", () => ({
@@ -454,6 +455,55 @@ describe("DetalleImportacionCoberturaPage -- PROCESADA (consulta y muestra resul
     // filasDetectadas (3 en importacionBase()) es 0, asi que el aviso de
     // "la diferencia corresponde a..." no debe aparecer.
     expect(html).not.toContain("El archivo traía");
+  });
+
+  // Correccion de validacion real en Windows (2026-11-16, bloqueante
+  // 1): fechaCorte y rangoFechaCorte.min/.max son date-only, persistidas
+  // a medianoche UTC exacta (ver new Date(`${iso}T00:00:00.000Z`) en
+  // src/infra/kpis/cobertura/importar.ts). America/Lima (UTC-5) es la
+  // misma zona de offset negativo ya usada en este repo para esta clase
+  // de defecto. Esta pagina esta en el alcance del PR (la
+  // formatearFecha original aqui tambien se usa para
+  // fila.reemplazadaEn, un timestamp real -- por eso la correccion
+  // introdujo formatearFechaCorte() como funcion separada, en vez de
+  // agregarle timeZone: "UTC" a formatearFecha()).
+  it("en America/Lima (UTC-5), la fecha de corte se muestra con el dia calendario correcto (01 oct., no 30 set.)", async () => {
+    const restaurarTZ = fijarZonaHorariaDePrueba("America/Lima");
+    try {
+      const cliente = construirClienteFalso({
+        importacion: importacionBase(),
+        porEstado: [{ estado: "CALCULADA", _count: { _all: 1 } }],
+        rangoMin: new Date("2026-10-01T00:00:00.000Z"),
+        rangoMax: new Date("2026-10-01T00:00:00.000Z"),
+        filas: [
+          {
+            id: "fila-1",
+            skuOriginal: "SKU-001",
+            ubicacionOriginal: "Lima",
+            fechaCorte: new Date("2026-10-01T00:00:00.000Z"),
+            inventarioDisponible: 40,
+            unidadInventario: "unidades",
+            consumoDiarioEsperado: 10,
+            unidadConsumoDiario: "unidades",
+            coberturaDias: 4,
+            estado: "CALCULADA",
+            vigente: true,
+            reemplazadaEn: null,
+            numeroFila: 2,
+          },
+        ],
+      });
+      tenantClientMock.mockReturnValue(cliente);
+      const { default: DetalleImportacionCoberturaPage } = await import("../page");
+
+      const elemento = (await DetalleImportacionCoberturaPage({ params: Promise.resolve({ id: "import-1" }) })) as ReactElement;
+      const html = renderToStaticMarkup(elemento);
+
+      expect(html).toContain("Fecha de corte: 01 oct. 2026");
+      expect(html).not.toContain("30 set. 2026");
+    } finally {
+      restaurarTZ();
+    }
   });
 
   it("totalFilasPersistidas (derivado del groupBy) supera el tope de la tabla -- avisa que muestra solo una parte, sin mentir el resumen", async () => {

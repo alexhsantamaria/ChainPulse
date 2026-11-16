@@ -28,6 +28,7 @@ import {
   ETIQUETA_ESTADO_ACCION,
   ETIQUETA_PRIORIDAD_ACCION,
   estadosSiguientesPosibles,
+  formatearFechaObjetivo,
   mensajeParaError,
   validarFormularioCrearAccion,
   type FormularioCrearAccion,
@@ -42,7 +43,7 @@ export interface UsuarioCandidato {
 /** Forma de una fila tal como la devuelve la API (JSON) -- las fechas
  * llegan como string ISO, nunca como Date (NextResponse.json() las
  * serializa asi). */
-interface AccionApi {
+export interface AccionApi {
   id: string;
   observacionKpiId: string | null;
   importacionCsvId: string | null;
@@ -259,7 +260,7 @@ export default function AccionesDecisionKpi({
   );
 }
 
-function FilaAccion({
+export function FilaAccion({
   accion,
   usuarios,
   onCambiada,
@@ -301,11 +302,11 @@ function FilaAccion({
       <div className="flex flex-wrap items-center gap-2">
         <span className={"rounded px-2 py-0.5 text-xs font-medium " + ESTILO_ESTADO_ACCION[accion.estado]}>
           {ETIQUETA_ESTADO_ACCION[accion.estado]}
-        </span>
+        </span>{" "}
         <span className={"rounded px-2 py-0.5 text-xs font-medium " + ESTILO_PRIORIDAD_ACCION[accion.prioridadOrigen]}>
           {ETIQUETA_PRIORIDAD_ACCION[accion.prioridadOrigen]}
-        </span>
-        <span className="text-xs text-slate-500">Objetivo: {formatearFecha(accion.fechaObjetivo)}</span>
+        </span>{" "}
+        <span className="text-xs text-slate-500">Objetivo: {formatearFechaObjetivo(accion.fechaObjetivo)}</span>
       </div>
       <p className="mt-1">{accion.descripcionAccion}</p>
       <p className="mt-1 text-xs text-slate-500">
