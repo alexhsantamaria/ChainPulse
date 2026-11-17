@@ -291,6 +291,7 @@ model Empresa {
   observacionesCobertura ObservacionCobertura[]
   importacionesCsv       ImportacionCsv[]
   consultasLog ConsultaLog[]
+  accionesDecisionKpi     AccionDecisionKpi[]
 
   @@map("empresas")
 }
@@ -350,6 +351,15 @@ model Usuario {
   // SolicitudDerechos.resueltoPorUsuario -- un administrador puede
   // resolver cero o varias solicitudes RF24 por el canal SOPORTE.
   solicitudesDerechosResueltas SolicitudDerechos[]
+  // Incremento 4 PR3 -- 3 relaciones nombradas distintas hacia
+  // AccionDecisionKpi (responsable asignado / quien la creo / quien la
+  // finalizo). Un mismo Usuario puede aparecer en las 3 roles para
+  // acciones distintas (incluso para la MISMA accion en teoria, aunque
+  // la UI no lo exige ni lo impide) -- por eso son 3 arrays separados,
+  // nunca uno combinado.
+  accionesResponsable AccionDecisionKpi[] @relation("AccionesResponsable")
+  accionesFinalizadas AccionDecisionKpi[] @relation("AccionesFinalizadas")
+  accionesCreadas     AccionDecisionKpi[] @relation("AccionesCreadas")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -1069,6 +1079,7 @@ model Cadena {
   observacionesCobertura ObservacionCobertura[]
   importacionesCsv       ImportacionCsv[]
   consultasLog ConsultaLog[]
+  accionesDecisionKpi     AccionDecisionKpi[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1422,6 +1433,12 @@ model ObservacionKpi {
   // lo reflejan solas).
   ruleVersion   String
 
+  // Incremento 4 PR3 -- lado inverso de AccionDecisionKpi.observacionKpi.
+  // Cero o varias acciones de decision pueden anclarse a esta observacion
+  // (una por cada "siguiente accion propuesta" que el equipo decide
+  // registrar formalmente, nunca generadas automaticamente).
+  acciones AccionDecisionKpi[] @relation("ObservacionKpiAcciones")
+
   createdAt DateTime @default(now())
 
   @@unique([cadenaId, definicionKpiId, periodoInicio, periodoFin, fuente])
@@ -1585,6 +1602,9 @@ model ImportacionCsv {
   procesadaEn DateTime?
 
   observacionesCobertura ObservacionCobertura[]
+  // Incremento 4 PR3 -- lado inverso de AccionDecisionKpi.importacionCsv,
+  // mismo criterio que ObservacionKpi.acciones de arriba.
+  acciones               AccionDecisionKpi[] @relation("ImportacionCsvAcciones")
 
   createdAt DateTime @default(now())
 
@@ -1592,6 +1612,131 @@ model ImportacionCsv {
   @@index([cadenaId])
   @@index([definicionKpiId])
   @@map("importaciones_csv")
+}
+
+enum EstadoAccionKpi {
+  PENDIENTE
+  EN_PROGRESO
+  COMPLETADA
+  DESCARTADA
+}
+
+enum PrioridadRecomendacionKpi {
+  ALTA
+  MEDIA
+  BAJA
+}
+
+// Incremento 4 PR3 (Alex, 2026-11-11) -- persistencia y seguimiento de
+// las "acciones de decision" que src/infra/kpis/analisisDecision.ts ya
+// viene proponiendo como texto (siguienteAccionPropuesta) desde PR2,
+// pero que hasta ahora nunca se guardaban: cada fila es UNA accion que
+// un humano decidio registrar formalmente a partir de UNA observacion de
+// KPI (OTIF/Fill Rate) o UNA importacion de Cobertura, con responsable,
+// fecha objetivo, prioridad y su propio ciclo de vida (estado +
+// finalizacion). Nunca generada automaticamente por el motor de analisis
+// -- descripcionAccion siempre la escribe una persona (ver el campo mas
+// abajo), el motor solo le sugiere el texto inicial
+// (siguienteAccionPropuesta) que la UI pre-llena en el formulario.
+//
+// Disenada en la propuesta de PR2 ronda 3 (chainpulse/
+// pr2-incremento4-ronda3-correcciones-2026-11-09.md, Seccion 2) y
+// construida aqui sin cambios de forma sobre esa propuesta, salvo:
+// (a) PrioridadRecomendacionKpi pasa de ser un enum que la propuesta daba
+// por existente a crearse aqui mismo -- PrioridadRecomendacion en
+// analisisDecision.ts es un tipo TS plano ("ALTA"|"MEDIA"|"BAJA"), nunca
+// un enum de Prisma; (b) cadenaId usa onDelete: Cascade (no el default
+// Restrict que dejaba implicito la propuesta) para seguir el mismo
+// criterio que CUALQUIER otro modelo de este esquema con cadenaId propio
+// (Nodo, ConexionCadena, HallazgoCadena, RespuestaCadena, ObservacionKpi,
+// ObservacionCobertura, ImportacionCsv -- ninguno deja a Cadena como
+// Restrict); (c) se agrega @@index([empresaId]) -- faltaba en la
+// propuesta pero es el patron sin excepciones de TODOS los demas modelos
+// tenant-scoped de este archivo.
+model AccionDecisionKpi {
+  id        String  @id @default(cuid())
+
+  // --- Tenant (RNF1, capa 1 -- tenantClient()/injectTenantFilter) ---
+  empresaId String
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cadenaId  String
+  cadena    Cadena  @relation(fields: [cadenaId], references: [id], onDelete: Cascade)
+
+  // --- Exactamente UN origen (XOR) -- CHECK real en la migracion
+  // (chk_accion_decision_kpi_un_origen, Prisma no expresa un XOR
+  // multi-columna) + validacion de aplicacion antes de cualquier
+  // create/update (ver src/infra/kpis/acciones/validacion.ts) como
+  // defensa en profundidad. onDelete: Restrict en ambas FK -- nunca se
+  // permite borrar la observacion/importacion de origen mientras una
+  // accion la siga referenciando (perderia el ancla de "por que se
+  // registro esto").
+  observacionKpiId String?
+  observacionKpi   ObservacionKpi? @relation("ObservacionKpiAcciones", fields: [observacionKpiId], references: [id], onDelete: Restrict)
+  importacionCsvId String?
+  importacionCsv   ImportacionCsv? @relation("ImportacionCsvAcciones", fields: [importacionCsvId], references: [id], onDelete: Restrict)
+
+  // --- Trazabilidad de origen -- que version del motor y que prioridad
+  // de recomendacion disparo esta accion (src/infra/kpis/
+  // analisisDecision.ts, ResultadoAnalisisKpi.recomendacion/actual.
+  // ruleVersion al momento de crearla) -- nunca se recalcula despues.
+  ruleVersionOrigen String
+  prioridadOrigen   PrioridadRecomendacionKpi
+
+  // --- Contenido escrito por una persona (nunca generado por el
+  // sistema) ---
+  descripcionAccion String
+  responsableId     String
+  responsable       Usuario         @relation("AccionesResponsable", fields: [responsableId], references: [id], onDelete: Restrict)
+  fechaObjetivo     DateTime
+  estado            EstadoAccionKpi @default(PENDIENTE)
+
+  // --- Quien DIO DE ALTA la accion -- distinto de responsable (a quien
+  // se le asigna) y de finalizadaPor (quien la cerro). Un administrador
+  // puede crear una accion y asignarsela a otra persona del equipo.
+  creadaPorId String
+  creadaPor   Usuario @relation("AccionesCreadas", fields: [creadaPorId], references: [id], onDelete: Restrict)
+
+  // --- Finalizacion -- AMBOS presentes solo en estado terminal
+  // (COMPLETADA/DESCARTADA), AMBOS ausentes en cualquier otro estado;
+  // CHECK real en la migracion
+  // (chk_accion_decision_kpi_finalizacion_consistente) + la misma regla
+  // en la capa de aplicacion antes de cualquier update de estado.
+  finalizadaEn    DateTime?
+  finalizadaPorId String?
+  finalizadaPor   Usuario?  @relation("AccionesFinalizadas", fields: [finalizadaPorId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  // `updatedAt` queda SOLO como fecha de auditoria (Prisma la sigue
+  // actualizando sola via @updatedAt en cada UPDATE) -- correccion de
+  // ronda de revision (3ra vuelta sobre el mismo punto): ya NO es parte
+  // del control de concurrencia (ver `version` abajo), porque su
+  // precision TIMESTAMP(3) (milisegundos) deja una ventana real de
+  // colision entre 2 escrituras que cayeran en el mismo milisegundo --
+  // una columna de version entera no tiene esa ventana.
+  updatedAt DateTime @updatedAt
+
+  // --- Control de concurrencia optimista (RNF -- ver
+  // actualizarAccionDecisionKpi() en src/infra/kpis/acciones/servicio.ts)
+  // --- Reemplaza el intento anterior de usar `estado`+`updatedAt` en el
+  // WHERE del UPDATE: una columna de version entera dedicada no tiene
+  // ninguna ventana de precision (a diferencia de un timestamp), y deja
+  // la semantica mas explicita ("esta fila cambio N veces" en vez de
+  // "esta fila cambio en algun momento despues de tal instante").
+  // CUALQUIER actualizarAccionDecisionKpi() exitoso la incrementa en 1
+  // (`version: {increment: 1}`), sin excepcion -- el WHERE de ese UPDATE
+  // exige `version: actual.version` ademas de `id`+`estado`, asi que
+  // cualquier escritura concurrente que ya haya incrementado la version
+  // invalida la foto que leyo cualquier otra solicitud, haya cambiado
+  // `estado` o no.
+  version Int @default(1)
+
+  @@index([empresaId])
+  @@index([cadenaId, estado])
+  @@index([responsableId, estado])
+  @@index([observacionKpiId])
+  @@index([importacionCsvId])
+
+  @@map("acciones_decision_kpi")
 }
 
 enum EstadoObservacionCobertura {

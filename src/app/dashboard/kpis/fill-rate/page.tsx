@@ -15,8 +15,18 @@ import { requireAdminOrRedirect } from "@/infra/auth/session";
 import { tenantClient } from "@/infra/prisma/tenantClient";
 import DeclaracionFillRateWizard from "./DeclaracionFillRateWizard";
 
+/** Correccion de validacion real en Windows (2026-11-16, extendida al
+ * resto de paginas con el mismo patron latente): periodoInicio/
+ * periodoFin son date-only, persistidas a medianoche UTC exacta (ver
+ * parsearFechaCalendarioEstricta() en src/infra/kpis/otif/declarar.ts).
+ * Sin timeZone, toLocaleDateString usa la zona del host; en una zona de
+ * offset negativo (ej. America/Lima) la medianoche UTC cae un dia antes
+ * en hora local. timeZone: "UTC" fuerza leer el mismo dia que se
+ * guardo. Esta funcion no formatea ningun timestamp real en este
+ * archivo (solo periodoInicio/periodoFin), asi que no hace falta
+ * dividirla como en DetalleObservacionKpi.tsx. */
 function formatearFecha(fecha: Date): string {
-  return fecha.toLocaleDateString("es-PE", { year: "numeric", month: "short", day: "2-digit" });
+  return fecha.toLocaleDateString("es-PE", { year: "numeric", month: "short", day: "2-digit", timeZone: "UTC" });
 }
 
 function formatearPorcentaje(valor: number | null): string {
