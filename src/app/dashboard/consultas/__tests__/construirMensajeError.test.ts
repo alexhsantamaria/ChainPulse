@@ -5,7 +5,7 @@
 // asi que la funcion pura se exporta desde el componente y se prueba
 // aislada.
 import { describe, expect, it } from "vitest";
-import { construirMensajeError } from "../ConsultasPanel";
+import { construirMensajeError, debeMostrarReintentar } from "../ConsultasPanel";
 
 const INESPERADO = "Ocurrió un error inesperado -- intentá de nuevo en un momento.";
 
@@ -35,5 +35,50 @@ describe("construirMensajeError", () => {
 
   it("SIN_DATOS_SUFICIENTES nunca deberia llegar aca en la practica, pero si llega no revienta", () => {
     expect(() => construirMensajeError("SIN_DATOS_SUFICIENTES")).not.toThrow();
+  });
+});
+
+
+describe("construirMensajeError -- Incremento 5 PR1 (limite de tasa)", () => {
+  it("LIMITE_TASA_EXCEDIDO -- mensaje especifico, nunca expone el contador real ni la huella", () => {
+    const mensaje = construirMensajeError("LIMITE_TASA_EXCEDIDO");
+    expect(mensaje).not.toBe(INESPERADO);
+    expect(mensaje).toMatch(/espera|momento/i);
+  });
+
+  it("SERVICIO_NO_DISPONIBLE -- mensaje especifico (fail-closed de infraestructura)", () => {
+    expect(construirMensajeError("SERVICIO_NO_DISPONIBLE")).not.toBe(INESPERADO);
+  });
+});
+
+// debeMostrarReintentar() -- Incremento 5 PR1. NOTA DE COBERTURA (a
+// pedido explicito de Alex: nunca declarar un boton "renderizado y
+// operativo" sin poder probarlo de verdad): este repositorio NO tiene
+// @testing-library/react ni jsdom instalados (ver el comentario de
+// arriba y vitest.config.ts, environment:"node") -- por eso aca solo se
+// prueba la funcion PURA que decide si el boton deberia aparecer, nunca
+// el click real del boton ni que ejecutarConsulta() se vuelva a llamar
+// al presionarlo. Esa verificacion de extremo a extremo (render + click)
+// queda pendiente como hueco de cobertura documentado -- requeriria
+// agregar jsdom + @testing-library/react como dependencias de
+// desarrollo nuevas, fuera del alcance decidido para este PR1 sin
+// autorizacion separada.
+describe("debeMostrarReintentar", () => {
+  it.each(["LIMITE_TASA_EXCEDIDO", "SERVICIO_NO_DISPONIBLE"])(
+    "%s -- SI deberia mostrar el boton Reintentar (falla transitoria, no de formulario)",
+    (codigo) => {
+      expect(debeMostrarReintentar(codigo)).toBe(true);
+    },
+  );
+
+  it.each(["CATALOGO_ID_INVALIDO", "PERIODO_INVALIDO", "PERMISO_DENEGADO", "CADENA_INEXISTENTE"])(
+    "%s -- NO deberia mostrar el boton (reintentar sin cambiar el formulario fallaria igual)",
+    (codigo) => {
+      expect(debeMostrarReintentar(codigo)).toBe(false);
+    },
+  );
+
+  it("undefined -- no muestra el boton", () => {
+    expect(debeMostrarReintentar(undefined)).toBe(false);
   });
 });

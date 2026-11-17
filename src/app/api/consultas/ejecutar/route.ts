@@ -18,6 +18,16 @@ import {
   ejecutarConsultaPermitida,
   type EntradaCrudaEjecutarConsulta,
 } from "@/infra/queries/ejecutarConsultaPermitida";
+import { prisma } from "@/infra/prisma/client";
+import {
+  registrarIntento,
+  hashHuellaOrigen,
+  codificarHuellaConsultaAutenticada,
+  calcularSegundosHastaProximoIntentoPermitido,
+  LIMITE_CONSULTA_EJECUTAR,
+  type ResultadoLimiteTasa,
+} from "@/infra/rateLimit/limiteTasa";
+import { registrarEventoRateLimitConsulta } from "@/infra/rateLimit/eventoConsultaRateLimit";
 
 export const runtime = "nodejs";
 
@@ -76,6 +86,62 @@ export async function POST(request: Request) {
   if (!construida.ok) {
     return NextResponse.json({ ok: false, error: construida.error }, { status: STATUS_POR_ERROR[construida.error] });
   }
+
+  // Incremento 5 PR1 -- limite de tasa POR USUARIO autenticado (nunca
+  // por IP cruda, a diferencia de INICIO_EVALUACION/DESBLOQUEO_DETALLE:
+  // esta ruta siempre tiene sesion, ver requireSession() arriba). Se
+  // evalua DESPUES de validar el payload (construirConsultaPermitida,
+  // pura, sin IO) pero ANTES de ejecutarConsultaPermitida() (el
+  // dispatcher real, que toca la base y crea ConsultaLog) -- un payload
+  // invalido nunca gasta cupo de limite de tasa, y ningun camino de
+  // limite de tasa llega jamas al dispatcher ni a ConsultaLog.
+  //
+  // Fail-CLOSED a proposito (correccion explicita de Alex, 2026-11-17
+  // sobre la entrega inicial, que proponia fail-open): esta consulta
+  // depende de la misma base que el resto de la ruta -- fallar abierto
+  // durante una degradacion de Postgres no mejora la disponibilidad
+  // (la consulta real fallaria igual mas abajo), podria enmascarar una
+  // migracion faltante o una mala configuracion, podria aumentar la
+  // carga sobre una base ya degradada, y el limite de tasa es un
+  // control de proteccion que no debe poder saltearse en silencio.
+  const ahora = new Date();
+  let resultadoLimite: ResultadoLimiteTasa;
+  try {
+    const huellaHash = hashHuellaOrigen(codificarHuellaConsultaAutenticada(sesion.empresaId, sesion.usuarioId));
+    resultadoLimite = await registrarIntento(huellaHash, "CONSULTA_EJECUTAR", LIMITE_CONSULTA_EJECUTAR, ahora, prisma);
+  } catch {
+    // Nunca se pasa el error crudo a registrarEventoRateLimitConsulta
+    // (ver eventoConsultaRateLimit.ts) -- un fallo de infraestructura
+    // aca no debe filtrar SQL, connection string, ni ningun dato de
+    // tenant/usuario a los logs.
+    registrarEventoRateLimitConsulta("CONSULTA_RATE_LIMIT_INFRAESTRUCTURA");
+    return NextResponse.json({ ok: false, error: "SERVICIO_NO_DISPONIBLE" }, { status: 503 });
+  }
+
+  if (!resultadoLimite.permitido) {
+    const retryAfterSegundos = calcularSegundosHastaProximoIntentoPermitido(resultadoLimite.buckets, LIMITE_CONSULTA_EJECUTAR, ahora);
+    registrarEventoRateLimitConsulta("CONSULTA_RATE_LIMIT_RECHAZADA", {
+      contador: resultadoLimite.contador,
+      catalogoId: construida.entrada.catalogoId,
+    });
+    // retryAfterSegundos viaja en el BODY (no solo en el header
+    // Retry-After) porque fetchJsonSeguro() (http/fetchJsonSeguro.ts),
+    // usado por ConsultasPanel.tsx y el resto de los componentes
+    // cliente, descarta el objeto Response completo (solo usa
+    // .json()) -- leer el header ahi exigiria volver al patron
+    // fetch() crudo que fetchJsonSeguro() existe para eliminar (ver su
+    // propio comentario, R5-8). El header se mantiene ademas para
+    // cualquier cliente HTTP que si lo lea (correctitud HTTP).
+    return NextResponse.json(
+      { ok: false, error: "LIMITE_TASA_EXCEDIDO", retryAfterSegundos },
+      { status: 429, headers: { "Retry-After": String(retryAfterSegundos) } },
+    );
+  }
+
+  registrarEventoRateLimitConsulta("CONSULTA_RATE_LIMIT_PERMITIDA", {
+    contador: resultadoLimite.contador,
+    catalogoId: construida.entrada.catalogoId,
+  });
 
   const resultado = await ejecutarConsultaPermitida(
     { catalogoId: construida.entrada.catalogoId, cadenaId: construida.entrada.cadenaId, periodo: construida.entrada.periodo },

@@ -1,11 +1,14 @@
-// Pruebas -- POST /api/consultas/ejecutar. requireSession y
-// ejecutarConsultaPermitida mockeados (construirConsultaPermitida corre
-// REAL via importActual -- es pura, sin Prisma): esta prueba es de la
-// RUTA (parseo de payload, mapeo de errores a status HTTP, que
-// empresaId/usuarioId/rol SIEMPRE salgan de la sesion y nunca del
-// payload), no del dispatcher en si (eso lo cubre
-// infra/queries/__tests__/ejecutarConsultaPermitida.test.ts).
-import { describe, expect, it, vi, beforeEach } from "vitest";
+// Pruebas -- POST /api/consultas/ejecutar. requireSession,
+// ejecutarConsultaPermitida y registrarIntento (limite de tasa)
+// mockeados (construirConsultaPermitida corre REAL via importActual --
+// es pura, sin Prisma): esta prueba es de la RUTA (parseo de payload,
+// mapeo de errores a status HTTP, que empresaId/usuarioId/rol SIEMPRE
+// salgan de la sesion y nunca del payload, y -- Incremento 5 PR1 -- el
+// limite de tasa antes del dispatcher), no del dispatcher en si (eso lo
+// cubre infra/queries/__tests__/ejecutarConsultaPermitida.test.ts) ni
+// de registrarIntento() en si (eso ya esta documentado como prueba de
+// integracion pendiente, ver infra/rateLimit/__tests__/huella.test.ts).
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 const requireSessionMock = vi.fn();
 vi.mock("@/infra/auth/session", () => ({ requireSession: (...args: unknown[]) => requireSessionMock(...args) }));
@@ -19,6 +22,16 @@ vi.mock("@/infra/auth/session", () => ({ requireSession: (...args: unknown[]) =>
 // esta mockeado abajo y nunca llega a usar tenantClient real.
 vi.mock("@/infra/prisma/tenantClient", () => ({ tenantClient: vi.fn() }));
 
+// Incremento 5 PR1 -- route.ts ahora tambien importa
+// @/infra/prisma/client (el singleton SIN tenant que usa registrarIntento)
+// directamente. Mismo motivo que el mock de tenantClient arriba: ese
+// modulo construye `new PrismaClient({ adapter })` a nivel de modulo, y
+// "prisma generate" sigue bloqueado en este entorno -- se mockea para
+// que import("../route") nunca intente construir un cliente real. El
+// objeto en si nunca se usa de verdad: registrarIntento (mockeado abajo)
+// nunca llega a tocarlo.
+vi.mock("@/infra/prisma/client", () => ({ prisma: {} }));
+
 const ejecutarConsultaPermitidaMock = vi.fn();
 vi.mock("@/infra/queries/ejecutarConsultaPermitida", async () => {
   const actual = await vi.importActual<typeof import("@/infra/queries/ejecutarConsultaPermitida")>("@/infra/queries/ejecutarConsultaPermitida");
@@ -27,6 +40,31 @@ vi.mock("@/infra/queries/ejecutarConsultaPermitida", async () => {
     ejecutarConsultaPermitida: (...args: unknown[]) => ejecutarConsultaPermitidaMock(...args),
   };
 });
+
+// Incremento 5 PR1 -- registrarIntento() mockeado (ver el comentario de
+// huella.test.ts: necesita Postgres real, no se puede ejercitar aca).
+// hashHuellaOrigen/codificarHuellaConsultaAutenticada/
+// calcularSegundosHastaProximoIntentoPermitido/LIMITE_CONSULTA_EJECUTAR corren REALES
+// via importActual -- son puros (ya probados por separado en
+// huella.test.ts) y esta prueba quiere verificar el ENSAMBLADO real de
+// route.ts con ellos (p.ej. que el Retry-After que llega en la
+// respuesta HTTP sea el que esos mismos puros calculan).
+const registrarIntentoMock = vi.fn();
+vi.mock("@/infra/rateLimit/limiteTasa", async () => {
+  const actual = await vi.importActual<typeof import("@/infra/rateLimit/limiteTasa")>("@/infra/rateLimit/limiteTasa");
+  return {
+    ...actual,
+    registrarIntento: (...args: unknown[]) => registrarIntentoMock(...args),
+  };
+});
+
+// Incremento 5 PR1 -- se mockea para poder verificar, sin tocar stdout,
+// que el camino de rate-limit nunca pasa el error crudo ni ningun dato
+// de tenant/usuario al logger (ver eventoConsultaRateLimit.ts).
+const registrarEventoRateLimitConsultaMock = vi.fn();
+vi.mock("@/infra/rateLimit/eventoConsultaRateLimit", () => ({
+  registrarEventoRateLimitConsulta: (...args: unknown[]) => registrarEventoRateLimitConsultaMock(...args),
+}));
 
 const SESION_ADMIN = { usuarioId: "u1", empresaId: "e1", rol: "ADMINISTRADOR", email: "a@b.com", nombre: null, eslabonId: null };
 const PAYLOAD_SIN_PERIODO = { catalogoId: "DEPENDENCIA_CRITICA", cadenaId: "cadena-1" };
@@ -38,7 +76,19 @@ function construirRequest(body: unknown): Request {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  process.env.HUELLA_ORIGEN_SALT = "salto-pruebas-no-real";
   requireSessionMock.mockResolvedValue({ sesion: SESION_ADMIN });
+  // Por defecto, permitido (la mayoria de los tests existentes no son
+  // sobre el limite de tasa en si) -- buckets vacio porque ninguna de
+  // esas pruebas necesita calcular un Retry-After real.
+  registrarIntentoMock.mockResolvedValue({ contador: 1, permitido: true, buckets: [] });
+});
+
+afterEach(() => {
+  // Red de seguridad -- cualquier test que haya usado
+  // vi.useFakeTimers() vuelve a reloj real, sin importar si el test
+  // termino en assert exitoso o lanzo antes de su propio cleanup.
+  vi.useRealTimers();
 });
 
 describe("POST /ejecutar -- autenticacion", () => {
@@ -161,5 +211,207 @@ describe("POST /ejecutar -- mapeo de errores del dispatcher a status HTTP", () =
     const respuesta = await POST(construirRequest(PAYLOAD_CON_PERIODO));
     expect(respuesta.status).toBe(200);
     expect(await respuesta.json()).toEqual(respuestaOk);
+  });
+});
+
+
+describe("POST /ejecutar -- limite de tasa (Incremento 5 PR1, antes del dispatcher)", () => {
+  it("permitido -- SI llama al dispatcher (el camino feliz no se rompe) y registra el evento PERMITIDA saneado", async () => {
+    registrarIntentoMock.mockResolvedValue({ contador: 3, permitido: true, buckets: [] });
+    ejecutarConsultaPermitidaMock.mockResolvedValue({ ok: false, error: "CADENA_INEXISTENTE" });
+    const { POST } = await import("../route");
+    await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+
+    expect(ejecutarConsultaPermitidaMock).toHaveBeenCalledTimes(1);
+    expect(registrarEventoRateLimitConsultaMock).toHaveBeenCalledWith(
+      "CONSULTA_RATE_LIMIT_PERMITIDA",
+      expect.objectContaining({ contador: 3, catalogoId: "DEPENDENCIA_CRITICA" }),
+    );
+  });
+
+  it("no permitido -- 429 LIMITE_TASA_EXCEDIDO con Retry-After EXACTO para este fixture (header Y body, con reloj fijado via fake timers)", async () => {
+    // Fake timers (ronda 2 de revision, Alex 2026-11-18: "usar fake
+    // timers/system time; construir buckets relativos al reloj
+    // fijado; comprobar un valor EXACTO y mayor que cero") -- el
+    // "ahora" de route.ts (new Date() interno, no mockeado) queda
+    // fijo en 15:00:00Z, asi que el bucket de 14:45 (truncado a 15
+    // min) expira de la ventana de 60 min exactamente a las 15:45Z --
+    // faltan 45 min = 2700s, un numero EXACTO y verificable a mano, no
+    // solo "mayor que 0". "EXACTO" aca es exacto PARA ESTE FIXTURE --
+    // reloj fijado con fake timers y sin ninguna solicitud concurrente
+    // durante la prueba (ver el docstring de
+    // calcularSegundosHastaProximoIntentoPermitido() en huella.ts: el
+    // valor deja de ser exacto si llega una solicitud adicional
+    // mientras se espera, algo que este test, por diseno, no simula).
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-16T15:00:00.000Z"));
+
+    const ventanaInicio = new Date("2026-09-16T14:45:00.000Z");
+    registrarIntentoMock.mockResolvedValue({ contador: 31, permitido: false, buckets: [{ ventanaInicio, contador: 31 }] });
+    const { POST } = await import("../route");
+    const respuesta = await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+
+    expect(respuesta.status).toBe(429);
+    const cuerpo = await respuesta.json();
+    expect(cuerpo).toEqual({ ok: false, error: "LIMITE_TASA_EXCEDIDO", retryAfterSegundos: 2700 });
+    // Igualdad EXACTA entre el header Retry-After y el campo del body
+    // -- nunca "ambos son numeros", el mismo valor literal en los dos.
+    expect(respuesta.headers.get("Retry-After")).toBe("2700");
+    expect(Number(respuesta.headers.get("Retry-After"))).toBe(cuerpo.retryAfterSegundos);
+    expect(ejecutarConsultaPermitidaMock).not.toHaveBeenCalled();
+  });
+
+  it("no permitido -- frontera: el bucket MAS VIEJO expira pero quitarlo solo no alcanza (sigue excedido) -- el Retry-After lo fija el SIGUIENTE bucket mas viejo, con reloj fijado", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-16T14:50:00.000Z"));
+
+    const { LIMITE_CONSULTA_EJECUTAR } = await import("@/infra/rateLimit/limiteTasa");
+    // Total 45 (10+15+20), limite 30. Quitar el mas viejo (13:45, 10)
+    // deja 35 -- TODAVIA excedido (35 > 30), no alcanza con ese solo.
+    // Quitar el segundo mas viejo (14:00, 15) deja 20 <= 30 -- recien
+    // ahi queda permitido, asi que el Retry-After depende de CUANDO
+    // expira el bucket de las 14:00 (14:00 + 60min = 15:00Z), nunca del
+    // de las 13:45 ni del de las 14:45. Desde las 14:50Z faltan 10min = 600s.
+    registrarIntentoMock.mockResolvedValue({
+      contador: 45,
+      permitido: false,
+      buckets: [
+        { ventanaInicio: new Date("2026-09-16T13:45:00.000Z"), contador: 10 },
+        { ventanaInicio: new Date("2026-09-16T14:00:00.000Z"), contador: 15 },
+        { ventanaInicio: new Date("2026-09-16T14:45:00.000Z"), contador: 20 },
+      ],
+    });
+    expect(LIMITE_CONSULTA_EJECUTAR).toBe(30); // aserta la premisa del calculo a mano de arriba
+
+    const { POST } = await import("../route");
+    const respuesta = await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+
+    expect(respuesta.status).toBe(429);
+    const cuerpo = await respuesta.json();
+    expect(cuerpo.retryAfterSegundos).toBe(600);
+    expect(respuesta.headers.get("Retry-After")).toBe("600");
+  });
+
+  it(
+    "ronda 3 de revision de Alex -- frontera 1 + 30: el bucket MAS VIEJO (1) expira pero quitarlo " +
+      "solo deja EXACTAMENTE el limite (30), insuficiente para el PROXIMO intento -- el Retry-After " +
+      "correcto lo fija el bucket de 30 (no el de 1), con reloj fijado via fake timers",
+    async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-09-16T14:50:00.000Z"));
+
+      const { LIMITE_CONSULTA_EJECUTAR } = await import("@/infra/rateLimit/limiteTasa");
+      expect(LIMITE_CONSULTA_EJECUTAR).toBe(30); // aserta la premisa del calculo a mano de abajo
+
+      // Total 31 (1+30), limite 30. Quitar el mas viejo (14:00, 1) deja
+      // 30 == limite -- PERMITIDO por si solo, pero el PROXIMO intento
+      // (30+1=31) seguiria excediendolo: antes de la correccion de
+      // ronda 3 esto hubiera devuelto el Retry-After del bucket de las
+      // 14:00 (ya expirado para las 14:50, dando 0s -- un segundo 429
+      // inmediato). Con la correccion, hay que esperar tambien al
+      // bucket de 30 (14:45): 14:45 + 60min = 15:45Z, desde las 14:50Z
+      // faltan 55 min = 3300s.
+      registrarIntentoMock.mockResolvedValue({
+        contador: 31,
+        permitido: false,
+        buckets: [
+          { ventanaInicio: new Date("2026-09-16T14:00:00.000Z"), contador: 1 },
+          { ventanaInicio: new Date("2026-09-16T14:45:00.000Z"), contador: 30 },
+        ],
+      });
+
+      const { POST } = await import("../route");
+      const respuesta = await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+
+      expect(respuesta.status).toBe(429);
+      const cuerpo = await respuesta.json();
+      expect(cuerpo.retryAfterSegundos).toBe(3300);
+      expect(respuesta.headers.get("Retry-After")).toBe("3300");
+      expect(Number(respuesta.headers.get("Retry-After"))).toBe(cuerpo.retryAfterSegundos);
+    },
+  );
+
+  it("no permitido -- registra el evento RECHAZADA saneado (nunca con cadenaId/empresaId/usuarioId/body/huella)", async () => {
+    registrarIntentoMock.mockResolvedValue({
+      contador: 31,
+      permitido: false,
+      buckets: [{ ventanaInicio: new Date("2026-09-16T14:45:00.000Z"), contador: 31 }],
+    });
+    const { POST } = await import("../route");
+    await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+
+    expect(registrarEventoRateLimitConsultaMock).toHaveBeenCalledTimes(1);
+    const [codigo, detalle] = registrarEventoRateLimitConsultaMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(codigo).toBe("CONSULTA_RATE_LIMIT_RECHAZADA");
+    expect(Object.keys(detalle).sort()).toEqual(["catalogoId", "contador"]);
+    expect(detalle.catalogoId).toBe("DEPENDENCIA_CRITICA");
+    expect(detalle.contador).toBe(31);
+  });
+
+  it("registrarIntento falla (infraestructura) -- 503 SERVICIO_NO_DISPONIBLE, nunca llama al dispatcher, nunca expone el error crudo", async () => {
+    registrarIntentoMock.mockRejectedValue(new Error("connection string invalida: postgres://user:secreto@host/db"));
+    const { POST } = await import("../route");
+    const respuesta = await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+
+    expect(respuesta.status).toBe(503);
+    expect(await respuesta.json()).toEqual({ ok: false, error: "SERVICIO_NO_DISPONIBLE" });
+    expect(ejecutarConsultaPermitidaMock).not.toHaveBeenCalled();
+  });
+
+  it("registrarIntento falla -- registra el evento INFRAESTRUCTURA sin ningun dato del error ni del contexto (nunca message/stack/cadenaId/empresaId/usuarioId/huella)", async () => {
+    registrarIntentoMock.mockRejectedValue(new Error("connection string invalida: postgres://user:secreto@host/db"));
+    const { POST } = await import("../route");
+    await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+
+    expect(registrarEventoRateLimitConsultaMock).toHaveBeenCalledTimes(1);
+    const [codigo, detalle] = registrarEventoRateLimitConsultaMock.mock.calls[0] as [string, Record<string, unknown> | undefined];
+    expect(codigo).toBe("CONSULTA_RATE_LIMIT_INFRAESTRUCTURA");
+    expect(detalle ?? {}).toEqual({});
+  });
+
+  it("el limite se evalua DESPUES de validar el payload -- un payload invalido nunca llama a registrarIntento ni gasta cupo", async () => {
+    const { POST } = await import("../route");
+    await POST(construirRequest({ cadenaId: "cadena-1" })); // falta catalogoId -> DATOS_INVALIDOS
+    expect(registrarIntentoMock).not.toHaveBeenCalled();
+  });
+
+  it("empresaId/usuarioId de la sesion SIEMPRE determinan la huella (nunca el payload) -- dos sesiones distintas producen huellas distintas", async () => {
+    const { POST } = await import("../route");
+
+    requireSessionMock.mockResolvedValue({ sesion: { ...SESION_ADMIN, empresaId: "empresa-A", usuarioId: "usuario-A" } });
+    await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+    const [huellaA] = registrarIntentoMock.mock.calls[0] as [string];
+
+    registrarIntentoMock.mockClear();
+    requireSessionMock.mockResolvedValue({ sesion: { ...SESION_ADMIN, empresaId: "empresa-B", usuarioId: "usuario-B" } });
+    await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+    const [huellaB] = registrarIntentoMock.mock.calls[0] as [string];
+
+    expect(huellaA).toMatch(/^[0-9a-f]{64}$/); // sha256 hex -- nunca el empresaId/usuarioId en claro
+    expect(huellaB).toMatch(/^[0-9a-f]{64}$/);
+    expect(huellaA).not.toBe(huellaB);
+  });
+
+  it("la misma sesion produce siempre la misma huella (determinista, para que el conteo acumule entre requests)", async () => {
+    const { POST } = await import("../route");
+    await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+    const [huella1] = registrarIntentoMock.mock.calls[0] as [string];
+
+    registrarIntentoMock.mockClear();
+    await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+    const [huella2] = registrarIntentoMock.mock.calls[0] as [string];
+
+    expect(huella1).toBe(huella2);
+  });
+
+  it("usa el bucket CONSULTA_EJECUTAR y el limite LIMITE_CONSULTA_EJECUTAR (no reutiliza un bucket de otra pregunta/ruta)", async () => {
+    const { POST } = await import("../route");
+    const { LIMITE_CONSULTA_EJECUTAR } = await import("@/infra/rateLimit/limiteTasa");
+    await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+
+    expect(registrarIntentoMock).toHaveBeenCalledTimes(1);
+    const [, bucket, limite] = registrarIntentoMock.mock.calls[0] as [string, string, number];
+    expect(bucket).toBe("CONSULTA_EJECUTAR");
+    expect(limite).toBe(LIMITE_CONSULTA_EJECUTAR);
   });
 });

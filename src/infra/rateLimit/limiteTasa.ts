@@ -23,18 +23,38 @@ export {
   BUCKET_MINUTOS_LIMITE_TASA,
   VENTANA_MINUTOS_LIMITE_TASA,
   BUCKETS_POR_VENTANA_LIMITE_TASA,
+  // Incremento 5 PR1 -- idem (ver huella.ts): se reexportan aca para que
+  // route.ts importe todo del rate limiter desde un solo modulo, mismo
+  // criterio que el resto de esta lista.
+  LIMITE_CONSULTA_EJECUTAR,
+  codificarHuellaConsultaAutenticada,
+  calcularSegundosHastaProximoIntentoPermitido,
+  type BucketConteo,
 } from "./huella";
 import { truncarVentanaBucket, BUCKET_MINUTOS_LIMITE_TASA, BUCKETS_POR_VENTANA_LIMITE_TASA } from "./huella";
+import type { BucketConteo } from "./huella";
 
 export type BucketLimiteTasa =
   | "INICIO_EVALUACION"
   | "DESBLOQUEO_DETALLE"
   | "LOGIN_PLATAFORMA"
-  | "VERIFICACION_MFA_PLATAFORMA";
+  | "VERIFICACION_MFA_PLATAFORMA"
+  | "CONSULTA_EJECUTAR";
 
 export interface ResultadoLimiteTasa {
   contador: number;
   permitido: boolean;
+  // Incremento 5 PR1 -- desglose por bucket de la ventana deslizante
+  // vigente (ventanaInicio+contador de cada fila sumada), agregado para
+  // que quien llama pueda calcular, con
+  // calcularSegundosHastaProximoIntentoPermitido() (huella.ts) cuando !permitido,
+  // el Retry-After calculado para el PROXIMO intento -- exacto bajo el
+  // supuesto de que no se registren solicitudes adicionales durante la
+  // espera (ver el docstring de esa funcion en huella.ts). Los 4
+  // llamadores existentes (evaluations, unlock, login, mfa) solo
+  // destructuran .contador/.permitido -- agregar este campo no les
+  // rompe nada.
+  buckets: BucketConteo[];
 }
 
 /**
@@ -81,18 +101,34 @@ export async function registrarIntento(
   const inicioVentanaDeslizante = new Date(
     ventanaInicio.getTime() - (ventanaEnBuckets - 1) * BUCKET_MINUTOS_LIMITE_TASA * 60_000,
   );
-  const filas = await prisma.$queryRaw<{ total: bigint | number | null }[]>`
-    SELECT COALESCE(SUM("contador"), 0) AS total
+  // Incremento 5 PR1 -- antes esta consulta hacia SELECT SUM("contador")
+  // (un solo numero agregado). Se cambia a traer las filas crudas
+  // (ventanaInicio + contador de cada bucket, sin agregar en SQL) porque
+  // calcularSegundosHastaProximoIntentoPermitido() (huella.ts) necesita el desglose
+  // POR bucket para calcular el Retry-After del PROXIMO intento -- exacto
+  // bajo el supuesto de que no se registren solicitudes adicionales
+  // durante la espera (ver el docstring de esa funcion) -- sumar en JS en
+  // vez de en SQL no cambia el total que se devuelve en `contador` (sigue
+  // siendo la misma suma), asi que esto es compatible con los 4
+  // llamadores existentes que ya usaban ese campo.
+  const filas = await prisma.$queryRaw<{ ventanaInicio: Date; contador: number }[]>`
+    SELECT "ventanaInicio", "contador"
     FROM "limite_tasa"
     WHERE "huellaOrigenHash" = ${huellaOrigenHash}
       AND "bucket" = ${bucket}::"BucketLimiteTasa"
       AND "ventanaInicio" >= ${inicioVentanaDeslizante}
       AND "ventanaInicio" <= ${ventanaInicio}
   `;
-  // SUM() de una columna INTEGER vuelve BIGINT en Postgres -- el driver
-  // "pg" lo entrega como string para no perder precision fuera del rango
-  // seguro de Number; Number() alcanza aca porque el volumen real de
-  // intentos por huella nunca se acerca a ese limite.
-  const contador = Number(filas[0]?.total ?? 0);
-  return { contador, permitido: contador <= limite };
+  // A diferencia del SUM() agregado que esta consulta devolvia antes
+  // (que Postgres promueve a BIGINT, entregado como string por el
+  // driver "pg" para no perder precision), "contador" aca es la columna
+  // INTEGER cruda de cada fila -- el driver la entrega ya como number;
+  // Number() se mantiene solo como resguardo defensivo, no porque se
+  // espere un string.
+  const buckets: BucketConteo[] = filas.map((fila: { ventanaInicio: Date; contador: number }) => ({
+    ventanaInicio: new Date(fila.ventanaInicio),
+    contador: Number(fila.contador),
+  }));
+  const contador = buckets.reduce((suma, b) => suma + b.contador, 0);
+  return { contador, permitido: contador <= limite, buckets };
 }

@@ -57,9 +57,25 @@ const MENSAJE_ERROR: Record<string, string> = {
   ERROR_RED: "No se pudo conectar -- revisá tu conexión e intentá de nuevo.",
   ERROR_INTERNO: "Ocurrió un error inesperado -- intentá de nuevo en un momento.",
   CUERPO_INVALIDO: "La solicitud no tiene un formato válido -- recargá la página e intentá de nuevo.",
+  // Incremento 5 PR1 -- limite de tasa (ver route.ts). Mensaje generico
+  // a proposito, nunca expone el contador real ni el huella: solo
+  // informa que hay que esperar.
+  LIMITE_TASA_EXCEDIDO: "Hiciste demasiadas consultas en poco tiempo -- esperá un momento antes de volver a intentar.",
+  SERVICIO_NO_DISPONIBLE: "El servicio no está disponible en este momento -- intentá de nuevo en un momento.",
 };
 
 const INESPERADO = "Ocurrió un error inesperado -- intentá de nuevo en un momento.";
+
+/** Pura -- codigos de error para los que ConsultasPanel.tsx muestra un
+ * boton "Reintentar" ademas del mensaje (Incremento 5 PR1, a pedido
+ * explicito de Alex: ambos son fallas transitorias de infraestructura
+ * o de ritmo, no errores de formulario -- a diferencia de, por ejemplo,
+ * PERIODO_INVALIDO, donde reintentar sin cambiar el periodo fallaria
+ * igual). Separada y exportada para poder probarla sin renderizar el
+ * componente (mismo criterio que construirMensajeError). */
+export function debeMostrarReintentar(codigo: string | undefined): boolean {
+  return codigo === "LIMITE_TASA_EXCEDIDO" || codigo === "SERVICIO_NO_DISPONIBLE";
+}
 
 /** Pura -- aislada y probada por separado (mismo criterio que
  * DeclaracionOtifWizard.tsx: el repositorio no tiene infraestructura
@@ -86,12 +102,18 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
   const [periodoFin, setPeriodoFin] = useState("");
   const [estado, setEstado] = useState<"idle" | "cargando" | "error" | "resultado">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [codigoError, setCodigoError] = useState<string | undefined>(undefined);
   const [resultado, setResultado] = useState<RespuestaEjecutarOk | RespuestaEjecutarSinDatos | null>(null);
 
   const metadatosSeleccionados = useMemo(() => catalogo.find((m) => m.id === catalogoId) ?? null, [catalogo, catalogoId]);
 
-  async function handleSubmit(evento: FormEvent<HTMLFormElement>) {
-    evento.preventDefault();
+  // Extraido de handleSubmit (Incremento 5 PR1) para que el boton
+  // "Reintentar" pueda disparar la misma llamada sin pasar por un
+  // FormEvent sintetico -- el formulario SIEMPRE conserva su seleccion
+  // (catalogoId/cadenaId/periodoInicio/periodoFin viven en useState y
+  // nunca se resetean aca, con error o sin error), asi que reintentar
+  // repite la misma consulta tal cual quedo armada.
+  async function ejecutarConsulta() {
     if (!catalogoId || !cadenaId) return;
     if (metadatosSeleccionados?.requierePeriodo && (!periodoInicio || !periodoFin)) {
       setEstado("error");
@@ -118,11 +140,18 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
     if (!respuesta.ok && respuesta.error !== "SIN_DATOS_SUFICIENTES") {
       setEstado("error");
       setError(construirMensajeError(respuesta.error));
+      setCodigoError(respuesta.error);
       return;
     }
 
+    setCodigoError(undefined);
     setResultado(respuesta as RespuestaEjecutarOk | RespuestaEjecutarSinDatos);
     setEstado("resultado");
+  }
+
+  async function handleSubmit(evento: FormEvent<HTMLFormElement>) {
+    evento.preventDefault();
+    await ejecutarConsulta();
   }
 
   return (
@@ -199,7 +228,22 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
       </form>
 
       <div aria-live="polite" className="flex flex-col gap-4">
-        {estado === "error" && error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {estado === "error" && error ? (
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm text-red-600">{error}</p>
+            {debeMostrarReintentar(codigoError) ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void ejecutarConsulta();
+                }}
+                className="rounded border border-red-300 px-3 py-1 text-sm text-red-700"
+              >
+                Reintentar
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {estado === "resultado" && resultado && !resultado.ok ? (
           <div className="flex flex-col gap-2 rounded border border-amber-300 bg-amber-50 p-4 text-sm">

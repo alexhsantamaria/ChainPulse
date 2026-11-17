@@ -86,6 +86,7 @@ enum BucketLimiteTasa {
   CONFIRMAR_DERECHOS // RF24 -- idem
   LOGIN_PLATAFORMA
   VERIFICACION_MFA_PLATAFORMA
+  CONSULTA_EJECUTAR // Incremento 5 PR1 -- ALTER TYPE ADD VALUE aislado en su propia migracion, ver prisma/migrations/20261117100000_incremento5_pr1_enum_bucket_consulta_ejecutar (limite piloto LIMITE_CONSULTA_EJECUTAR en src/infra/rateLimit/huella.ts)
 }
 
 // RF3, engine v1 (src/engine/criticidad.ts): nivel categorico del impacto
