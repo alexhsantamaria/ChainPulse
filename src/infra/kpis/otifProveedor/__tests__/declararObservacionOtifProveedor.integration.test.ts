@@ -103,9 +103,11 @@ describe("identidad SIN `fuente` -- reconfirmar desde otra fuente actualiza la M
     const cliente = tenantClient(f.empresaId);
     const filas = await cliente.observacionOtifProveedor.findMany({ where: { cadenaId: f.cadenaId, proveedorAliasClave: "proveedor a" } });
     expect(filas).toHaveLength(1);
-    expect(filas[0].fuente).toBe("pegado");
-    expect(filas[0].valor).toBeCloseTo(1);
-    expect(filas[0].updatedAt.getTime()).toBeGreaterThanOrEqual(filas[0].createdAt.getTime());
+    const [filaPersistida] = filas;
+    if (!filaPersistida) throw new Error("deberia existir exactamente 1 fila persistida");
+    expect(filaPersistida.fuente).toBe("pegado");
+    expect(filaPersistida.valor).toBeCloseTo(1);
+    expect(filaPersistida.updatedAt.getTime()).toBeGreaterThanOrEqual(filaPersistida.createdAt.getTime());
   });
 });
 
@@ -128,7 +130,9 @@ describe("RF-K2 analogo -- idempotencia por upsert dentro de la MISMA fuente", (
     const cliente = tenantClient(f.empresaId);
     const filas = await cliente.observacionOtifProveedor.findMany({ where: { cadenaId: f.cadenaId, fuente: "manual" } });
     expect(filas).toHaveLength(1);
-    expect(filas[0].valor).toBeCloseTo(0.95);
+    const [filaPersistida] = filas;
+    if (!filaPersistida) throw new Error("deberia existir exactamente 1 fila persistida");
+    expect(filaPersistida.valor).toBeCloseTo(0.95);
   });
 });
 
