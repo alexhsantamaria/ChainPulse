@@ -10,6 +10,14 @@
 // esa verificacion sigue siendo responsabilidad exclusiva de
 // concurrenciaConsultaEjecutar.integration.test.ts, contra Postgres real
 // (preparada en esta misma ronda, NO ejecutada todavia).
+//
+// Incluye ademas (ronda de revision de Alex, 2026-11-18, correccion de
+// TS18048) el caso defensivo en que el RETURNING del UPSERT no devuelve
+// ninguna fila -- nunca deberia ocurrir en la practica (ver el comentario
+// de registrarIntento() en limiteTasa.ts), pero la funcion lo valida
+// explicitamente en runtime (nunca con una aserción no nula `!`), y esta
+// prueba confirma que ese camino lanza un error descriptivo en vez de
+// propagar un TypeError críptico por leer ".contador" de undefined.
 import { describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { registrarIntento } from "../limiteTasa";
@@ -19,7 +27,12 @@ interface LlamadaRegistrada {
 }
 
 function crearPrismaMock(
-  filaReturning: { contador: number },
+  // `null` simula el RETURNING sin ninguna fila (arreglo vacio) -- el
+  // caso defensivo que agrega esta ronda (ver mas abajo). En la
+  // practica esto nunca deberia pasar contra Postgres real (ver el
+  // comentario de registrarIntento()), pero el mock necesita poder
+  // producirlo para probar la validacion explicita.
+  filaReturning: { contador: number } | null,
   filasAnteriores: { ventanaInicio: Date; contador: number }[],
 ) {
   const llamadas: LlamadaRegistrada[] = [];
@@ -31,7 +44,7 @@ function crearPrismaMock(
     // distingue de la segunda (SELECT de buckets anteriores) por
     // contener "RETURNING", que nunca aparece en la segunda.
     if (texto.includes("RETURNING")) {
-      return [filaReturning];
+      return filaReturning === null ? [] : [filaReturning];
     }
     return filasAnteriores;
   });
@@ -128,6 +141,28 @@ describe("registrarIntento() -- forma de la sentencia (mock, sin Postgres real)"
       expect(resultadoA.permitido).toBe(true);
       expect(resultadoB.contador).toBe(31);
       expect(resultadoB.permitido).toBe(false);
+    },
+  );
+
+  it(
+    "ronda de revision de Alex, 2026-11-18 (correccion de TS18048) -- " +
+      "si el RETURNING del UPSERT no devuelve ninguna fila (caso que " +
+      "nunca deberia ocurrir contra Postgres real), registrarIntento() " +
+      "lanza un error EXPLICITO y descriptivo -- nunca una aserción no " +
+      "nula (`!`) que fallaria de forma críptica (o silenciosa) al leer " +
+      '".contador" de undefined',
+    async () => {
+      const { prisma } = crearPrismaMock(null, []);
+
+      await expect(
+        registrarIntento(
+          "huella-sin-returning",
+          "CONSULTA_EJECUTAR",
+          30,
+          new Date("2026-11-18T10:00:00.000Z"),
+          prisma,
+        ),
+      ).rejects.toThrow(/RETURNING.*no devolvio ninguna fila/);
     },
   );
 });

@@ -149,6 +149,28 @@ export async function registrarIntento(
     DO UPDATE SET "contador" = "limite_tasa"."contador" + 1
     RETURNING "contador"
   `;
+  // Defensivo en RUNTIME, no solo para satisfacer a TypeScript (TS18048:
+  // "filaActual" es posiblemente undefined porque $queryRaw tipa el
+  // resultado como un arreglo, y destructurar su primer elemento nunca
+  // es, para TypeScript, una garantia de que exista). Un INSERT ... ON
+  // CONFLICT ... DO UPDATE ... RETURNING SIEMPRE afecta y devuelve
+  // EXACTAMENTE una fila (inserta una si no habia conflicto, actualiza
+  // la unica fila en conflicto si lo habia) -- un arreglo vacio aca
+  // significaria que Postgres o el driver "pg" se comportaron de una
+  // forma que contradice la semantica documentada de esa sentencia,
+  // NUNCA un resultado de negocio valido (como "todavia sin intentos").
+  // Se valida explicitamente y se lanza un error descriptivo, en vez de
+  // una aserción no nula (`!`) que silenciaria el caso sin dejar rastro
+  // si alguna vez llegara a ocurrir.
+  if (filaActual === undefined) {
+    throw new Error(
+      `registrarIntento(): el RETURNING del UPSERT de "limite_tasa" no devolvio ninguna fila ` +
+        `(huella=${huellaOrigenHash}, bucket=${bucket}, ventanaInicio=${ventanaInicio.toISOString()}) ` +
+        `-- un INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING siempre deberia devolver ` +
+        `exactamente 1 fila; esto indica un problema de infraestructura (Postgres o el driver "pg"), ` +
+        `nunca un resultado de negocio valido.`,
+    );
+  }
   // Mismo resguardo defensivo que antes (ver mas abajo): el driver "pg"
   // ya entrega la columna INTEGER como number; Number() no es por un
   // string esperado, es defensivo.
