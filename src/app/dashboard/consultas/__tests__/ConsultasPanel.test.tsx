@@ -191,4 +191,56 @@ describe("ConsultasPanel -- botón Reintentar (render real, jsdom)", () => {
     await waitFor(() => expect(screen.getByText(/período no es válido/i)).toBeTruthy());
     expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
   });
+
+  it(
+    "ronda de revision de Alex, 2026-11-17 -- secuencia 429 -> cambio de selección (período) -> " +
+      "PERIODO_REQUERIDO: el codigoError del 429 anterior NO debe sobrevivir al cambio de campo, " +
+      "asi que el error de validación local NUNCA muestra 'Reintentar'",
+    async () => {
+      fetchJsonSeguroMock.mockResolvedValueOnce({ ok: false, error: "LIMITE_TASA_EXCEDIDO", retryAfterSegundos: 30 });
+
+      const usuario = await renderYcompletarFormulario();
+      await usuario.click(screen.getByRole("button", { name: "Consultar" }));
+
+      // 429 -- mensaje + botón Reintentar, como en la primera prueba de este archivo.
+      await waitFor(() => expect(screen.getByText(/demasiadas consultas/i)).toBeTruthy());
+      expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
+
+      // Cambio de selección -- se vacía el período (uno de los 3 campos:
+      // pregunta/cadena/período) SIN volver a enviar el formulario. Por
+      // si solo, este cambio ya debe limpiar el error y el codigoError
+      // del 429 anterior (limpiarErrorDeIntentoAnterior() en
+      // ConsultasPanel.tsx) -- el mensaje y el botón Reintentar
+      // desaparecen de inmediato, antes de cualquier nuevo submit.
+      fireEvent.change(screen.getByLabelText(/Período -- fin/), { target: { value: "" } });
+      expect(screen.queryByText(/demasiadas consultas/i)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+
+      // Nuevo submit con el período incompleto -- cae en la validación
+      // LOCAL (PERIODO_REQUERIDO), que nunca llega a llamar a
+      // fetchJsonSeguro(). Se dispara con fireEvent.submit() sobre el
+      // <form> en vez de usuario.click() en el botón: un input
+      // type="date" required="" vacío hace que jsdom (igual que un
+      // navegador real) bloquee el submit NATIVO antes de que React
+      // llegue a correr handleSubmit, lo cual impediría ejercitar la
+      // rama propia de ConsultasPanel.tsx que es justamente lo que esta
+      // prueba verifica. fireEvent.submit() dispara el evento "submit"
+      // directamente, sin pasar por la validacion de restricciones del
+      // navegador -- el mismo camino que seguiria, por ejemplo, un
+      // "Reintentar" que invoca ejecutarConsulta() de forma directa. Si
+      // codigoError hubiera quedado pegado en "LIMITE_TASA_EXCEDIDO"
+      // (el bug que esto corrige), debeMostrarReintentar() habria
+      // mostrado "Reintentar" aca, incorrectamente, para un error que
+      // ni siquiera llego a la ruta.
+      const formulario = screen.getByRole("button", { name: "Consultar" }).closest("form");
+      if (!formulario) throw new Error("no se encontro el <form> -- revisar el markup de ConsultasPanel");
+      fireEvent.submit(formulario);
+      await waitFor(() => expect(screen.getByText(/necesita un período/i)).toBeTruthy());
+      expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+
+      // Confirmación adicional: la validación local nunca golpeó la red
+      // -- sigue habiendo una sola llamada (la del 429 inicial).
+      expect(fetchJsonSeguroMock).toHaveBeenCalledTimes(1);
+    },
+  );
 });

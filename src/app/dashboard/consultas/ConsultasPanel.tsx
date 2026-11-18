@@ -107,6 +107,22 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
 
   const metadatosSeleccionados = useMemo(() => catalogo.find((m) => m.id === catalogoId) ?? null, [catalogo, catalogoId]);
 
+  // Ronda de revision de Alex, 2026-11-17 -- "limpiar codigoError... al
+  // cambiar pregunta, cadena o periodo": un error (y su codigoError) de
+  // un intento anterior no debe sobrevivir a que el usuario cambie
+  // cualquiera de los 3 campos de la consulta -- antes, cambiar cadena
+  // o periodo ni siquiera tocaba error/resultado/estado (solo la
+  // pregunta lo hacia), y NINGUNO de los 3 limpiaba codigoError, asi
+  // que el boton "Reintentar" (que depende de codigoError, no de
+  // error/estado) podia seguir mostrandose para una seleccion nueva que
+  // nunca llego a pedirle nada al servidor.
+  function limpiarErrorDeIntentoAnterior() {
+    setEstado("idle");
+    setResultado(null);
+    setError(null);
+    setCodigoError(undefined);
+  }
+
   // Extraido de handleSubmit (Incremento 5 PR1) para que el boton
   // "Reintentar" pueda disparar la misma llamada sin pasar por un
   // FormEvent sintetico -- el formulario SIEMPRE conserva su seleccion
@@ -116,14 +132,28 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
   async function ejecutarConsulta() {
     if (!catalogoId || !cadenaId) return;
     if (metadatosSeleccionados?.requierePeriodo && (!periodoInicio || !periodoFin)) {
+      // Ronda de revision de Alex, 2026-11-17 ("limpiar codigoError...
+      // ante validaciones locales"): sin esto, un codigoError de un
+      // intento ANTERIOR (p.ej. LIMITE_TASA_EXCEDIDO) quedaba pegado, y
+      // debeMostrarReintentar() seguia leyendo ese valor viejo -- podia
+      // mostrar "Reintentar" para un error que en realidad es de
+      // validacion local (donde reintentar sin cambiar nada vuelve a
+      // fallar igual). Se fija explicitamente al codigo real de ESTE
+      // error, no se deja en lo que haya antes.
       setEstado("error");
       setError(construirMensajeError("PERIODO_REQUERIDO"));
+      setCodigoError("PERIODO_REQUERIDO");
       return;
     }
 
+    // Idem -- "limpiar codigoError al iniciar una ejecucion": aunque en
+    // la practica el camino de exito y el camino de error de ruta ya lo
+    // sobreescriben mas abajo, se limpia aca tambien de forma explicita
+    // y defensiva, en el mismo punto donde se limpian error/resultado.
     setEstado("cargando");
     setError(null);
     setResultado(null);
+    setCodigoError(undefined);
 
     const payload: Record<string, string> = { catalogoId, cadenaId };
     if (metadatosSeleccionados?.requierePeriodo) {
@@ -167,9 +197,7 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
                 checked={catalogoId === metadatos.id}
                 onChange={() => {
                   setCatalogoId(metadatos.id);
-                  setEstado("idle");
-                  setResultado(null);
-                  setError(null);
+                  limpiarErrorDeIntentoAnterior();
                 }}
                 className="mt-1"
               />
@@ -184,7 +212,14 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
 
         <label className="flex flex-col gap-1 text-sm">
           Cadena
-          <select className="rounded border border-slate-300 px-2 py-1" value={cadenaId} onChange={(e) => setCadenaId(e.target.value)}>
+          <select
+            className="rounded border border-slate-300 px-2 py-1"
+            value={cadenaId}
+            onChange={(e) => {
+              setCadenaId(e.target.value);
+              limpiarErrorDeIntentoAnterior();
+            }}
+          >
             {cadenas.map((cadena) => (
               <option key={cadena.id} value={cadena.id}>
                 {cadena.nombre}
@@ -201,7 +236,10 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
                 type="date"
                 className="rounded border border-slate-300 px-2 py-1"
                 value={periodoInicio}
-                onChange={(e) => setPeriodoInicio(e.target.value)}
+                onChange={(e) => {
+                  setPeriodoInicio(e.target.value);
+                  limpiarErrorDeIntentoAnterior();
+                }}
                 required
               />
             </label>
@@ -211,7 +249,10 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
                 type="date"
                 className="rounded border border-slate-300 px-2 py-1"
                 value={periodoFin}
-                onChange={(e) => setPeriodoFin(e.target.value)}
+                onChange={(e) => {
+                  setPeriodoFin(e.target.value);
+                  limpiarErrorDeIntentoAnterior();
+                }}
                 required
               />
             </label>
