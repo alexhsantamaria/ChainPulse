@@ -57,9 +57,25 @@ const MENSAJE_ERROR: Record<string, string> = {
   ERROR_RED: "No se pudo conectar -- revisá tu conexión e intentá de nuevo.",
   ERROR_INTERNO: "Ocurrió un error inesperado -- intentá de nuevo en un momento.",
   CUERPO_INVALIDO: "La solicitud no tiene un formato válido -- recargá la página e intentá de nuevo.",
+  // Incremento 5 PR1 -- limite de tasa (ver route.ts). Mensaje generico
+  // a proposito, nunca expone el contador real ni el huella: solo
+  // informa que hay que esperar.
+  LIMITE_TASA_EXCEDIDO: "Hiciste demasiadas consultas en poco tiempo -- esperá un momento antes de volver a intentar.",
+  SERVICIO_NO_DISPONIBLE: "El servicio no está disponible en este momento -- intentá de nuevo en un momento.",
 };
 
 const INESPERADO = "Ocurrió un error inesperado -- intentá de nuevo en un momento.";
+
+/** Pura -- codigos de error para los que ConsultasPanel.tsx muestra un
+ * boton "Reintentar" ademas del mensaje (Incremento 5 PR1, a pedido
+ * explicito de Alex: ambos son fallas transitorias de infraestructura
+ * o de ritmo, no errores de formulario -- a diferencia de, por ejemplo,
+ * PERIODO_INVALIDO, donde reintentar sin cambiar el periodo fallaria
+ * igual). Separada y exportada para poder probarla sin renderizar el
+ * componente (mismo criterio que construirMensajeError). */
+export function debeMostrarReintentar(codigo: string | undefined): boolean {
+  return codigo === "LIMITE_TASA_EXCEDIDO" || codigo === "SERVICIO_NO_DISPONIBLE";
+}
 
 /** Pura -- aislada y probada por separado (mismo criterio que
  * DeclaracionOtifWizard.tsx: el repositorio no tiene infraestructura
@@ -86,22 +102,58 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
   const [periodoFin, setPeriodoFin] = useState("");
   const [estado, setEstado] = useState<"idle" | "cargando" | "error" | "resultado">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [codigoError, setCodigoError] = useState<string | undefined>(undefined);
   const [resultado, setResultado] = useState<RespuestaEjecutarOk | RespuestaEjecutarSinDatos | null>(null);
 
   const metadatosSeleccionados = useMemo(() => catalogo.find((m) => m.id === catalogoId) ?? null, [catalogo, catalogoId]);
 
-  async function handleSubmit(evento: FormEvent<HTMLFormElement>) {
-    evento.preventDefault();
+  // Ronda de revision de Alex, 2026-11-17 -- "limpiar codigoError... al
+  // cambiar pregunta, cadena o periodo": un error (y su codigoError) de
+  // un intento anterior no debe sobrevivir a que el usuario cambie
+  // cualquiera de los 3 campos de la consulta -- antes, cambiar cadena
+  // o periodo ni siquiera tocaba error/resultado/estado (solo la
+  // pregunta lo hacia), y NINGUNO de los 3 limpiaba codigoError, asi
+  // que el boton "Reintentar" (que depende de codigoError, no de
+  // error/estado) podia seguir mostrandose para una seleccion nueva que
+  // nunca llego a pedirle nada al servidor.
+  function limpiarErrorDeIntentoAnterior() {
+    setEstado("idle");
+    setResultado(null);
+    setError(null);
+    setCodigoError(undefined);
+  }
+
+  // Extraido de handleSubmit (Incremento 5 PR1) para que el boton
+  // "Reintentar" pueda disparar la misma llamada sin pasar por un
+  // FormEvent sintetico -- el formulario SIEMPRE conserva su seleccion
+  // (catalogoId/cadenaId/periodoInicio/periodoFin viven en useState y
+  // nunca se resetean aca, con error o sin error), asi que reintentar
+  // repite la misma consulta tal cual quedo armada.
+  async function ejecutarConsulta() {
     if (!catalogoId || !cadenaId) return;
     if (metadatosSeleccionados?.requierePeriodo && (!periodoInicio || !periodoFin)) {
+      // Ronda de revision de Alex, 2026-11-17 ("limpiar codigoError...
+      // ante validaciones locales"): sin esto, un codigoError de un
+      // intento ANTERIOR (p.ej. LIMITE_TASA_EXCEDIDO) quedaba pegado, y
+      // debeMostrarReintentar() seguia leyendo ese valor viejo -- podia
+      // mostrar "Reintentar" para un error que en realidad es de
+      // validacion local (donde reintentar sin cambiar nada vuelve a
+      // fallar igual). Se fija explicitamente al codigo real de ESTE
+      // error, no se deja en lo que haya antes.
       setEstado("error");
       setError(construirMensajeError("PERIODO_REQUERIDO"));
+      setCodigoError("PERIODO_REQUERIDO");
       return;
     }
 
+    // Idem -- "limpiar codigoError al iniciar una ejecucion": aunque en
+    // la practica el camino de exito y el camino de error de ruta ya lo
+    // sobreescriben mas abajo, se limpia aca tambien de forma explicita
+    // y defensiva, en el mismo punto donde se limpian error/resultado.
     setEstado("cargando");
     setError(null);
     setResultado(null);
+    setCodigoError(undefined);
 
     const payload: Record<string, string> = { catalogoId, cadenaId };
     if (metadatosSeleccionados?.requierePeriodo) {
@@ -118,11 +170,18 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
     if (!respuesta.ok && respuesta.error !== "SIN_DATOS_SUFICIENTES") {
       setEstado("error");
       setError(construirMensajeError(respuesta.error));
+      setCodigoError(respuesta.error);
       return;
     }
 
+    setCodigoError(undefined);
     setResultado(respuesta as RespuestaEjecutarOk | RespuestaEjecutarSinDatos);
     setEstado("resultado");
+  }
+
+  async function handleSubmit(evento: FormEvent<HTMLFormElement>) {
+    evento.preventDefault();
+    await ejecutarConsulta();
   }
 
   return (
@@ -138,9 +197,7 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
                 checked={catalogoId === metadatos.id}
                 onChange={() => {
                   setCatalogoId(metadatos.id);
-                  setEstado("idle");
-                  setResultado(null);
-                  setError(null);
+                  limpiarErrorDeIntentoAnterior();
                 }}
                 className="mt-1"
               />
@@ -155,7 +212,14 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
 
         <label className="flex flex-col gap-1 text-sm">
           Cadena
-          <select className="rounded border border-slate-300 px-2 py-1" value={cadenaId} onChange={(e) => setCadenaId(e.target.value)}>
+          <select
+            className="rounded border border-slate-300 px-2 py-1"
+            value={cadenaId}
+            onChange={(e) => {
+              setCadenaId(e.target.value);
+              limpiarErrorDeIntentoAnterior();
+            }}
+          >
             {cadenas.map((cadena) => (
               <option key={cadena.id} value={cadena.id}>
                 {cadena.nombre}
@@ -172,7 +236,10 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
                 type="date"
                 className="rounded border border-slate-300 px-2 py-1"
                 value={periodoInicio}
-                onChange={(e) => setPeriodoInicio(e.target.value)}
+                onChange={(e) => {
+                  setPeriodoInicio(e.target.value);
+                  limpiarErrorDeIntentoAnterior();
+                }}
                 required
               />
             </label>
@@ -182,7 +249,10 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
                 type="date"
                 className="rounded border border-slate-300 px-2 py-1"
                 value={periodoFin}
-                onChange={(e) => setPeriodoFin(e.target.value)}
+                onChange={(e) => {
+                  setPeriodoFin(e.target.value);
+                  limpiarErrorDeIntentoAnterior();
+                }}
                 required
               />
             </label>
@@ -199,7 +269,22 @@ export default function ConsultasPanel({ cadenas, catalogo }: { cadenas: CadenaO
       </form>
 
       <div aria-live="polite" className="flex flex-col gap-4">
-        {estado === "error" && error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {estado === "error" && error ? (
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm text-red-600">{error}</p>
+            {debeMostrarReintentar(codigoError) ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void ejecutarConsulta();
+                }}
+                className="rounded border border-red-300 px-3 py-1 text-sm text-red-700"
+              >
+                Reintentar
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {estado === "resultado" && resultado && !resultado.ok ? (
           <div className="flex flex-col gap-2 rounded border border-amber-300 bg-amber-50 p-4 text-sm">

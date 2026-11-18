@@ -28,7 +28,15 @@ export default defineConfig({
     // prueba de un script de scripts/ en este repo
     // (restablecer-mfa-plataforma-mantenimiento.test.ts) -- sin esto,
     // Vitest nunca la recolectaba (exit code 1, "No test files found").
-    include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
+    // "src/**/*.test.tsx" agregado en Incremento 5 PR1 (ronda 2, Alex,
+    // 2026-11-18): primera prueba de RENDER real de un componente
+    // cliente en este repo (ConsultasPanel.test.tsx, con
+    // @testing-library/react + jsdom) -- sin este patron, Vitest nunca
+    // recolecta un archivo ".test.tsx" (el resto de la suite sigue
+    // siendo ".test.ts"). Es el UNICO cambio de alcance global que pidio
+    // esa correccion -- el entorno jsdom en si se activa por archivo con
+    // el pragma "// @vitest-environment jsdom", no aca.
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "scripts/**/*.test.ts"],
     exclude: ["src/**/*.integration.test.ts", "scripts/**/*.integration.test.ts"],
     coverage: {
       provider: "v8",

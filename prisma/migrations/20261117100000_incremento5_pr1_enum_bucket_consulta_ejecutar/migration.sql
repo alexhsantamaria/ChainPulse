@@ -1,0 +1,62 @@
+-- ChainPulse -- Incremento 5, PR1 (cierre del catalogo de consultas
+-- deterministicas: limite de tasa para POST /api/consultas/ejecutar).
+--
+-- Diseno aprobado por Alex el 2026-11-17 ("Apruebo comenzar
+-- exclusivamente el PR1"), con correcciones obligatorias sobre la
+-- entrega inicial (fail-closed en vez de fail-open; Retry-After
+-- calculado para el PROXIMO intento por distribucion de buckets, no por
+-- cierre del bucket vigente -- exacto bajo el supuesto de que no se
+-- registren solicitudes adicionales durante la espera).
+--
+-- ALCANCE EXACTO de esta migracion (no mas que esto):
+--   Unicamente ALTER TYPE ... ADD VALUE sobre el enum BucketLimiteTasa
+--   ya existente, para el bucket nuevo de limite de tasa de este PR
+--   (CONSULTA_EJECUTAR: limite piloto de LIMITE_CONSULTA_EJECUTAR
+--   intentos/hora por usuario autenticado -- valor confirmado en
+--   src/infra/rateLimit/huella.ts, no en esta migracion).
+--
+-- POR QUE EN SU PROPIA MIGRACION, AISLADA (mismo motivo documentado en
+-- prisma/migrations/20261022080000_rf24_enum_bucket_limite_tasa):
+-- Postgres nunca permite usar un valor de enum nuevo en la misma
+-- transaccion en la que se agrego (la instantanea de catalogo no lo ve
+-- todavia como confirmado) -- no es una limitacion de version antigua,
+-- aplica en cualquier version, incluida PostgreSQL 18.6 (version real de
+-- este proyecto). El codigo de aplicacion que usa "CONSULTA_EJECUTAR"
+-- (src/app/api/consultas/ejecutar/route.ts) depende de que esta
+-- migracion ya haya sido confirmada (COMMIT) en una transaccion
+-- anterior y separada antes de desplegarse.
+--
+-- SECUENCIA OBLIGATORIA DE DESPLIEGUE (documentada aca para quien
+-- ejecute la migracion, no solo para esta migracion en si):
+--   1) Aplicar esta migracion (prisma migrate deploy) y esperar su
+--      COMMIT.
+--   2) Verificar que "CONSULTA_EJECUTAR" ya existe en el enum
+--      "BucketLimiteTasa" en la base destino (ej.
+--      SELECT enumlabel FROM pg_enum JOIN pg_type ON pg_type.oid =
+--      pg_enum.enumtypid WHERE pg_type.typname = 'BucketLimiteTasa';).
+--   3) Solo entonces desplegar el codigo de aplicacion que referencia
+--      "CONSULTA_EJECUTAR" (este mismo PR). Desplegar el codigo antes
+--      de confirmar el paso 2 puede producir el error de Postgres
+--      "unsafe use of new value of enum type" si el codigo nuevo llega
+--      a correr contra una base donde la migracion todavia no confirmo.
+--
+-- FUERA de alcance a proposito: nada de tablas, constraints, funciones
+-- ni grants -- esta migracion es la UNICA de este PR1 (a diferencia del
+-- paquete RF24, que tenia 3 migraciones encadenadas).
+--
+-- NO EJECUTADA: esta migracion se crea unicamente como archivo en este
+-- PR1 -- no se aplico contra Neon, ninguna rama temporal, ni ningun
+-- destino, siguiendo la instruccion explicita de Alex de no ejecutar
+-- migraciones durante esta fase sin autorizacion separada.
+--
+-- Transaccional: ALTER TYPE ... ADD VALUE SI puede ejecutarse dentro de
+-- un bloque de transaccion (BEGIN/COMMIT) en PostgreSQL moderno -- la
+-- restriccion es unicamente que el valor nuevo no puede USARSE dentro de
+-- esa misma transaccion, no que la propia instruccion deba correr fuera
+-- de una transaccion.
+
+BEGIN;
+
+ALTER TYPE "BucketLimiteTasa" ADD VALUE 'CONSULTA_EJECUTAR';
+
+COMMIT;
