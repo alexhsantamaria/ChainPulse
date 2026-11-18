@@ -84,6 +84,11 @@ export const TENANT_SCOPED_MODELS = new Set([
   // migracion que la crea (20261111090000_incremento4_pr3_acciones_decision_kpi),
   // mismo criterio documentado arriba para toda tabla nueva con tenant.
   "AccionDecisionKpi",
+  // Incremento 5 PR3 (Alex, 2026-11-18) -- ObservacionOtifProveedor tiene
+  // empresaId propio (ver prisma/schema.prisma), entra aqui en la misma
+  // migracion que la crea (20261118120000_incremento5_pr3_otif_proveedor_real),
+  // mismo criterio documentado arriba.
+  "ObservacionOtifProveedor",
 ]);
 
 export function uncapitalize(model: string): string {
