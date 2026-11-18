@@ -22,9 +22,19 @@ export const MAX_DIAS_PERIODO_CONSULTA = 400;
 
 /** 1.500 ms -- presupuesto de computo determinista por consulta (sin IO
  * de red externo: todo el calculo es sincronico sobre filas ya cargadas).
- * No es un timeout de red -- es un techo de cordura para abortar un
- * calculo que claramente entro en un caso patologico (ej. un grafo con un
- * ciclo no esperado en DEPENDENCIA_CRITICA). */
+ * No es un timeout de red, y -- precision importante, Incremento 5 PR2 --
+ * NO interrumpe ni aborta el calculo en curso: JavaScript sincronico no
+ * se puede preemptar desde afuera. El mecanismo que lo aplica (ver
+ * src/infra/queries/presupuestoComputo.ts) deja que el calculo termine
+ * SIEMPRE, MIDE cuanto tardo despues de que terminó, y si excedio este
+ * presupuesto, DESCARTA ese resultado ya calculado y devuelve
+ * PRESUPUESTO_COMPUTO_EXCEDIDO en su lugar -- nunca lo persiste ni lo
+ * entrega al cliente. Por el mismo motivo, este mecanismo NO protege
+ * contra un loop infinito real (un calculo que nunca termina nunca
+ * llega a medirse ni a descartarse) -- es un techo de cordura contra un
+ * calculo PATOLOGICAMENTE LENTO pero que SI termina (ej. un recorrido
+ * ineficiente si algun motor futuro incorporara un grafo real), nunca
+ * una garantia de liveness. */
 export const PRESUPUESTO_COMPUTO_MS = 1_500;
 
 /** 20 -- maximo de elementos en camposFaltantes/advertencias devueltos al

@@ -15,6 +15,7 @@ const tenantClientMock = vi.fn();
 vi.mock("@/infra/prisma/tenantClient", () => ({ tenantClient: (...args: unknown[]) => tenantClientMock(...args) }));
 
 import { construirConsultaPermitida, ejecutarConsultaPermitida, type ResultadoEjecutarConsulta } from "../ejecutarConsultaPermitida";
+import * as presupuestoComputoModule from "../presupuestoComputo";
 import type { RespuestaConsulta } from "@/domain/queries/tipos";
 
 const CONTEXTO = { empresaId: "empresa-1", usuarioId: "usuario-1", rol: "ADMINISTRADOR" as const };
@@ -240,5 +241,45 @@ describe("ejecutarConsultaPermitida -- dispatcher (I5-09..I5-13)", () => {
     expect(data.usuarioId).toBe(CONTEXTO.usuarioId);
     expect(data.cadenaId).toBe(CADENA_ID);
     expect(data.catalogoId).toBe(catalogoId);
+  });
+});
+
+// Incremento 5 PR2 -- presupuesto de computo. ejecutarConsultaDentroDePresupuesto()
+// (presupuestoComputo.ts) se mockea POR LLAMADA via vi.spyOn (mismo
+// patron que vi.spyOn(catalogoModule.obtenerMetadatosCatalogo) en el
+// test de PERMISO_DENEGADO, arriba) -- sin esto, forzar un presupuesto
+// excedido de verdad exigiria un computo real lo bastante lento, lo que
+// seria lento y fragil para la suite. vi.restoreAllMocks() en el
+// beforeEach de arriba restaura el spy despues de cada prueba, asi que
+// el resto de las pruebas de este archivo (camino feliz) sigue usando
+// la implementacion REAL del helper.
+describe("ejecutarConsultaPermitida -- presupuesto de computo excedido (Incremento 5 PR2)", () => {
+  it.each(CATALOGO_CONSULTA_IDS)(
+    "%s -- cuando el presupuesto se excede, devuelve PRESUPUESTO_COMPUTO_EXCEDIDO y NUNCA escribe ConsultaLog",
+    async (catalogoId) => {
+      vi.spyOn(presupuestoComputoModule, "ejecutarConsultaDentroDePresupuesto").mockReturnValueOnce({
+        ok: false,
+        error: "PRESUPUESTO_COMPUTO_EXCEDIDO",
+      });
+      const cliente = clienteBase();
+      configurarConDatos(cliente, catalogoId);
+      tenantClientMock.mockReturnValue(cliente);
+
+      const resultado = await ejecutarConsultaPermitida(entradaPara(catalogoId), CONTEXTO);
+
+      expect(resultado).toEqual({ ok: false, error: "PRESUPUESTO_COMPUTO_EXCEDIDO" });
+      expect(cliente.consultaLog.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("camino feliz (dentro de presupuesto, implementacion REAL del helper) -- sin regresion: sigue dispatchando y auditando igual que antes de este PR2", async () => {
+    const cliente = clienteBase();
+    configurarConDatos(cliente, "OTIF_CAIDA");
+    tenantClientMock.mockReturnValue(cliente);
+
+    const resultado = comoRespuestaConsulta(await ejecutarConsultaPermitida(entradaPara("OTIF_CAIDA"), CONTEXTO));
+
+    expect(resultado.catalogoId).toBe("OTIF_CAIDA");
+    expect(cliente.consultaLog.create).toHaveBeenCalledTimes(1);
   });
 });

@@ -4,12 +4,13 @@
 import type { TenantPrismaClient } from "@/infra/prisma/tenantClient";
 import { ejecutarDependenciaCritica, type ConexionParaDependenciaCritica } from "@/engine/queries/dependenciaCritica";
 import type { RespuestaConsulta } from "@/domain/queries/tipos";
-import { MAX_FILAS_CONSULTA } from "@/domain/limitesConsultas";
+import { MAX_FILAS_CONSULTA, PRESUPUESTO_COMPUTO_MS } from "@/domain/limitesConsultas";
+import { ejecutarConsultaDentroDePresupuesto, type ErrorPresupuestoComputoExcedido } from "../presupuestoComputo";
 
 export async function cargarYEjecutarDependenciaCritica(
   cliente: TenantPrismaClient,
   cadenaId: string,
-): Promise<RespuestaConsulta> {
+): Promise<RespuestaConsulta | ErrorPresupuestoComputoExcedido> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ver nota de tenantClient.ts
   const filas = await (cliente as any).conexionCadena.findMany({
     where: { cadenaId },
@@ -35,5 +36,7 @@ export async function cargarYEjecutarDependenciaCritica(
     }),
   );
 
-  return ejecutarDependenciaCritica({ conexiones });
+  return ejecutarConsultaDentroDePresupuesto("DEPENDENCIA_CRITICA", PRESUPUESTO_COMPUTO_MS, () =>
+    ejecutarDependenciaCritica({ conexiones }),
+  );
 }

@@ -4,13 +4,14 @@
 import type { TenantPrismaClient } from "@/infra/prisma/tenantClient";
 import { ejecutarCambiosUltimoPulso, type HallazgoCadenaParaCambios } from "@/engine/queries/cambiosUltimoPulso";
 import type { RespuestaConsulta } from "@/domain/queries/tipos";
-import { MAX_FILAS_CONSULTA } from "@/domain/limitesConsultas";
+import { MAX_FILAS_CONSULTA, PRESUPUESTO_COMPUTO_MS } from "@/domain/limitesConsultas";
+import { ejecutarConsultaDentroDePresupuesto, type ErrorPresupuestoComputoExcedido } from "../presupuestoComputo";
 
 export async function cargarYEjecutarCambiosUltimoPulso(
   cliente: TenantPrismaClient,
   cadenaId: string,
   corte: Date,
-): Promise<RespuestaConsulta> {
+): Promise<RespuestaConsulta | ErrorPresupuestoComputoExcedido> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ver nota de tenantClient.ts
   const filasAntes = await (cliente as any).hallazgoCadena.findMany({
     where: { cadenaId, createdAt: { lt: corte } },
@@ -31,9 +32,11 @@ export async function cargarYEjecutarCambiosUltimoPulso(
     createdAt: f.createdAt,
   });
 
-  return ejecutarCambiosUltimoPulso({
-    antesDelCorte: filasAntes.map(aTipo),
-    desdeElCorte: filasDesde.map(aTipo),
-    corte,
-  });
+  return ejecutarConsultaDentroDePresupuesto("CAMBIOS_ULTIMO_PULSO", PRESUPUESTO_COMPUTO_MS, () =>
+    ejecutarCambiosUltimoPulso({
+      antesDelCorte: filasAntes.map(aTipo),
+      desdeElCorte: filasDesde.map(aTipo),
+      corte,
+    }),
+  );
 }

@@ -172,6 +172,18 @@ describe("POST /ejecutar -- mapeo de errores del dispatcher a status HTTP", () =
     expect(respuesta.status).toBe(403);
   });
 
+  it("PRESUPUESTO_COMPUTO_EXCEDIDO -> 503, SIN header Retry-After y SIN duracionMs en el body (Incremento 5 PR2 -- a diferencia de LIMITE_TASA_EXCEDIDO, reintentar no promete nada distinto, y el timing nunca viaja al cliente)", async () => {
+    ejecutarConsultaPermitidaMock.mockResolvedValue({ ok: false, error: "PRESUPUESTO_COMPUTO_EXCEDIDO" });
+    const { POST } = await import("../route");
+    const respuesta = await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+
+    expect(respuesta.status).toBe(503);
+    const cuerpo = await respuesta.json();
+    expect(cuerpo).toEqual({ ok: false, error: "PRESUPUESTO_COMPUTO_EXCEDIDO" });
+    expect(cuerpo).not.toHaveProperty("duracionMs");
+    expect(respuesta.headers.get("Retry-After")).toBeNull();
+  });
+
   it("SIN_DATOS_SUFICIENTES -> 200 (es una respuesta honesta y esperada, I5-25, nunca una falla de la ruta)", async () => {
     const respuestaSinDatos = {
       ok: false,

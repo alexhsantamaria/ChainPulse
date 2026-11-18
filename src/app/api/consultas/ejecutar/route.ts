@@ -35,7 +35,13 @@ export const runtime = "nodejs";
  * NO esta aca: es un resultado valido y esperado (I5-25), nunca viaja como
  * `error` de este tipo -- se distingue mas abajo por `respuesta.ok`. */
 const STATUS_POR_ERROR: Record<
-  "CATALOGO_ID_INVALIDO" | "CADENA_INEXISTENTE" | "PERMISO_DENEGADO" | "PERIODO_REQUERIDO" | "PERIODO_INVALIDO" | "PERIODO_DEMASIADO_LARGO",
+  | "CATALOGO_ID_INVALIDO"
+  | "CADENA_INEXISTENTE"
+  | "PERMISO_DENEGADO"
+  | "PERIODO_REQUERIDO"
+  | "PERIODO_INVALIDO"
+  | "PERIODO_DEMASIADO_LARGO"
+  | "PRESUPUESTO_COMPUTO_EXCEDIDO",
   number
 > = {
   CATALOGO_ID_INVALIDO: 400,
@@ -44,6 +50,15 @@ const STATUS_POR_ERROR: Record<
   PERIODO_REQUERIDO: 400,
   PERIODO_INVALIDO: 400,
   PERIODO_DEMASIADO_LARGO: 400,
+  // Incremento 5 PR2 -- mismo status que SERVICIO_NO_DISPONIBLE (PR1):
+  // no es un error de los datos enviados (no 400), no es falta de
+  // permisos (no 403/404), y no es "falta de cupo" con semantica de
+  // "esperá N segundos" (no 429 -- por eso nunca lleva Retry-After,
+  // ver presupuestoComputo.ts: reintentar el mismo pedido sin cambiar
+  // nada tardaria lo mismo otra vez). El cuerpo nunca incluye
+  // duracionMs -- ese detalle solo viaja al log saneado de servidor
+  // (eventoPresupuestoComputo.ts), nunca al cliente.
+  PRESUPUESTO_COMPUTO_EXCEDIDO: 503,
 };
 
 function aEntradaCruda(payload: unknown): EntradaCrudaEjecutarConsulta | null {

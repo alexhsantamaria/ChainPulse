@@ -15,6 +15,7 @@ import { nuncaOcurre } from "@/domain/queries/tipos";
 import { esCatalogoConsultaId, obtenerMetadatosCatalogo } from "./catalogo";
 import { validarPeriodoConsulta } from "@/domain/limitesConsultas";
 import { registrarConsulta } from "./registrarConsulta";
+import type { ErrorPresupuestoComputoExcedido } from "./presupuestoComputo";
 import { cargarYEjecutarOtifCaida } from "./ejecutores/otifCaida";
 import { cargarYEjecutarOtifProveedorRetrasos } from "./ejecutores/otifProveedorRetrasos";
 import { cargarYEjecutarDependenciaCritica } from "./ejecutores/dependenciaCritica";
@@ -35,7 +36,8 @@ export type ResultadoEjecutarConsulta =
   | { ok: false; error: "PERMISO_DENEGADO" }
   | { ok: false; error: "PERIODO_REQUERIDO" }
   | { ok: false; error: "PERIODO_INVALIDO" }
-  | { ok: false; error: "PERIODO_DEMASIADO_LARGO" };
+  | { ok: false; error: "PERIODO_DEMASIADO_LARGO" }
+  | ErrorPresupuestoComputoExcedido;
 
 function periodoCrudoAFecha(valor: string): Date | null {
   const fecha = new Date(valor);
@@ -119,7 +121,7 @@ export async function ejecutarConsultaPermitida(
   // I5-11 -- dispatcher EXHAUSTIVO: switch sobre la union discriminada de
   // 6 literales, sin `default`. nuncaOcurre() fuerza un error de
   // compilacion si se agrega un 7mo CatalogoConsultaId sin su rama aca.
-  let respuesta: RespuestaConsulta;
+  let respuesta: RespuestaConsulta | ErrorPresupuestoComputoExcedido;
   switch (entrada.catalogoId) {
     case "OTIF_CAIDA": {
       if (!entrada.periodo) return { ok: false, error: "PERIODO_REQUERIDO" };
@@ -155,6 +157,19 @@ export async function ejecutarConsultaPermitida(
     }
     default:
       return nuncaOcurre(entrada.catalogoId, "ejecutarConsultaPermitida");
+  }
+
+  // Incremento 5 PR2 -- presupuesto de computo excedido: se trata IGUAL
+  // que los demas errores de dispatcher de arriba (CATALOGO_ID_INVALIDO,
+  // CADENA_INEXISTENTE, PERMISO_DENEGADO, etc.) -- nunca llega a
+  // registrarConsulta(), cero fila nueva en ConsultaLog. Es consistente
+  // con que NINGUN otro error de dispatcher se audita ahi tampoco (ver
+  // presupuestoComputo.ts para el porque no se interrumpe el calculo,
+  // solo se descarta su resultado).
+  if (!respuesta.ok) {
+    if (respuesta.error === "PRESUPUESTO_COMPUTO_EXCEDIDO") {
+      return respuesta;
+    }
   }
 
   // I5-13 -- registro auditable, siempre (tanto si hubo datos como si no

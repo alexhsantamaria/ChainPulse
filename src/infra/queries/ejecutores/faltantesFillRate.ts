@@ -3,12 +3,14 @@
 import type { TenantPrismaClient } from "@/infra/prisma/tenantClient";
 import { ejecutarFaltantesFillRate } from "@/engine/queries/faltantesFillRate";
 import type { RespuestaConsulta } from "@/domain/queries/tipos";
+import { ejecutarConsultaDentroDePresupuesto, type ErrorPresupuestoComputoExcedido } from "../presupuestoComputo";
+import { PRESUPUESTO_COMPUTO_MS } from "@/domain/limitesConsultas";
 
 export async function cargarYEjecutarFaltantesFillRate(
   cliente: TenantPrismaClient,
   cadenaId: string,
   periodo: { inicio: Date; fin: Date },
-): Promise<RespuestaConsulta> {
+): Promise<RespuestaConsulta | ErrorPresupuestoComputoExcedido> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ver nota de tenantClient.ts
   const definicionKpi = await (cliente as any).definicionKpi.findFirst({
     where: { codigo: "FILL_RATE", estado: "PUBLICADA" },
@@ -16,7 +18,9 @@ export async function cargarYEjecutarFaltantesFillRate(
   });
 
   if (!definicionKpi) {
-    return ejecutarFaltantesFillRate({ observacionExiste: false, valor: null, ruleVersion: "consultas-v1", periodoConsultado: periodo });
+    return ejecutarConsultaDentroDePresupuesto("FALTANTES_FILL_RATE", PRESUPUESTO_COMPUTO_MS, () =>
+      ejecutarFaltantesFillRate({ observacionExiste: false, valor: null, ruleVersion: "consultas-v1", periodoConsultado: periodo }),
+    );
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ver nota de tenantClient.ts
@@ -25,10 +29,12 @@ export async function cargarYEjecutarFaltantesFillRate(
     orderBy: { createdAt: "desc" },
   });
 
-  return ejecutarFaltantesFillRate({
-    observacionExiste: observacion !== null,
-    valor: observacion?.valor ?? null,
-    ruleVersion: observacion?.ruleVersion ?? "consultas-v1",
-    periodoConsultado: periodo,
-  });
+  return ejecutarConsultaDentroDePresupuesto("FALTANTES_FILL_RATE", PRESUPUESTO_COMPUTO_MS, () =>
+    ejecutarFaltantesFillRate({
+      observacionExiste: observacion !== null,
+      valor: observacion?.valor ?? null,
+      ruleVersion: observacion?.ruleVersion ?? "consultas-v1",
+      periodoConsultado: periodo,
+    }),
+  );
 }

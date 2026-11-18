@@ -51,6 +51,15 @@ describe("construirMensajeError -- Incremento 5 PR1 (limite de tasa)", () => {
   });
 });
 
+describe("construirMensajeError -- Incremento 5 PR2 (presupuesto de computo)", () => {
+  it("PRESUPUESTO_COMPUTO_EXCEDIDO -- mensaje especifico, nunca el generico, nunca expone duracionMs", () => {
+    const mensaje = construirMensajeError("PRESUPUESTO_COMPUTO_EXCEDIDO");
+    expect(mensaje).not.toBe(INESPERADO);
+    expect(mensaje).toMatch(/tiempo de cálculo|período más corto/i);
+    expect(mensaje).not.toMatch(/\d/); // nunca un numero (ni duracionMs ni presupuestoMs) en el texto al usuario
+  });
+});
+
 // debeMostrarReintentar() -- Incremento 5 PR1. NOTA DE COBERTURA (a
 // pedido explicito de Alex: nunca declarar un boton "renderizado y
 // operativo" sin poder probarlo de verdad): este repositorio NO tiene
@@ -77,6 +86,15 @@ describe("debeMostrarReintentar", () => {
       expect(debeMostrarReintentar(codigo)).toBe(false);
     },
   );
+
+  // Incremento 5 PR2, decision explicita de Alex (a diferencia de
+  // LIMITE_TASA_EXCEDIDO/SERVICIO_NO_DISPONIBLE): reintentar el MISMO
+  // pedido sin cambiar nada (mismos datos, mismo periodo) muy
+  // probablemente vuelve a exceder el presupuesto -- no es una falla
+  // transitoria que el tiempo por si solo resuelva.
+  it("PRESUPUESTO_COMPUTO_EXCEDIDO -- NO deberia mostrar el boton Reintentar", () => {
+    expect(debeMostrarReintentar("PRESUPUESTO_COMPUTO_EXCEDIDO")).toBe(false);
+  });
 
   it("undefined -- no muestra el boton", () => {
     expect(debeMostrarReintentar(undefined)).toBe(false);
