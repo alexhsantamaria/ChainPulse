@@ -5,6 +5,8 @@
 import type { TenantPrismaClient } from "@/infra/prisma/tenantClient";
 import { ejecutarOtifCaida, type ObservacionOtifParaConsulta } from "@/engine/queries/otifCaida";
 import type { RespuestaConsulta } from "@/domain/queries/tipos";
+import { ejecutarConsultaDentroDePresupuesto, type ErrorPresupuestoComputoExcedido } from "../presupuestoComputo";
+import { PRESUPUESTO_COMPUTO_MS } from "@/domain/limitesConsultas";
 
 async function obtenerDefinicionKpiOtif(cliente: TenantPrismaClient) {
   // DefinicionKpi es catalogo de plataforma sin empresaId (fuera de
@@ -48,7 +50,7 @@ export async function cargarYEjecutarOtifCaida(
   cliente: TenantPrismaClient,
   cadenaId: string,
   periodo: { inicio: Date; fin: Date },
-): Promise<RespuestaConsulta> {
+): Promise<RespuestaConsulta | ErrorPresupuestoComputoExcedido> {
   const definicionKpi = await obtenerDefinicionKpiOtif(cliente);
   if (!definicionKpi) {
     return {
@@ -73,9 +75,11 @@ export async function cargarYEjecutarOtifCaida(
     orderBy: { periodoFin: "desc" },
   });
 
-  return ejecutarOtifCaida({
-    actual: aObservacion(actualFila),
-    anterior: aObservacion(anteriorFila),
-    periodoConsultado: periodo,
-  });
+  return ejecutarConsultaDentroDePresupuesto("OTIF_CAIDA", PRESUPUESTO_COMPUTO_MS, () =>
+    ejecutarOtifCaida({
+      actual: aObservacion(actualFila),
+      anterior: aObservacion(anteriorFila),
+      periodoConsultado: periodo,
+    }),
+  );
 }

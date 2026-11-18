@@ -62,6 +62,14 @@ const MENSAJE_ERROR: Record<string, string> = {
   // informa que hay que esperar.
   LIMITE_TASA_EXCEDIDO: "Hiciste demasiadas consultas en poco tiempo -- esperá un momento antes de volver a intentar.",
   SERVICIO_NO_DISPONIBLE: "El servicio no está disponible en este momento -- intentá de nuevo en un momento.",
+  // Incremento 5 PR2 -- presupuesto de computo excedido (ver
+  // presupuestoComputo.ts). A proposito NO esta en debeMostrarReintentar()
+  // mas abajo: reintentar el mismo pedido sin cambiar nada (mismos datos,
+  // mismo periodo) muy probablemente vuelve a exceder el presupuesto --
+  // a diferencia de LIMITE_TASA_EXCEDIDO/SERVICIO_NO_DISPONIBLE, donde
+  // esperar un poco SI cambia el resultado.
+  PRESUPUESTO_COMPUTO_EXCEDIDO:
+    "La consulta superó el tiempo de cálculo permitido y su resultado fue descartado. Probá con un período más corto o avisá al administrador si persiste.",
 };
 
 const INESPERADO = "Ocurrió un error inesperado -- intentá de nuevo en un momento.";

@@ -6,12 +6,13 @@
 import type { TenantPrismaClient } from "@/infra/prisma/tenantClient";
 import { ejecutarAccionPrioritaria, type HallazgoCadenaParaConsulta } from "@/engine/queries/accionPrioritaria";
 import type { RespuestaConsulta } from "@/domain/queries/tipos";
-import { MAX_FILAS_CONSULTA } from "@/domain/limitesConsultas";
+import { MAX_FILAS_CONSULTA, PRESUPUESTO_COMPUTO_MS } from "@/domain/limitesConsultas";
+import { ejecutarConsultaDentroDePresupuesto, type ErrorPresupuestoComputoExcedido } from "../presupuestoComputo";
 
 export async function cargarYEjecutarAccionPrioritaria(
   cliente: TenantPrismaClient,
   cadenaId: string,
-): Promise<RespuestaConsulta> {
+): Promise<RespuestaConsulta | ErrorPresupuestoComputoExcedido> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ver nota de tenantClient.ts
   const filas = await (cliente as any).hallazgoCadena.findMany({
     where: { cadenaId },
@@ -26,5 +27,7 @@ export async function cargarYEjecutarAccionPrioritaria(
     createdAt: f.createdAt,
   }));
 
-  return ejecutarAccionPrioritaria({ hallazgos });
+  return ejecutarConsultaDentroDePresupuesto("ACCION_PRIORITARIA", PRESUPUESTO_COMPUTO_MS, () =>
+    ejecutarAccionPrioritaria({ hallazgos }),
+  );
 }

@@ -7,15 +7,19 @@
 import type { TenantPrismaClient } from "@/infra/prisma/tenantClient";
 import { ejecutarOtifProveedorRetrasos } from "@/engine/queries/otifProveedorRetrasos";
 import type { RespuestaConsulta } from "@/domain/queries/tipos";
+import { ejecutarConsultaDentroDePresupuesto, type ErrorPresupuestoComputoExcedido } from "../presupuestoComputo";
+import { PRESUPUESTO_COMPUTO_MS } from "@/domain/limitesConsultas";
 
 export async function cargarYEjecutarOtifProveedorRetrasos(
   _cliente: TenantPrismaClient,
   _cadenaId: string,
   periodo: { inicio: Date; fin: Date },
-): Promise<RespuestaConsulta> {
+): Promise<RespuestaConsulta | ErrorPresupuestoComputoExcedido> {
   // Ningun dato real que cargar hoy (ver nota de cabecera) -- la firma ya
   // recibe cliente/cadenaId para que, cuando I4-07 tenga persistencia por
   // proveedor, este archivo sea el UNICO que cambie (consulta real en vez
   // de un array vacio), sin tocar el motor ni el dispatcher.
-  return ejecutarOtifProveedorRetrasos({ filas: [], periodoConsultado: periodo });
+  return ejecutarConsultaDentroDePresupuesto("OTIF_PROVEEDOR_RETRASOS", PRESUPUESTO_COMPUTO_MS, () =>
+    ejecutarOtifProveedorRetrasos({ filas: [], periodoConsultado: periodo }),
+  );
 }
