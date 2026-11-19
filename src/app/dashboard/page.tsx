@@ -124,6 +124,18 @@ export default async function DashboardPage() {
             </p>
           </Link>
         )}
+        {sesion.rol === "ADMINISTRADOR" && (
+          <Link
+            href="/dashboard/kpis/otif-proveedor"
+            className="rounded border border-slate-200 p-4 hover:border-slate-400 sm:col-span-2"
+          >
+            <p className="text-sm text-slate-500">Declarar OTIF Proveedor (piloto)</p>
+            <p className="mt-2 text-sm text-slate-600">
+              Declarar observaciones de OTIF por proveedor (manual o pegado, con varios proveedores en la misma
+              tabla) y ver el historial declarado →
+            </p>
+          </Link>
+        )}
       </div>
 
       {totalEslabones === 0 && (

@@ -1,21 +1,30 @@
 // Motor (PURO) -- I5-02: "¿Qué proveedor concentra más retrasos?".
-// LIMITACION DE ESQUEMA DOCUMENTADA (ver
-// docs/engineering/INCREMENTO5_CONSULTAS_DETERMINISTICAS_TRAZABILIDAD.md,
-// fila I5-02): ObservacionKpi (la unica tabla que persiste OTIF
-// proveedor, I4-07) NO tiene una columna de proveedor -- I4-07 esta en
-// estado P precisamente porque nunca se construyo su persistencia/API/UI
-// con desglose por proveedor (Programa ChainPulse 53+ v3, Punto 2). Este
-// motor SI sabe rankear si se le dan filas por proveedor (ver
-// FilaOtifProveedorAgregada) -- el ejecutor de infra (ejecutores/
-// otifProveedorRetrasos.ts) hoy SIEMPRE le pasa un array vacio, porque no
-// existe ninguna columna de la que leerlo; cuando I4-07 tenga su propia
-// persistencia por proveedor, el ejecutor de infra se actualiza para
-// alimentar filas reales SIN tocar este archivo.
+//
+// Incremento 5 PR3 (Alex, 2026-11-18): el ejecutor de infra
+// (ejecutores/otifProveedorRetrasos.ts) ya lee observaciones reales de
+// OTIF proveedor (tabla dedicada ObservacionOtifProveedor) -- este motor
+// sigue siendo el mismo: sabe rankear si se le dan filas por proveedor
+// (ver FilaOtifProveedorAgregada), sin saber de donde vinieron. Cuando el
+// periodo consultado no tiene ninguna observacion persistida (cadena
+// nueva, o periodo sin datos todavia), el ejecutor simplemente pasa un
+// array vacio y este motor responde SIN_DATOS_SUFICIENTES, igual que
+// antes -- "sin datos" sigue siendo una respuesta correcta, ya no la
+// UNICA posible.
+//
+// Desempate deterministico EXPLICITO (Alex, punto 15): menor OTIF
+// primero; en caso de empate exacto de `valor`, `proveedorAliasClave`
+// ascendente (src/domain/proveedorAlias.ts -- comparacion por puntos de
+// codigo, NUNCA localeCompare). Esto NO depende del orden en el que el
+// ejecutor de infra entregue las filas (su `orderBy` de Postgres es una
+// conveniencia, nunca la unica garantia de determinismo) -- el propio
+// motor ordena explicitamente antes de elegir el peor.
 import type { RespuestaConsulta } from "@/domain/queries/tipos";
+import { compararClavesProveedor } from "@/domain/proveedorAlias";
 import { construirComoComprobar, formatearPorcentaje, mensajeSinDatos } from "./plantillasExplicacion";
 
 export interface FilaOtifProveedorAgregada {
   proveedorAlias: string;
+  proveedorAliasClave: string;
   valor: number | null; // fraccion 0..1 de cumplimiento OTIF proveedor
   ruleVersion: string;
 }
@@ -42,11 +51,18 @@ export function ejecutarOtifProveedorRetrasos(datos: DatosOtifProveedorRetrasos)
         "no hay observaciones de OTIF proveedor con desglose por proveedor para este periodo",
       ),
       camposFaltantes: ["observaciones de OTIF proveedor, desglosadas por proveedor, para el periodo consultado"],
-      comoIngresarlos: "Esta desagregación por proveedor todavía no tiene un flujo de captura en el producto (I4-07 pendiente).",
+      comoIngresarlos: "Declara al menos una observación de OTIF proveedor para este período desde el panel de KPIs.",
     };
   }
 
-  const peor = [...evaluables].sort((a, b) => (a.valor as number) - (b.valor as number))[0];
+  // Desempate deterministico explicito -- ver comentario de cabecera.
+  // `valor` nunca es null aca (ya filtrado arriba): el cast es seguro.
+  const ordenados = [...evaluables].sort((a, b) => {
+    const diferenciaValor = (a.valor as number) - (b.valor as number);
+    if (diferenciaValor !== 0) return diferenciaValor;
+    return compararClavesProveedor(a.proveedorAliasClave, b.proveedorAliasClave);
+  });
+  const peor = ordenados[0];
   if (!peor) {
     throw new Error("ejecutarOtifProveedorRetrasos: evaluables no vacio pero peor es undefined (invariante rota)");
   }
@@ -57,7 +73,7 @@ export function ejecutarOtifProveedorRetrasos(datos: DatosOtifProveedorRetrasos)
     respuestaDirecta: `El proveedor que concentra más retrasos es "${peor.proveedorAlias}", con OTIF proveedor de ${formatearPorcentaje(peor.valor)}.`,
     periodo,
     filtros: {},
-    fuente: "ObservacionKpi (OTIF proveedor, por proveedor)",
+    fuente: "ObservacionOtifProveedor (OTIF proveedor, por proveedor)",
     formula: "OTIF proveedor = recepciones completas y a tiempo / recepciones",
     numerador: null,
     denominador: null,

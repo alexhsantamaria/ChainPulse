@@ -38,6 +38,8 @@ function clienteBase() {
     cadena: { findUnique: vi.fn().mockResolvedValue({ id: CADENA_ID }) },
     definicionKpi: { findFirst: vi.fn().mockResolvedValue(null) },
     observacionKpi: { findFirst: vi.fn().mockResolvedValue(null) },
+    // Incremento 5 PR3 (Alex, 2026-11-18) -- tabla dedicada real.
+    observacionOtifProveedor: { findMany: vi.fn().mockResolvedValue([]) },
     conexionCadena: { findMany: vi.fn().mockResolvedValue([]) },
     hallazgoCadena: { findMany: vi.fn().mockResolvedValue([]) },
     consultaLog: { create: vi.fn().mockResolvedValue({ id: "log-1" }) },
@@ -47,11 +49,7 @@ function clienteBase() {
 type ClienteFalso = ReturnType<typeof clienteBase>;
 
 // Configura un cliente falso con datos suficientes para que la pregunta
-// responda con su camino "hay datos". OTIF_PROVEEDOR_RETRASOS es la
-// excepcion deliberada: HOY siempre responde SIN_DATOS_SUFICIENTES (ver
-// la nota de cabecera de engine/queries/otifProveedorRetrasos.ts --
-// ObservacionKpi no tiene columna de proveedor) -- ninguna configuracion
-// de cliente cambia eso, asi que no hay rama para ese caso aca.
+// responda con su camino "hay datos".
 function configurarConDatos(cliente: ClienteFalso, catalogoId: CatalogoConsultaId): void {
   switch (catalogoId) {
     case "OTIF_CAIDA": {
@@ -65,8 +63,14 @@ function configurarConDatos(cliente: ClienteFalso, catalogoId: CatalogoConsultaI
       );
       break;
     }
-    case "OTIF_PROVEEDOR_RETRASOS":
+    case "OTIF_PROVEEDOR_RETRASOS": {
+      cliente.definicionKpi.findFirst.mockResolvedValue({ id: "def-otif-proveedor" });
+      cliente.observacionOtifProveedor.findMany.mockResolvedValue([
+        { proveedorAlias: "Proveedor A", proveedorAliasClave: "proveedor a", valor: 0.9, ruleVersion: "kpis-v1" },
+        { proveedorAlias: "Proveedor B", proveedorAliasClave: "proveedor b", valor: 0.5, ruleVersion: "kpis-v1" },
+      ]);
       break;
+    }
     case "DEPENDENCIA_CRITICA": {
       cliente.conexionCadena.findMany.mockResolvedValue([
         {

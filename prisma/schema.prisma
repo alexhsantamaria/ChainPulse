@@ -293,6 +293,7 @@ model Empresa {
   importacionesCsv       ImportacionCsv[]
   consultasLog ConsultaLog[]
   accionesDecisionKpi     AccionDecisionKpi[]
+  observacionesOtifProveedor ObservacionOtifProveedor[]
 
   @@map("empresas")
 }
@@ -1081,6 +1082,7 @@ model Cadena {
   importacionesCsv       ImportacionCsv[]
   consultasLog ConsultaLog[]
   accionesDecisionKpi     AccionDecisionKpi[]
+  observacionesOtifProveedor ObservacionOtifProveedor[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1373,6 +1375,7 @@ model DefinicionKpi {
   observaciones ObservacionKpi[]
   observacionesCobertura ObservacionCobertura[]
   importacionesCsv       ImportacionCsv[]
+  observacionesOtifProveedor ObservacionOtifProveedor[]
 
   @@unique([codigo, numero])
   @@index([curadorId])
@@ -1447,6 +1450,78 @@ model ObservacionKpi {
   @@index([cadenaId])
   @@index([definicionKpiId])
   @@map("observaciones_kpi")
+}
+
+// Incremento 5 PR3 -- OTIF Proveedor real (I5-02). Tabla DEDICADA, nunca una
+// extension de ObservacionKpi -- Alex, 2026-11-18 (diseno aprobado,
+// correcciones obligatorias): extender ObservacionKpi con una columna
+// proveedorAlias nullable DENTRO de su restriccion unica actual rompe la
+// deduplicacion de los otros 9 KPIs (NULL <> NULL en un indice unico de
+// Postgres -- filas con proveedorAlias=NULL jamas colisionarian entre si).
+// Esta tabla tiene su propia identidad, sin ese riesgo: toda fila nombra
+// un proveedor (NOT NULL), asi que la igualdad nunca choca con NULL.
+//
+// proveedorAlias (visible, anonimizado -- nunca el nombre real, mismo
+// criterio RF39 que FilaOtifProveedor) vs proveedorAliasClave (version
+// canonica para IDENTIDAD -- normalizada por normalizarAliasProveedor(),
+// src/domain/proveedorAlias.ts: trim + colapso de espacios internos +
+// case folding estable con String.prototype.toLowerCase() sin locale,
+// nunca toLocaleLowerCase() -- evita que un locale distinto del host,
+// p.ej. turco, cambie silenciosamente que dos alias se consideren el
+// mismo proveedor). La identidad NUNCA incluye `fuente` (a diferencia de
+// ObservacionKpi): reconfirmar el mismo proveedor+periodo desde otra
+// fuente ACTUALIZA la fila existente (fuente, valores, estado,
+// ruleVersion, updatedAt), nunca crea una segunda -- ver
+// confirmarObservacionOtifProveedor() (persistir.ts).
+//
+// definicionKpiId es NOT NULL (a diferencia de dejarlo implicito): la
+// confirmacion siempre persiste la DefinicionKpi{codigo:"OTIF_PROVEEDOR"}
+// PUBLICADA que efectivamente resolvio ese calculo, nunca la vuelve a
+// inferir despues.
+//
+// updatedAt (nuevo respecto del patron ObservacionKpi): una reconfirmacion
+// actualiza la MISMA fila -- updatedAt distingue "cuando se declaro por
+// primera vez" (createdAt) de "cuando se confirmo por ultima vez"
+// (updatedAt), visible en el historial/detalle.
+//
+// Los 5 CHECK de abajo (no representables en schema.prisma, igual que
+// uq_definicion_kpi_publicada mas arriba -- ver la migracion que crea esta
+// tabla) son el backstop de base de datos pedido por Alex: periodo
+// coherente; numerador no negativo; denominador nunca negativo NI CERO
+// (el motor -- calcularRatio(), src/engine/kpis/compartido.ts -- jamas
+// persiste un denominador literal 0, siempre NULL cuando no hay filas
+// evaluables, asi que un 0 real en esta columna seria un dato corrupto);
+// numerador nunca mayor que denominador; valor nulo o en [0,1].
+model ObservacionOtifProveedor {
+  id              String        @id @default(cuid())
+  empresaId       String
+  empresa         Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cadenaId        String
+  cadena          Cadena        @relation(fields: [cadenaId], references: [id], onDelete: Cascade)
+  definicionKpiId String
+  definicionKpi   DefinicionKpi @relation(fields: [definicionKpiId], references: [id], onDelete: Restrict)
+
+  periodoInicio DateTime
+  periodoFin    DateTime
+
+  proveedorAlias      String
+  proveedorAliasClave String
+
+  valor       Float?
+  numerador   Float?
+  denominador Float?
+  fuente      String
+  estado      EstadoDato @default(DECLARADO)
+  ruleVersion String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cadenaId, definicionKpiId, periodoInicio, periodoFin, proveedorAliasClave])
+  @@index([empresaId])
+  @@index([cadenaId])
+  @@index([definicionKpiId])
+  @@map("observaciones_otif_proveedor")
 }
 
 // Incremento 4 Bloque B -- ImportacionCsv + ObservacionCobertura.

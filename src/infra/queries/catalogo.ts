@@ -41,7 +41,7 @@ const CATALOGO: Record<CatalogoConsultaId, MetadatosCatalogoConsulta> = {
     id: "OTIF_PROVEEDOR_RETRASOS",
     titulo: "¿Qué proveedor concentra más retrasos?",
     descripcion: "Ranking de proveedores (alias) por tasa de incumplimiento de OTIF proveedor en el periodo.",
-    dependenciasDatos: ["ObservacionKpi (OTIF proveedor, por proveedorAlias)"],
+    dependenciasDatos: ["ObservacionOtifProveedor (tabla dedicada, por proveedorAliasClave)"],
     requierePeriodo: true,
     permisos: AMBOS_ROLES,
     comportamientoSinDatos: "Si no hay observaciones de OTIF proveedor en el periodo, responde que no hay datos cargados.",
