@@ -208,6 +208,147 @@ export async function revocarUsuariosSinteticosDeCarga(
   return { cantidadRevocada: resultado.count };
 }
 
+/** Las 6 dimensiones reales de DimensionComparacionCadena
+ * (prisma/schema.prisma) -- declaradas aca como tupla literal, NUNCA
+ * importadas de `@prisma/client`, por el mismo motivo que el resto de
+ * este script trata a PrismaClient como `any` (ADR-0003, engineType=
+ * "client"): mantiene construirFilasHallazgoCadenaSintetico() PURA y
+ * testeable sin generar el cliente Prisma ni tocar Postgres. */
+export const DIMENSIONES_HALLAZGO_CADENA = [
+  "PRIORIDAD_ELEGIDA",
+  "CONOCIMIENTO_ENTRADAS_SALIDAS",
+  "MOMENTO_INFORMACION",
+  "FUENTE_DATOS",
+  "NODO_CRITICO",
+  "ALTERNATIVA_DISPONIBLE",
+] as const;
+
+/** Cuantas filas HallazgoCadena admite, como maximo, UN SOLO alcance (ya
+ * sea una ConexionCadena puntual, o la cadena completa) -- el limite
+ * real que imponen los 2 indices unicos PARCIALES de la migracion
+ * 20260924010000_hallazgos_cadena_unique: "una fila DIFERENCIA activa
+ * por dimension y por alcance" (RF38/RF39, ver el comentario de
+ * HallazgoCadena en schema.prisma). Es, exactamente, el numero de
+ * dimensiones -- nunca un numero elegido a mano. */
+export const MAX_HALLAZGOS_POR_ALCANCE = DIMENSIONES_HALLAZGO_CADENA.length;
+
+export interface FilaHallazgoCadenaSintetico {
+  empresaId: string;
+  cadenaId: string;
+  conexionCadenaId: string | null;
+  dimension: (typeof DIMENSIONES_HALLAZGO_CADENA)[number];
+  resultado: "DIFERENCIA";
+  createdAt: Date;
+}
+
+export interface OpcionesHallazgoCadenaSintetico {
+  empresaId: string;
+  cadenaId: string;
+  /** Ids de ConexionCadena YA creadas para esta cadena -- el seeding real
+   * (sembrar()) las pasa en el orden en que las creo; esta funcion nunca
+   * las crea ni las lee, es PURA. */
+  idsConexionesDisponibles: readonly string[];
+  cantidad: number;
+  /** Inyectable para pruebas deterministas -- nunca `Date.now()`
+   * implicito dentro de la funcion. */
+  ahoraMs: number;
+}
+
+/**
+ * BLOQUEO CORREGIDO (Alex, 2026-11-19): la version anterior ponia TODAS
+ * las filas en el alcance "cadena completa" (conexionCadenaId=null) y
+ * ciclaba las 6 dimensiones (`dimensiones[n % 6]`) -- a partir de la
+ * septima fila, cualquier escala (1.000/10.000/50.000) repetia una
+ * combinacion (cadenaId, dimension) ya insertada, violando el indice
+ * unico parcial `hallazgos_cadena_cadena_dimension_key` (ver migracion
+ * 20260924010000_hallazgos_cadena_unique). Esta funcion construye
+ * `cantidad` filas que NUNCA repiten una combinacion (alcance,
+ * dimension) ya usada, respetando los 2 indices unicos parciales reales
+ * tal cual existen hoy -- no los debilita ni los reinterpreta.
+ *
+ * Representacion elegida (realista dentro de lo que RF38/RF39 permite --
+ * ver tambien el comentario de planSiembraParaEscala() en
+ * configuracionRendimiento.ts: un volumen de miles de hallazgos
+ * SIMULTANEOS en una sola cadena sigue siendo, en si mismo, un escenario
+ * hipotetico de estres que nunca ocurre en la app real; esta correccion
+ * no cambia eso, solo lo hace EJECUTABLE sin violar ninguna restriccion):
+ *   - Hasta `MAX_HALLAZGOS_POR_ALCANCE` (6) filas en el alcance "cadena
+ *     completa" (conexionCadenaId=null), una por dimension, sin repetir
+ *     -- el maximo real que ESE alcance admite.
+ *   - El resto, agrupado de 6 en 6 (una por dimension, sin repetir) bajo
+ *     CADA ConexionCadena de `idsConexionesDisponibles` -- el mismo
+ *     patron real (una conexion puntual puede tener hasta 6 hallazgos
+ *     activos, uno por dimension), repetido sobre tantas conexiones
+ *     como haga falta para alcanzar `cantidad`. Nunca reutiliza una
+ *     conexion para una dimension ya usada en ella.
+ *
+ * `createdAt` se distribuye en los ultimos 400 dias (igual que antes de
+ * esta correccion) -- necesario para que el candidato de indice
+ * (cadenaId, createdAt) de CAMBIOS_ULTIMO_PULSO (I5-06) tenga algo real
+ * que medir; todas con el mismo createdAt no probarian nada del rango.
+ *
+ * Lanza explicitamente (nunca trunca en silencio) si
+ * `idsConexionesDisponibles` no alcanza para `cantidad` sin colisionar
+ * -- `sembrar()` siempre le pasa `plan.conexionCadena` conexiones (ver
+ * configuracionRendimiento.ts), que a las 3 escalas pedidas
+ * (1.000/10.000/50.000) sobra por un margen amplio (capacidad =
+ * conexiones*6 >> escala), pero esta funcion no lo asume: lo verifica.
+ *
+ * NUNCA via persistirHallazgosCadena.ts (ese modulo rechazaria este
+ * volumen por diseno) -- este script escribe directo, a proposito, solo
+ * para medir el planificador de Postgres contra un volumen hipotetico.
+ */
+export function construirFilasHallazgoCadenaSintetico(
+  opciones: OpcionesHallazgoCadenaSintetico,
+): FilaHallazgoCadenaSintetico[] {
+  const { empresaId, cadenaId, idsConexionesDisponibles, cantidad, ahoraMs } = opciones;
+  if (!Number.isInteger(cantidad) || cantidad < 0) {
+    throw new Error(`CANTIDAD_HALLAZGOS_INVALIDA_${cantidad}`);
+  }
+  const dims = DIMENSIONES_HALLAZGO_CADENA;
+  const cantidadCadenaCompleta = Math.min(dims.length, cantidad);
+  const cantidadPorConexion = cantidad - cantidadCadenaCompleta;
+  const capacidadConexiones = idsConexionesDisponibles.length * dims.length;
+  if (cantidadPorConexion > capacidadConexiones) {
+    throw new Error(
+      `HALLAZGOS_SINTETICOS_EXCEDEN_CAPACIDAD_SIN_COLISION -- se pidieron ${cantidad} ` +
+        `(${cantidadCadenaCompleta} en alcance cadena completa + ${cantidadPorConexion} en alcance conexion), ` +
+        `pero solo hay ${idsConexionesDisponibles.length} conexion(es) disponibles ` +
+        `(capacidad maxima ${capacidadConexiones} fila(s) en alcance conexion sin colisionar).`,
+    );
+  }
+
+  const rangoMs = 400 * 24 * 60 * 60 * 1000;
+  const filas: FilaHallazgoCadenaSintetico[] = [];
+  for (let n = 0; n < cantidad; n += 1) {
+    const fraccion = cantidad <= 1 ? 0 : n / (cantidad - 1);
+    const createdAt = new Date(ahoraMs - rangoMs + Math.round(fraccion * rangoMs));
+    if (n < cantidadCadenaCompleta) {
+      filas.push({
+        empresaId,
+        cadenaId,
+        conexionCadenaId: null,
+        dimension: dims[n] as (typeof dims)[number],
+        resultado: "DIFERENCIA",
+        createdAt,
+      });
+    } else {
+      const posicion = n - cantidadCadenaCompleta;
+      const indiceConexion = Math.floor(posicion / dims.length);
+      const indiceDimension = posicion % dims.length;
+      filas.push({
+        empresaId,
+        cadenaId,
+        conexionCadenaId: idsConexionesDisponibles[indiceConexion] as string,
+        dimension: dims[indiceDimension] as (typeof dims)[number],
+        resultado: "DIFERENCIA",
+        createdAt,
+      });
+    }
+  }
+  return filas;
+}
+
 async function sembrar(
   cliente: PrismaClient,
   escala: EscalaFilasPorCadena,
@@ -372,32 +513,37 @@ async function sembrar(
     });
     await clienteAny.conexionCadena.createMany({ data: lote });
   }
+  // Mismo patron/justificacion que nodosCreados arriba -- createMany no
+  // devuelve ids; se recuperan con un findMany ordenado por createdAt,
+  // unico momento en que esta cadena sintetica tiene conexiones.
+  // CORRECCION (Alex, 2026-11-19): estos ids son los que
+  // construirFilasHallazgoCadenaSintetico() usa como "alcance conexion"
+  // -- antes de esta correccion no se recuperaban porque HallazgoCadena
+  // nunca los usaba.
+  const conexionesCreadas = await clienteAny.conexionCadena.findMany({ where: { cadenaId: cadena.id }, orderBy: { createdAt: "asc" }, select: { id: true } });
+  const idsConexiones: string[] = conexionesCreadas.map((c: { id: string }) => c.id);
 
-  // --- HallazgoCadena: `plan.hallazgoCadena` filas, createdAt
-  // DISTRIBUIDO en los ultimos 400 dias (MAX_DIAS_PERIODO_CONSULTA,
-  // limitesConsultas.ts) -- necesario para que el candidato de indice
-  // (cadenaId, createdAt) de CAMBIOS_ULTIMO_PULSO (I5-06) tenga algo
-  // real que medir; todas con el mismo createdAt no probarian nada del
-  // rango. NUNCA via persistirHallazgosCadena.ts (ver comentario de
-  // configuracionRendimiento.ts: ese modulo rechazaria este volumen por
-  // diseno -- este script escribe directo, a proposito, solo para
-  // medir el planificador de Postgres). ---
-  const ahora = Date.now();
-  const rangoMs = 400 * 24 * 60 * 60 * 1000;
-  const dimensiones = ["PRIORIDAD_ELEGIDA", "CONOCIMIENTO_ENTRADAS_SALIDAS", "MOMENTO_INFORMACION", "FUENTE_DATOS", "NODO_CRITICO", "ALTERNATIVA_DISPONIBLE"] as const;
-  for (let inicio = 0; inicio < plan.hallazgoCadena; inicio += TAMANO_LOTE_INSERCION) {
-    const cantidadLote = Math.min(TAMANO_LOTE_INSERCION, plan.hallazgoCadena - inicio);
-    const lote = Array.from({ length: cantidadLote }, (_, i) => {
-      const n = inicio + i;
-      const fraccion = plan.hallazgoCadena <= 1 ? 0 : n / (plan.hallazgoCadena - 1);
-      return {
-        empresaId: empresa.id,
-        cadenaId: cadena.id,
-        dimension: dimensiones[n % dimensiones.length],
-        resultado: "DIFERENCIA" as const,
-        createdAt: new Date(ahora - rangoMs + Math.round(fraccion * rangoMs)),
-      };
-    });
+  // --- HallazgoCadena: `plan.hallazgoCadena` filas. BLOQUEO CORREGIDO
+  // (Alex, 2026-11-19): la version anterior ponia TODAS las filas en el
+  // alcance "cadena completa" (conexionCadenaId=null) ciclando las 6
+  // dimensiones -- colisionaba con el indice unico parcial
+  // hallazgos_cadena_cadena_dimension_key desde la septima fila en
+  // adelante, en CUALQUIER escala >6 (ver migracion
+  // 20260924010000_hallazgos_cadena_unique). Corregido distribuyendo las
+  // filas entre el alcance "cadena completa" (hasta 6) y el alcance de
+  // CADA ConexionCadena ya sembrada (hasta 6 por conexion) -- ver el
+  // comentario completo en construirFilasHallazgoCadenaSintetico(),
+  // arriba, que es quien decide la asignacion exacta (PURA, probada en
+  // __tests__/semillaSinteticaConsultas.test.ts sin tocar Postgres). ---
+  const filasHallazgoCadena = construirFilasHallazgoCadenaSintetico({
+    empresaId: empresa.id,
+    cadenaId: cadena.id,
+    idsConexionesDisponibles: idsConexiones,
+    cantidad: plan.hallazgoCadena,
+    ahoraMs: Date.now(),
+  });
+  for (let inicio = 0; inicio < filasHallazgoCadena.length; inicio += TAMANO_LOTE_INSERCION) {
+    const lote = filasHallazgoCadena.slice(inicio, inicio + TAMANO_LOTE_INSERCION);
     await clienteAny.hallazgoCadena.createMany({ data: lote });
   }
 

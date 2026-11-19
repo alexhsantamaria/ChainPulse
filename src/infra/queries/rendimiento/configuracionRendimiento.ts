@@ -112,6 +112,24 @@ export function planSiembraParaEscala(escala: EscalaFilasPorCadena): PlanSiembra
     // rechazaria este volumen por diseno), porque lo que este script
     // mide es el comportamiento del PLANIFICADOR de Postgres contra un
     // volumen hipotetico, no un flujo de negocio real.
+    //
+    // BLOQUEO CORREGIDO (Alex, 2026-11-19): "hipotetico" NUNCA significo
+    // "sin restricciones" -- los 2 indices unicos PARCIALES de la
+    // migracion 20260924010000_hallazgos_cadena_unique ("una fila
+    // DIFERENCIA activa por dimension y por ALCANCE: cadena completa o
+    // conexion puntual") son restricciones DURAS de Postgres, no una
+    // regla de negocio que un script pueda saltarse escribiendo
+    // directo. Por eso `escala` filas NUNCA van todas al mismo alcance
+    // (eso es, exactamente, el bloqueo que se corrigio): se reparten
+    // entre el alcance "cadena completa" (maximo real: 6, una por
+    // dimension) y el alcance de cada una de las `plan.conexionCadena`
+    // conexiones ya sembradas (maximo real: 6 cada una) -- ver
+    // construirFilasHallazgoCadenaSintetico() en
+    // scripts/perf/semillaSinteticaConsultas.ts, que es quien decide la
+    // asignacion exacta sin colisionar. `conexionCadena` esta fijado a
+    // la MISMA escala que `hallazgoCadena` a proposito: a las 3 escalas
+    // pedidas (1.000/10.000/50.000) sobra capacidad por un margen amplio
+    // (conexiones*6 >> escala).
     hallazgoCadena: escala,
   };
 }
