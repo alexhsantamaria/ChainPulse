@@ -9,6 +9,22 @@
 // nombre de tabla, columna, SQL, función interna, tenant o empresa") --
 // empresaId/usuarioId/rol salen SIEMPRE de requireSession(), nunca del
 // payload de red.
+//
+// Incremento 5 PR4 -- POST() es ahora un envoltorio DELGADO alrededor de
+// manejarEjecutarConsulta() (toda la logica original, sin cambios de
+// comportamiento): mide la LATENCIA TOTAL de la peticion, de punta a
+// punta -- desde la primera linea de este handler (antes incluso de
+// requireSession()) hasta que la respuesta ya esta construida --, y la
+// reporta via registrarEventoLatenciaConsulta() (evento saneado, ver
+// eventoLatenciaConsulta.ts). Esto cierra la brecha identificada en el
+// diseno de PR4: PRESUPUESTO_COMPUTO_MS (presupuestoComputo.ts) solo
+// mide el computo sincronico de un motor puro, nunca el IO -- hasta este
+// PR no existia ninguna senal de si una peticion real se acerca al
+// objetivo "<5 segundos" de punta a punta. `contexto.catalogoId` se
+// llena DENTRO de manejarEjecutarConsulta() en cuanto
+// construirConsultaPermitida() lo valida -- permanece `undefined` para
+// cualquier peticion que nunca llega a esa validacion (sesion invalida,
+// body invalido, etc.), y el evento se registra igual, sin ese campo.
 import { NextResponse } from "next/server";
 import { requireSession } from "@/infra/auth/session";
 import { leerCuerpoJsonLimitado } from "@/infra/http/leerCuerpoJsonLimitado";
@@ -18,6 +34,7 @@ import {
   ejecutarConsultaPermitida,
   type EntradaCrudaEjecutarConsulta,
 } from "@/infra/queries/ejecutarConsultaPermitida";
+import type { CatalogoConsultaId } from "@/domain/queries/tipos";
 import { prisma } from "@/infra/prisma/client";
 import {
   registrarIntento,
@@ -28,6 +45,7 @@ import {
   type ResultadoLimiteTasa,
 } from "@/infra/rateLimit/limiteTasa";
 import { registrarEventoRateLimitConsulta } from "@/infra/rateLimit/eventoConsultaRateLimit";
+import { registrarEventoLatenciaConsulta } from "@/infra/queries/eventoLatenciaConsulta";
 
 export const runtime = "nodejs";
 
@@ -79,7 +97,36 @@ function aEntradaCruda(payload: unknown): EntradaCrudaEjecutarConsulta | null {
   };
 }
 
-export async function POST(request: Request) {
+/** Contexto mutable, de UN SOLO campo, que manejarEjecutarConsulta()
+ * llena para que el envoltorio POST() (que no tiene, ni deberia tener,
+ * ninguna otra visibilidad sobre el payload ya validado) pueda incluir
+ * catalogoId en el evento de latencia -- mismo campo, mismo tipo
+ * cerrado y misma guardia en runtime que ya usan
+ * eventoPresupuestoComputo.ts/eventoConsultaRateLimit.ts. Nunca lleva
+ * cadenaId/empresaId/usuarioId: no hay ningun campo aca por el que
+ * colarlos. */
+interface ContextoLatenciaEjecutar {
+  catalogoId?: CatalogoConsultaId;
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  const inicioMs = performance.now();
+  const contexto: ContextoLatenciaEjecutar = {};
+  let respuesta: NextResponse | undefined;
+  try {
+    respuesta = await manejarEjecutarConsulta(request, contexto);
+    return respuesta;
+  } finally {
+    const duracionMs = performance.now() - inicioMs;
+    registrarEventoLatenciaConsulta("CONSULTA_LATENCIA_TOTAL", {
+      duracionMs,
+      statusHttp: respuesta?.status,
+      catalogoId: contexto.catalogoId,
+    });
+  }
+}
+
+async function manejarEjecutarConsulta(request: Request, contexto: ContextoLatenciaEjecutar): Promise<NextResponse> {
   const resultadoSesion = await requireSession();
   if ("respuesta" in resultadoSesion) return resultadoSesion.respuesta;
   const { sesion } = resultadoSesion;
@@ -101,6 +148,13 @@ export async function POST(request: Request) {
   if (!construida.ok) {
     return NextResponse.json({ ok: false, error: construida.error }, { status: STATUS_POR_ERROR[construida.error] });
   }
+  // PR4 -- catalogoId recien se conoce aca (ya validado contra el
+  // catalogo cerrado de 6 literales); se lo entrega al envoltorio de
+  // latencia de POST() para que el evento pueda incluirlo. Nunca se
+  // llena antes de este punto (sesion invalida/body invalido/payload
+  // sin catalogoId valido quedan sin este campo en el evento, a
+  // proposito).
+  contexto.catalogoId = construida.entrada.catalogoId;
 
   // Incremento 5 PR1 -- limite de tasa POR USUARIO autenticado (nunca
   // por IP cruda, a diferencia de INICIO_EVALUACION/DESBLOQUEO_DETALLE:

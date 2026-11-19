@@ -202,15 +202,25 @@ Cada `DefinicionKpi` guarda denominador, unidad, periodo, zona horaria, reglas d
 - [ ] "¿Qué acción debería evaluar primero?"
 - [ ] "¿Qué cambió desde el último pulso?"
 
-**Arquitectura de consulta (§12.2) — respeta el principio 10 de la Sección 2 (la IA explica, el motor calcula):**
-- [ ] Clasificador de intención sobre la pregunta en lenguaje natural
-- [ ] Catálogo semántico permitido de KPIs y dimensiones (el modelo de lenguaje solo elige de este catálogo, nunca genera SQL libre)
-- [ ] Constructor de consulta permitida
-- [ ] Control de tenant, permisos y periodo antes de ejecutar
-- [ ] Motor SQL/cálculo determinístico (no generativo) para el resultado numérico
-- [ ] Generador de explicación sobre el resultado ya calculado
-- [ ] Registro auditable de cada consulta
-- [ ] Límites de filas, tiempo, costo y acceso — el modelo de lenguaje nunca recibe credenciales
+**Arquitectura de consulta (§12.2) — respeta el principio 10 de la Sección 2 (la IA explica, el motor calcula).**
+Nota (Incremento 5, decisión de producto de Alex): se descartó la alternativa
+original de un clasificador de intención en lenguaje natural sobre un modelo
+de lenguaje (I5-07, permanece NI por diseño). El usuario elige directamente
+una de las 6 preguntas de un catálogo cerrado ("Producto 1"), sin
+participación de ningún modelo de lenguaje en ningún punto del flujo. Esto
+satisface la garantía de seguridad subyacente (nunca SQL libre, nunca
+credenciales expuestas a un modelo) de forma más fuerte que la lectura
+literal del requisito original. Detalle completo, decisiones y trazabilidad
+requisito-por-requisito en
+`docs/engineering/INCREMENTO5_CONSULTAS_DETERMINISTICAS_TRAZABILIDAD.md`.
+- [ ] ~~Clasificador de intención sobre la pregunta en lenguaje natural~~ — descartado por decisión de producto (I5-07, permanece NI por diseño); el usuario elige directamente del catálogo
+- [ ] Catálogo semántico permitido de KPIs y dimensiones (`src/infra/queries/catalogo.ts`, 6 IDs estables → ejecutores permitidos en código, nunca SQL libre)
+- [ ] Constructor de consulta permitida (`construirConsultaPermitida.ts`)
+- [ ] Control de tenant, permisos y periodo antes de ejecutar (reutiliza `tenantClient()`/`requireSession()` ya probados en producción)
+- [ ] Motor de cálculo determinístico (no generativo) para el resultado numérico (`ejecutarConsultaPermitida.ts`, dispatcher sobre los motores de KPI existentes)
+- [ ] Generador de explicación sobre el resultado ya calculado (plantillas fijas con interpolación, nunca texto generativo libre)
+- [ ] Registro auditable de cada consulta (`registrarConsulta.ts`)
+- [ ] Límites de filas, tiempo, costo y acceso — satisfecho de forma trivial: no hay ningún modelo de lenguaje en el flujo, por lo que no hay credenciales que exponer
 
 **Contrato de respuesta, 10 elementos obligatorios (§12.3):**
 - [ ] Respuesta directa
