@@ -29,7 +29,10 @@
     "r2:probar": "tsx scripts/probarR2.ts",
     "test:coverage": "vitest run --coverage",
     "prepare": "husky",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "perf:semilla": "tsx scripts/perf/semillaSinteticaConsultas.ts",
+    "perf:explicar": "tsx scripts/perf/explicarConsultas.ts",
+    "perf:carga": "tsx scripts/perf/cargaConsultas.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1140.0",
@@ -75,7 +78,9 @@
     "tailwindcss": "^4.0.0",
     "tsx": "^4.23.13",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "autocannon": "^9.0.0",
+    "@types/autocannon": "^7.12.7"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

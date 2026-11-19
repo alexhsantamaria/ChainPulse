@@ -66,6 +66,14 @@ vi.mock("@/infra/rateLimit/eventoConsultaRateLimit", () => ({
   registrarEventoRateLimitConsulta: (...args: unknown[]) => registrarEventoRateLimitConsultaMock(...args),
 }));
 
+// Incremento 5 PR4 -- se mockea para poder verificar, sin tocar
+// stdout, el evento de latencia total (duracionMs/statusHttp/catalogoId,
+// nunca cadenaId/empresaId/usuarioId).
+const registrarEventoLatenciaConsultaMock = vi.fn();
+vi.mock("@/infra/queries/eventoLatenciaConsulta", () => ({
+  registrarEventoLatenciaConsulta: (...args: unknown[]) => registrarEventoLatenciaConsultaMock(...args),
+}));
+
 const SESION_ADMIN = { usuarioId: "u1", empresaId: "e1", rol: "ADMINISTRADOR", email: "a@b.com", nombre: null, eslabonId: null };
 const PAYLOAD_SIN_PERIODO = { catalogoId: "DEPENDENCIA_CRITICA", cadenaId: "cadena-1" };
 const PAYLOAD_CON_PERIODO = { catalogoId: "OTIF_CAIDA", cadenaId: "cadena-1", periodoInicio: "2026-09-01", periodoFin: "2026-09-30" };
@@ -425,5 +433,93 @@ describe("POST /ejecutar -- limite de tasa (Incremento 5 PR1, antes del dispatch
     const [, bucket, limite] = registrarIntentoMock.mock.calls[0] as [string, string, number];
     expect(bucket).toBe("CONSULTA_EJECUTAR");
     expect(limite).toBe(LIMITE_CONSULTA_EJECUTAR);
+  });
+});
+
+describe("POST /ejecutar -- latencia total de punta a punta (Incremento 5 PR4)", () => {
+  it("camino feliz (ok:true) -- registra CONSULTA_LATENCIA_TOTAL exactamente una vez, con duracionMs numerico >= 0, statusHttp=200 y el catalogoId ya validado", async () => {
+    const respuestaOk = {
+      ok: true,
+      catalogoId: "OTIF_CAIDA",
+      respuestaDirecta: "El OTIF se mantuvo.",
+      periodo: { inicio: "2026-09-01", fin: "2026-09-30" },
+      filtros: {},
+      fuente: "ObservacionKpi",
+      formula: "numerador/denominador",
+      numerador: 90,
+      denominador: 100,
+      calidad: { faltantes: [], cobertura: 1 },
+      hecho: "El OTIF del periodo fue 90%.",
+      interpretacion: "Se mantuvo respecto al periodo anterior.",
+      accion: "Ninguna accion urgente.",
+      comoComprobar: "Revisa ObservacionKpi del periodo.",
+      ruleVersion: "consultas-v1",
+    };
+    ejecutarConsultaPermitidaMock.mockResolvedValue(respuestaOk);
+    const { POST } = await import("../route");
+    const respuesta = await POST(construirRequest(PAYLOAD_CON_PERIODO));
+    expect(respuesta.status).toBe(200);
+
+    expect(registrarEventoLatenciaConsultaMock).toHaveBeenCalledTimes(1);
+    const [codigo, detalle] = registrarEventoLatenciaConsultaMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(codigo).toBe("CONSULTA_LATENCIA_TOTAL");
+    expect(typeof detalle.duracionMs).toBe("number");
+    expect(detalle.duracionMs as number).toBeGreaterThanOrEqual(0);
+    expect(detalle.statusHttp).toBe(200);
+    expect(detalle.catalogoId).toBe("OTIF_CAIDA");
+  });
+
+  it("sesion invalida (rechazada antes de leer el body) -- SI registra el evento, pero SIN catalogoId (nunca se llego a validar el payload)", async () => {
+    const { NextResponse } = await import("next/server");
+    requireSessionMock.mockResolvedValue({ respuesta: NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 }) });
+
+    const { POST } = await import("../route");
+    const respuesta = await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+    expect(respuesta.status).toBe(401);
+
+    expect(registrarEventoLatenciaConsultaMock).toHaveBeenCalledTimes(1);
+    const [codigo, detalle] = registrarEventoLatenciaConsultaMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(codigo).toBe("CONSULTA_LATENCIA_TOTAL");
+    expect(detalle.statusHttp).toBe(401);
+    expect(detalle.catalogoId).toBeUndefined();
+  });
+
+  it("payload invalido (catalogoId fuera del catalogo cerrado) -- registra el evento con statusHttp=400 y SIN catalogoId (nunca llego a ser uno de los 6 literales validos)", async () => {
+    const { POST } = await import("../route");
+    const respuesta = await POST(construirRequest({ catalogoId: "SELECT * FROM x", cadenaId: "cadena-1" }));
+    expect(respuesta.status).toBe(400);
+
+    expect(registrarEventoLatenciaConsultaMock).toHaveBeenCalledTimes(1);
+    const [, detalle] = registrarEventoLatenciaConsultaMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(detalle.statusHttp).toBe(400);
+    expect(detalle.catalogoId).toBeUndefined();
+  });
+
+  it("limite de tasa rechazado (429) -- registra el evento con statusHttp=429 y el catalogoId ya conocido (se valido antes del rate limit)", async () => {
+    registrarIntentoMock.mockResolvedValue({
+      contador: 31,
+      permitido: false,
+      buckets: [{ ventanaInicio: new Date("2026-09-16T14:45:00.000Z"), contador: 31 }],
+    });
+    const { POST } = await import("../route");
+    const respuesta = await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+    expect(respuesta.status).toBe(429);
+
+    expect(registrarEventoLatenciaConsultaMock).toHaveBeenCalledTimes(1);
+    const [, detalle] = registrarEventoLatenciaConsultaMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(detalle.statusHttp).toBe(429);
+    expect(detalle.catalogoId).toBe("DEPENDENCIA_CRITICA");
+  });
+
+  it("PRESUPUESTO_COMPUTO_EXCEDIDO (503) -- el evento de latencia SIGUE registrandose (nunca se omite solo porque el presupuesto de computo ya descarto el resultado)", async () => {
+    ejecutarConsultaPermitidaMock.mockResolvedValue({ ok: false, error: "PRESUPUESTO_COMPUTO_EXCEDIDO" });
+    const { POST } = await import("../route");
+    const respuesta = await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+    expect(respuesta.status).toBe(503);
+
+    expect(registrarEventoLatenciaConsultaMock).toHaveBeenCalledTimes(1);
+    const [, detalle] = registrarEventoLatenciaConsultaMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(detalle.statusHttp).toBe(503);
+    expect(detalle.catalogoId).toBe("DEPENDENCIA_CRITICA");
   });
 });

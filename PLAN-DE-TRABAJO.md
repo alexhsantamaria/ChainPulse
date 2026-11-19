@@ -115,6 +115,8 @@ Depende de: ADR-0004 (jobs + storage) resuelto.
 - [ ] Construir y validar (10 KPIs confirmados por Alex).
 
 ### Incremento 5 — Consultas en lenguaje natural
+
+> **Nota (Incremento 5, decisión de producto de Alex):** se descartó la arquitectura de abajo basada en un clasificador de intención en lenguaje natural sobre un LLM (AI SDK/Claude API, prompt injection, 2 llamadas en serie, etc.). Lo implementado es "Producto 1": el usuario elige directamente una de 6 preguntas de un catálogo cerrado, sin ningún modelo de lenguaje en el flujo. El texto que sigue queda como registro histórico de la alternativa evaluada y descartada, no como el diseño vigente. Arquitectura real, decisiones y trazabilidad requisito por requisito en `docs/engineering/INCREMENTO5_CONSULTAS_DETERMINISTICAS_TRAZABILIDAD.md`.
 Depende de: capa de analítica (vistas materializadas) + adapter de IA aislado.
 - [ ] Redactar detalle EARS.
 - [ ] Elegir proveedor LLM (Claude API recomendado) + catálogo semántico cerrado validado por Zod.
@@ -294,6 +296,8 @@ Depende de: ADR-0004 (worker de jobs) resuelto y operativo (Incremento 2); **Clo
 ---
 
 ### Incremento 5 — Consultas en lenguaje natural
+
+> **Nota (Incremento 5, decisión de producto de Alex):** se descartó la arquitectura de abajo basada en un clasificador de intención en lenguaje natural sobre un LLM (AI SDK/Claude API, prompt injection, 2 llamadas en serie, etc.). Lo implementado es "Producto 1": el usuario elige directamente una de 6 preguntas de un catálogo cerrado, sin ningún modelo de lenguaje en el flujo. El texto que sigue queda como registro histórico de la alternativa evaluada y descartada, no como el diseño vigente. Arquitectura real, decisiones y trazabilidad requisito por requisito en `docs/engineering/INCREMENTO5_CONSULTAS_DETERMINISTICAS_TRAZABILIDAD.md`.
 
 Depende de: capa de analítica (vistas/tablas derivadas) construida; Incremento 4 cerrado (KPIs con datos reales para consultar).
 
@@ -530,6 +534,8 @@ Esta es la primera vez que el sistema expone una superficie pública nueva a tr�
 
 ### Incremento 5 — Consultas en lenguaje natural
 
+> **Nota (Incremento 5, decisión de producto de Alex):** se descartó la arquitectura de abajo basada en un clasificador de intención en lenguaje natural sobre un LLM (AI SDK/Claude API, prompt injection, 2 llamadas en serie, etc.). Lo implementado es "Producto 1": el usuario elige directamente una de 6 preguntas de un catálogo cerrado, sin ningún modelo de lenguaje en el flujo. El texto que sigue queda como registro histórico de la alternativa evaluada y descartada, no como el diseño vigente. Arquitectura real, decisiones y trazabilidad requisito por requisito en `docs/engineering/INCREMENTO5_CONSULTAS_DETERMINISTICAS_TRAZABILIDAD.md`.
+
 #### Vercel AI SDK (`ai` + `@ai-sdk/anthropic`) sobre Zod, no `@anthropic-ai/sdk` a mano
 
 - [ ] Instalar `ai` + `@ai-sdk/anthropic` (recomendado sobre usar `@anthropic-ai/sdk` directo): `generateObject()` del AI SDK valida la salida del modelo contra un schema Zod **del lado del SDK**, con reintento automático si la salida no matchea — esto es exactamente el mecanismo que hace cumplible el principio 10 de `MVP-DEFINITIVO.md` ("la IA explica, el motor calcula", nunca SQL libre): el catálogo semántico permitido se modela como un enum/union de Zod, y el clasificador de intención literalmente no puede devolver algo fuera de ese catálogo sin que el SDK lo rechace antes de que llegue a la capa de construcción de consulta.
@@ -584,6 +590,7 @@ Incremento 4:
 
 Incremento 5:
  11. Vercel AI SDK + @ai-sdk/anthropic sobre Zod          — depende de (10): la capa determinística consulta las vistas materializadas
+ 11b. **Descartado (decisión de producto de Alex, Incremento 5 PR4):** no se instala ningún AI SDK/proveedor LLM — "Producto 1" es selección directa de un catálogo cerrado, sin modelo de lenguaje en el flujo. Ver `docs/engineering/INCREMENTO5_CONSULTAS_DETERMINISTICAS_TRAZABILIDAD.md`.
 
 Incremento 6:
  12. Anonimización/k-anonimato (domain/, sin librería nueva) — depende del patrón snapshot-JSON y Consentimiento append-only, ambos ya resueltos en Incremento 2
@@ -699,6 +706,8 @@ Inspeccioné `src/infra/auth/rateLimit.ts`, `src/infra/prisma/tenantClient.ts`, 
 ---
 
 ### Incremento 5 — Consultas en lenguaje natural
+
+> **Nota (Incremento 5, decisión de producto de Alex):** se descartó la arquitectura de abajo basada en un clasificador de intención en lenguaje natural sobre un LLM (AI SDK/Claude API, prompt injection, 2 llamadas en serie, etc.). Lo implementado es "Producto 1": el usuario elige directamente una de 6 preguntas de un catálogo cerrado, sin ningún modelo de lenguaje en el flujo. El texto que sigue queda como registro histórico de la alternativa evaluada y descartada, no como el diseño vigente. Arquitectura real, decisiones y trazabilidad requisito por requisito en `docs/engineering/INCREMENTO5_CONSULTAS_DETERMINISTICAS_TRAZABILIDAD.md`.
 
 #### Tareas — prevención de fuga cross-tenant y prompt injection (foco principal de este incremento)
 - [ ] **Regla dura de diseño**: el modelo de lenguaje nunca recibe ni produce `empresaId`/`tenantId` como parte de su contrato de entrada/salida. Su única salida válida es un objeto JSON validado por Zod contra el catálogo semántico cerrado (KPI, dimensión, período, filtros permitidos) — nunca SQL libre, nunca un parámetro de tenant.
@@ -1338,6 +1347,8 @@ model ImportacionCsv {
 
 ### Incremento 5 — Consultas en lenguaje natural
 
+> **Nota (Incremento 5, decisión de producto de Alex):** se descartó la arquitectura de abajo basada en un clasificador de intención en lenguaje natural sobre un LLM (AI SDK/Claude API, prompt injection, 2 llamadas en serie, etc.). Lo implementado es "Producto 1": el usuario elige directamente una de 6 preguntas de un catálogo cerrado, sin ningún modelo de lenguaje en el flujo. El texto que sigue queda como registro histórico de la alternativa evaluada y descartada, no como el diseño vigente. Arquitectura real, decisiones y trazabilidad requisito por requisito en `docs/engineering/INCREMENTO5_CONSULTAS_DETERMINISTICAS_TRAZABILIDAD.md`.
+
 #### Cambios de schema concretos
 
 ```prisma
@@ -1894,6 +1905,8 @@ Nada de esto se aplicó -- ni migración, ni código de importador, ni cambios a
 
 ### Incremento 5 — Consultas en lenguaje natural
 
+> **Nota (Incremento 5, decisión de producto de Alex):** se descartó la arquitectura de abajo basada en un clasificador de intención en lenguaje natural sobre un LLM (AI SDK/Claude API, prompt injection, 2 llamadas en serie, etc.). Lo implementado es "Producto 1": el usuario elige directamente una de 6 preguntas de un catálogo cerrado, sin ningún modelo de lenguaje en el flujo. El texto que sigue queda como registro histórico de la alternativa evaluada y descartada, no como el diseño vigente. Arquitectura real, decisiones y trazabilidad requisito por requisito en `docs/engineering/INCREMENTO5_CONSULTAS_DETERMINISTICAS_TRAZABILIDAD.md`.
+
 #### Bloque A — Capa de analítica + catálogo semántico
 **Esfuerzo: L.** Justificación: es diseño de un sistema nuevo de punta a punta (vistas derivadas + catálogo cerrado validado por Zod) sin ningún precedente en el repo — todo lo existente hoy consulta directamente las tablas OLTP vía Prisma.
 
@@ -1977,7 +1990,7 @@ El orden de incrementos del roadmap (2→3→4→5→6→7) es correcto a nivel 
 6. **Extraer el helper de transacción atómica (`ejecutarEnTransaccionDeTenant`) antes de empezar el Incremento 3**, no durante — el Incremento 3 es el primero que necesita crear varias entidades relacionadas en una sola operación (`Cadena`+`Nodo`s+`ConexionCadena`s), y hoy ese patrón está duplicado de forma ad hoc en dos archivos sin una función compartida. Formalizarlo antes evita una tercera copia con una variación sutil.
 7. **Dentro del Incremento 3: modelo de datos y el patrón de denormalización de `empresaId`/RLS primero, mapa visual (React Flow) después.** El mapa es la parte más visible pero la de menor riesgo técnico; el modelo de datos es donde se puede introducir un agujero de aislamiento multi-tenant si se apura.
 8. **Capa de analítica del Incremento 5 (vistas derivadas) conviene adelantarla en paralelo al Incremento 4**, no estrictamente después: los KPIs del Incremento 4 (`ObservacionKpi`) son exactamente el tipo de dato que la capa de analítica del Incremento 5 necesita consultar. Diseñar ambas sin coordinación corre el riesgo de que las vistas de analítica del Incremento 5 tengan que rehacerse cuando lleguen los KPIs reales del Incremento 4.
-9. **Dentro del Incremento 5: el catálogo semántico cerrado (Zod) y el control de tenant en la capa determinística se escriben y testean ANTES de conectar cualquier proveedor LLM real**, no en paralelo. Es mucho más fácil verificar que el catálogo rechaza correctamente algo fuera de su alcance con datos de prueba fijos que debuggear ese mismo control con la variabilidad de una respuesta real de modelo de lenguaje de por medio.
+9. **Dentro del Incremento 5: el catálogo semántico cerrado (Zod) y el control de tenant en la capa determinística se escriben y testean ANTES de conectar cualquier proveedor LLM real**, no en paralelo. Es mucho más fácil verificar que el catálogo rechaza correctamente algo fuera de su alcance con datos de prueba fijos que debuggear ese mismo control con la variabilidad de una respuesta real de modelo de lenguaje de por medio. **Superado (decisión de producto de Alex, Incremento 5 PR4):** nunca se conectó proveedor LLM — el catálogo cerrado de 6 preguntas es la selección final ("Producto 1"), no un paso intermedio antes de un clasificador. Ver `docs/engineering/INCREMENTO5_CONSULTAS_DETERMINISTICAS_TRAZABILIDAD.md`.
 10. **El patrón `SECURITY DEFINER` cross-tenant para Investigador (Incremento 6) se revisa como su propia unidad de seguridad, con tests de aislamiento dedicados, antes de construir el espacio del investigador (Bloque B) encima.** Construir la UI de investigación sobre un camino de acceso que todavía no probó que no filtra columnas de más es invertir esfuerzo sobre una base insegura.
 11. **Market Signals (Incremento 7) reutiliza el pipeline de anonimización del Incremento 6 en vez de construir uno paralelo** — si al llegar ahí el pipeline de k-anonimato de Investigación no generaliza bien a "agregados por segmento de mercado" en vez de "datasets para investigador", vale la pena invertir ahí (generalizar el pipeline existente) antes de escribir una segunda implementación de la misma idea de privacidad.
 

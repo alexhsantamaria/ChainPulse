@@ -9,3 +9,11 @@ node_modules
 next-env.d.ts
 dist
 coverage
+
+# Incremento 5 PR4 (Alex, 2026-11-19, ronda de revision): resultados de
+# EXPLAIN/carga son evidencia de una corrida puntual contra una rama
+# temporal de Neon -- nunca codigo fuente ni documentacion, y pueden
+# contener volumenes/timings que no corresponde versionar sin curar.
+# Los resultados aprobados se copian a mano a una ubicacion documental
+# explicitamente autorizada; este directorio nunca se commitea.
+scripts/perf/resultados/
