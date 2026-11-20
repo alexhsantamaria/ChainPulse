@@ -11,14 +11,24 @@
 // conexion Postgres: solo prueba el runner HTTP en si, con cookies
 // sinteticas fijas construidas aca mismo (nunca mintadas de verdad --
 // el runner no distingue el contenido de la cookie, solo la reenvia).
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
-import { correrUnaConcurrencia, resolverUsaCookiesSegurasDesdeEnv } from "../cargaConsultas";
+
+vi.mock("@prisma/client", () => ({
+  PrismaClient: class PrismaClientMock {},
+}));
+
+import {
+  correrUnaConcurrencia,
+  resolverBypassProteccionVercelDesdeEnv,
+  resolverUsaCookiesSegurasDesdeEnv,
+} from "../cargaConsultas";
 import { CATALOGO_CONSULTA_IDS } from "../../../src/domain/queries/tipos";
 
 interface PeticionRecibida {
   cookie: string | undefined;
   catalogoId: string | undefined;
+  bypassProteccionVercel: string | undefined;
 }
 
 interface ServidorDePrueba {
@@ -51,6 +61,10 @@ function iniciarServidorDePrueba(
       peticiones.push({
         cookie: req.headers.cookie,
         catalogoId: typeof cuerpo.catalogoId === "string" ? cuerpo.catalogoId : undefined,
+        bypassProteccionVercel:
+          typeof req.headers["x-vercel-protection-bypass"] === "string"
+            ? req.headers["x-vercel-protection-bypass"]
+            : undefined,
       });
       if (opciones.nuncaResponder) return; // nunca responde -- simula un colgado
       // CORRECCION (ronda de revision 3, 2026-11-19, punto 1): simula una
@@ -314,6 +328,26 @@ describe("correrUnaConcurrencia (runner real, servidor HTTP real, autocannon rea
       correrUnaConcurrencia(urlBase, ["solo-una-cookie"], "cadena-de-prueba", 3, 6, 30),
     ).rejects.toThrow("ASIGNACION_DE_COOKIES_INCONSISTENTE_CON_CONCURRENCIA");
   });
+
+  it("envia el bypass temporal de Vercel en TODAS las solicitudes sin incluirlo en el resumen", async () => {
+    const { server, urlBase, peticiones } = await iniciarServidorDePrueba();
+    servidorActual = server;
+    const bypass = "b".repeat(32);
+
+    const resumen = await correrUnaConcurrencia(
+      urlBase,
+      ["cookie-bypass"],
+      "cadena-de-prueba",
+      1,
+      6,
+      30,
+      { bypassProteccionVercel: bypass },
+    );
+
+    expect(peticiones).toHaveLength(6);
+    expect(peticiones.every((peticion) => peticion.bypassProteccionVercel === bypass)).toBe(true);
+    expect(JSON.stringify(resumen)).not.toContain(bypass);
+  }, 20_000);
 });
 
 
@@ -343,6 +377,31 @@ describe("resolverUsaCookiesSegurasDesdeEnv()", () => {
       expect(() => resolverUsaCookiesSegurasDesdeEnv(valorCrudo)).toThrow(
         `VALOR_INVALIDO_CARGA_CONSULTAS_USA_COOKIES_SEGURAS_${valorCrudo}`,
       );
+    },
+  );
+});
+
+describe("resolverBypassProteccionVercelDesdeEnv()", () => {
+  it("sin variable conserva compatibilidad con previews no protegidos", () => {
+    expect(resolverBypassProteccionVercelDesdeEnv(undefined)).toBeUndefined();
+  });
+
+  it("acepta exactamente 32 caracteres sin transformarlos", () => {
+    const bypass = "a".repeat(32);
+    expect(resolverBypassProteccionVercelDesdeEnv(bypass)).toBe(bypass);
+  });
+
+  it.each(["", " ".repeat(32), "corto", "x".repeat(31), "x".repeat(33)])(
+    "rechaza %j con un error fijo que nunca refleja el valor",
+    (valor) => {
+      expect(() => resolverBypassProteccionVercelDesdeEnv(valor)).toThrow(
+        "VALOR_INVALIDO_CARGA_CONSULTAS_VERCEL_BYPASS",
+      );
+      try {
+        resolverBypassProteccionVercelDesdeEnv(valor);
+      } catch (error) {
+        expect(String(error)).not.toContain(valor || "valor-imposible");
+      }
     },
   );
 });

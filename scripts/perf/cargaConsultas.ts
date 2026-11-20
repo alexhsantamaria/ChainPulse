@@ -140,6 +140,12 @@
 //                                         sera 401 igual que con el
 //                                         secreto equivocado, pero sin
 //                                         que el secreto sea la causa.
+//   CARGA_CONSULTAS_VERCEL_BYPASS      -- opcional. Secreto temporal de
+//                                         Protection Bypass for Automation
+//                                         del proyecto Vercel de prueba.
+//                                         Se envia solo como header
+//                                         x-vercel-protection-bypass; nunca
+//                                         se imprime ni se persiste.
 //   SEED_DATABASE_URL                 -- rol neondb_owner, mismo
 //                                         destino ya sembrado por
 //                                         semillaSinteticaConsultas.ts
@@ -360,9 +366,10 @@ export async function mintarCookiesParaUsuarios(
  * de cargaConsultasHelpers.ts (Alex, ronda 2, punto 2: "pruebas del
  * runner real -- no solamente de los helpers").
  *
- * `opcionesAdicionalesSoloPrueba` existe EXCLUSIVAMENTE para que esas
- * pruebas puedan forzar `reconnectRate` (nunca se pasa desde main() en
- * una corrida real) y asi demostrar, contra el autocannon real, que un
+ * `opcionesAdicionales` permite que las pruebas fuercen `reconnectRate`
+ * (main() nunca lo fija) y que una corrida real protegida por Vercel
+ * envie su bypass temporal sin mezclarlo con cookies ni resultados.
+ * Las pruebas usan reconnectRate para demostrar, contra autocannon real, que un
  * reconnect (_resetConnection() en node_modules/autocannon/lib/httpClient.js,
  * que reutiliza la MISMA conexion y por lo tanto la MISMA cookie ya
  * capturada en su clausura, sin volver a llamar setupClient) nunca
@@ -375,7 +382,7 @@ export async function correrUnaConcurrencia(
   concurrencia: number,
   maxSolicitudesPorConexion: number,
   limiteSeguridadSegundos: number,
-  opcionesAdicionalesSoloPrueba?: { reconnectRate?: number },
+  opcionesAdicionales?: { reconnectRate?: number; bypassProteccionVercel?: string },
 ): Promise<ResumenEscenarioCarga> {
   if (cookiesDeEstaCorrida.length !== concurrencia) {
     // Invariante interna -- si esto lanza, es un bug de main() (el
@@ -432,8 +439,8 @@ export async function correrUnaConcurrencia(
     connections: concurrencia,
     amount,
     method: "POST",
-    ...(opcionesAdicionalesSoloPrueba?.reconnectRate !== undefined
-      ? { reconnectRate: opcionesAdicionalesSoloPrueba.reconnectRate }
+    ...(opcionesAdicionales?.reconnectRate !== undefined
+      ? { reconnectRate: opcionesAdicionales.reconnectRate }
       : {}),
     setupClient: (cliente) => {
       const cookie = cookiesDeEstaCorrida[indiceConexion];
@@ -444,7 +451,13 @@ export async function correrUnaConcurrencia(
       const solicitudesDeEstaConexion = CATALOGO_CONSULTA_IDS.map((catalogoId) => ({
         method: "POST" as const,
         path: "/api/consultas/ejecutar",
-        headers: { "content-type": "application/json", cookie },
+        headers: {
+          "content-type": "application/json",
+          cookie,
+          ...(opcionesAdicionales?.bypassProteccionVercel
+            ? { "x-vercel-protection-bypass": opcionesAdicionales.bypassProteccionVercel }
+            : {}),
+        },
         body: JSON.stringify(construirPayloadCarga(catalogoId, cadenaId)),
       }));
       cliente.setRequests(solicitudesDeEstaConexion);
@@ -509,6 +522,18 @@ export function resolverUsaCookiesSegurasDesdeEnv(valorCrudo: string | undefined
   throw new Error(`VALOR_INVALIDO_CARGA_CONSULTAS_USA_COOKIES_SEGURAS_${valorCrudo}`);
 }
 
+/**
+ * Resuelve el bypass temporal de Vercel sin exponer su valor. Vercel
+ * exige exactamente 32 caracteres para Protection Bypass for Automation;
+ * cualquier valor presente que no cumpla el contrato falla con un codigo
+ * fijo que nunca incorpora el secreto.
+ */
+export function resolverBypassProteccionVercelDesdeEnv(valorCrudo: string | undefined): string | undefined {
+  if (valorCrudo === undefined) return undefined;
+  if (valorCrudo.length === 32 && !/^\s+$/.test(valorCrudo)) return valorCrudo;
+  throw new Error("VALOR_INVALIDO_CARGA_CONSULTAS_VERCEL_BYPASS");
+}
+
 async function main(): Promise<void> {
   const urlBaseCruda = process.env.CARGA_CONSULTAS_BASE_URL;
   const cadenaId = process.env.CARGA_CONSULTAS_CADENA_ID;
@@ -532,6 +557,9 @@ async function main(): Promise<void> {
   // poder probar la validacion estricta sin invocar main() completo
   // (Alex, ronda de seguimiento 2026-11-20, punto 3).
   const usaCookiesSeguras = resolverUsaCookiesSegurasDesdeEnv(process.env.CARGA_CONSULTAS_USA_COOKIES_SEGURAS);
+  const bypassProteccionVercel = resolverBypassProteccionVercelDesdeEnv(
+    process.env.CARGA_CONSULTAS_VERCEL_BYPASS,
+  );
 
   const urlBase = exigirUrlDePrueba(urlBaseCruda);
   const escala = leerEscalaDeArgv();
@@ -571,7 +599,13 @@ async function main(): Promise<void> {
   // sus propias respuestas durante la carga real -- Alex, ronda 2:
   // "La sonda de la primera cookie no sustituye la validacion de todas
   // las sesiones", ver construirResumenEscenario()).
-  await verificarDeploymentUsaRamaTemporal(fetch, urlBase, cookies[0] as string, cadenaId);
+  await verificarDeploymentUsaRamaTemporal(
+    fetch,
+    urlBase,
+    cookies[0] as string,
+    cadenaId,
+    bypassProteccionVercel,
+  );
   console.log("Prueba de rama temporal OK -- el deployment ve el cadenaId sintetico sembrado.");
 
   const resumenes: ResumenEscenarioCarga[] = [];
@@ -590,6 +624,7 @@ async function main(): Promise<void> {
       concurrencia,
       MAX_SOLICITUDES_POR_CONEXION_POR_CORRIDA,
       limiteSeguridadSegundos,
+      { bypassProteccionVercel },
     );
     resumenes.push(resumen);
 

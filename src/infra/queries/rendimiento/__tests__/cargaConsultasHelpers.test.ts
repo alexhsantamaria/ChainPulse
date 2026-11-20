@@ -167,6 +167,22 @@ describe("verificarDeploymentUsaRamaTemporal()", () => {
     expect((opciones.headers as Record<string, string>).cookie).toBe(cookieSecreta);
   });
 
+  it("envia el bypass temporal de Vercel cuando se proporciona, sin exponerlo en retornos", async () => {
+    const bypass = "v".repeat(32);
+    const fetchMock = vi.fn().mockResolvedValue(respuestaFalsa({ status: 200, cuerpo: cuerpoOkReconocible() }));
+    await expect(
+      verificarDeploymentUsaRamaTemporal(
+        fetchMock,
+        urlBase,
+        cookieSecreta,
+        "cadena-sintetica-1",
+        bypass,
+      ),
+    ).resolves.toBeUndefined();
+    const [, opciones] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((opciones.headers as Record<string, string>)["x-vercel-protection-bypass"]).toBe(bypass);
+  });
+
   it("HTTP 404 (CADENA_INEXISTENTE -- el deployment NO ve la rama temporal sembrada) -- lanza sin incluir la cookie en el mensaje", async () => {
     const fetchMock = vi.fn().mockResolvedValue(respuestaFalsa({ status: 404 }));
     await expect(verificarDeploymentUsaRamaTemporal(fetchMock, urlBase, cookieSecreta, "cadena-sintetica-1")).rejects.toThrow(
@@ -531,6 +547,24 @@ describe("sondarVarianteCookieReconocidaPorDeployment()", () => {
       "cadena-sintetica-sonda",
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("propaga el bypass temporal a las DOS variantes y nunca lo incluye en el resultado", async () => {
+    const bypass = "p".repeat(32);
+    const fetchMock = construirFetchMockQueReconoce("__Secure-authjs.session-token");
+    const resultado = await sondarVarianteCookieReconocidaPorDeployment(
+      fetchMock,
+      `https://${HOST_DE_PRUEBA_LEGITIMO}`,
+      SECRETO_DE_PRUEBA_SONDA,
+      claims,
+      "cadena-sintetica-sonda",
+      bypass,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [, opciones] of fetchMock.mock.calls as [string, RequestInit][]) {
+      expect((opciones.headers as Record<string, string>)["x-vercel-protection-bypass"]).toBe(bypass);
+    }
+    expect(JSON.stringify(resultado)).not.toContain(bypass);
   });
 
   it("reutiliza la MISMA compuerta exigirUrlDePrueba() -- un host de produccion bloqueado lanza ANTES de hacer ninguna peticion, nunca la bypasea ni la relaja", async () => {

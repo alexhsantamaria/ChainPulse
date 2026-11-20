@@ -207,12 +207,19 @@ export async function verificarDeploymentUsaRamaTemporal(
   urlBase: URL,
   cookieSesion: string,
   cadenaId: string,
+  bypassProteccionVercel?: string,
 ): Promise<void> {
   let respuesta: Response;
   try {
     respuesta = await fetchImpl(new URL("/api/consultas/ejecutar", urlBase).toString(), {
       method: "POST",
-      headers: { "content-type": "application/json", cookie: cookieSesion },
+      headers: {
+        "content-type": "application/json",
+        cookie: cookieSesion,
+        ...(bypassProteccionVercel
+          ? { "x-vercel-protection-bypass": bypassProteccionVercel }
+          : {}),
+      },
       body: JSON.stringify({ catalogoId: CATALOGO_ID_SIN_PERIODO_PARA_SONDA, cadenaId }),
       redirect: "manual",
     });
@@ -310,6 +317,7 @@ export async function sondarVarianteCookieReconocidaPorDeployment(
   secret: string,
   claims: JWT,
   cadenaId: string,
+  bypassProteccionVercel?: string,
 ): Promise<{ https: ResultadoSondaVarianteCookie; http: ResultadoSondaVarianteCookie }> {
   const urlBase = exigirUrlDePrueba(urlBaseCruda);
 
@@ -323,7 +331,13 @@ export async function sondarVarianteCookieReconocidaPorDeployment(
     try {
       respuesta = await fetchImpl(new URL("/api/consultas/ejecutar", urlBase).toString(), {
         method: "POST",
-        headers: { "content-type": "application/json", cookie: cookieSesion },
+        headers: {
+          "content-type": "application/json",
+          cookie: cookieSesion,
+          ...(bypassProteccionVercel
+            ? { "x-vercel-protection-bypass": bypassProteccionVercel }
+            : {}),
+        },
         body: JSON.stringify({ catalogoId: CATALOGO_ID_SIN_PERIODO_PARA_SONDA, cadenaId }),
         redirect: "manual",
       });
