@@ -13,7 +13,7 @@
 // el runner no distingue el contenido de la cookie, solo la reenvia).
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
-import { correrUnaConcurrencia } from "../cargaConsultas";
+import { correrUnaConcurrencia, resolverUsaCookiesSegurasDesdeEnv } from "../cargaConsultas";
 import { CATALOGO_CONSULTA_IDS } from "../../../src/domain/queries/tipos";
 
 interface PeticionRecibida {
@@ -314,4 +314,35 @@ describe("correrUnaConcurrencia (runner real, servidor HTTP real, autocannon rea
       correrUnaConcurrencia(urlBase, ["solo-una-cookie"], "cadena-de-prueba", 3, 6, 30),
     ).rejects.toThrow("ASIGNACION_DE_COOKIES_INCONSISTENTE_CON_CONCURRENCIA");
   });
+});
+
+
+// Investigacion (Alex, 2026-11-20, ronda de seguimiento, punto 3):
+// "Agrega una prueba del comportamiento del runner con
+// CARGA_CONSULTAS_USA_COOKIES_SEGURAS=true y false, incluyendo
+// validacion estricta de la variable." Extraida de main() a
+// resolverUsaCookiesSegurasDesdeEnv() (cargaConsultas.ts) para poder
+// probarla sin invocar main() completo (que abre una conexion real a
+// Postgres) -- pura, sincrona, sin red ni DB.
+describe("resolverUsaCookiesSegurasDesdeEnv()", () => {
+  it("sin la variable (undefined) -- asume true (comportamiento previo a esta correccion, preservado por defecto)", () => {
+    expect(resolverUsaCookiesSegurasDesdeEnv(undefined)).toBe(true);
+  });
+
+  it('"true" explicito -- true', () => {
+    expect(resolverUsaCookiesSegurasDesdeEnv("true")).toBe(true);
+  });
+
+  it('"false" explicito -- false', () => {
+    expect(resolverUsaCookiesSegurasDesdeEnv("false")).toBe(false);
+  });
+
+  it.each(["TRUE", "False", "1", "0", "si", "no", "", " true", "true "])(
+    "valor no reconocido %j -- lanza VALOR_INVALIDO_CARGA_CONSULTAS_USA_COOKIES_SEGURAS_<valor>, NUNCA asume un valor por defecto en silencio",
+    (valorCrudo) => {
+      expect(() => resolverUsaCookiesSegurasDesdeEnv(valorCrudo)).toThrow(
+        `VALOR_INVALIDO_CARGA_CONSULTAS_USA_COOKIES_SEGURAS_${valorCrudo}`,
+      );
+    },
+  );
 });

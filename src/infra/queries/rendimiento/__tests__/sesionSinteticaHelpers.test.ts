@@ -10,18 +10,35 @@
 // propio test, nunca el secreto real de ningun deployment.
 import { describe, expect, it } from "vitest";
 import { decode } from "next-auth/jwt";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
+  calcularNombreCookieSesion,
   construirClaimsSesionSintetica,
   construirFilasUsuariosSinteticosCarga,
   emailUsuarioSinteticoCarga,
   emailsUsuariosSinteticosCarga,
   mintarCookieSesionSintetica,
+  NOMBRE_COOKIE_SESION_HTTP,
   NOMBRE_COOKIE_SESION_HTTPS,
   ROL_USUARIO_SINTETICO_CARGA,
   sufijoEmailUsuariosSinteticosCarga,
   VIGENCIA_SESION_SINTETICA_SEGUNDOS,
 } from "../sesionSinteticaHelpers";
 import { MARCA_SINTETICA_RENDIMIENTO_PR4 } from "../configuracionRendimiento";
+
+// Mismo patron de verificacion ESTATICA (leer como TEXTO, sin ejecutar)
+// que src/infra/rateLimit/__tests__/migracionBucketConsultaEjecutar.test.ts
+// -- aca se aplica al codigo fuente de @auth/core en vez de a una
+// migracion SQL, para fijar (pin) el mecanismo real de Auth.js que este
+// modulo replica y detectar drift si una actualizacion de dependencia lo
+// cambia silenciosamente.
+const RUTA_AUTH_CORE_COOKIE = join(
+  __dirname,
+  "../../../../../node_modules/@auth/core/lib/utils/cookie.js",
+);
+const RUTA_AUTH_CONFIG = join(__dirname, "../../../../auth.config.ts");
+const RUTA_AUTH_TS = join(__dirname, "../../../../auth.ts");
 
 const SECRETO_DE_PRUEBA_DESCARTABLE = "secreto-descartable-unicamente-para-pruebas-unitarias-pr4";
 
@@ -201,6 +218,132 @@ describe("mintarCookieSesionSintetica", () => {
       expect(mensaje).toBe("SECRETO_NEXTAUTH_VACIO");
       expect(mensaje).not.toContain(SECRETO_DE_PRUEBA_DESCARTABLE);
       expect(mensaje.length).toBeLessThan(80);
+    }
+  });
+});
+
+// Investigacion (Alex, 2026-11-20): por que mintarCookieSesionSintetica()
+// producia 401 en el Preview de Vercel AUNQUE CARGA_CONSULTAS_NEXTAUTH_SECRET
+// coincidiera exactamente con el NEXTAUTH_SECRET real del deployment. Raiz:
+// el NOMBRE/SALT efectivo de la cookie de Auth.js v5 depende de como el
+// SERVIDOR resuelve `useSecureCookies` PARA ESE DEPLOYMENT especifico
+// (@auth/core/lib/init.js: `config.useSecureCookies ?? url.protocol ===
+// "https:"`, con `url` resuelto por createActionURL() a partir de
+// AUTH_URL/NEXTAUTH_URL del entorno de Vercel elegido, o de los headers
+// reales si esa variable no esta definida ahi) -- nunca de si la URL de
+// DESTINO del script es HTTPS. Si el servidor resuelve useSecureCookies
+// distinto de lo que el script asumio, el nombre de cookie (y el salt
+// usado para derivar la clave de cifrado, que es EL MISMO valor --
+// @auth/core/jwt.js, getDerivedEncryptionKey()) no coincide: decode()
+// falla, auth() devuelve session:null, y requireSession() responde 401
+// "NO_SESION" -- EXACTAMENTE el sintoma reportado, aunque el secreto sea
+// perfecto. sessionVersion/verificarSesionVigente() (DB) nunca entra en
+// juego en este modo de fallo: el decode falla antes de llegar ahi.
+describe("calcularNombreCookieSesion -- mecanismo real de Auth.js v5 (defaultCookies)", () => {
+  it("useSecureCookies=true produce el nombre con prefijo __Secure- (igual a NOMBRE_COOKIE_SESION_HTTPS)", () => {
+    expect(calcularNombreCookieSesion(true)).toBe("__Secure-authjs.session-token");
+    expect(calcularNombreCookieSesion(true)).toBe(NOMBRE_COOKIE_SESION_HTTPS);
+  });
+
+  it("useSecureCookies=false produce el nombre SIN prefijo (igual a NOMBRE_COOKIE_SESION_HTTP) -- nunca asumido por defecto sin confirmarlo", () => {
+    expect(calcularNombreCookieSesion(false)).toBe("authjs.session-token");
+    expect(calcularNombreCookieSesion(false)).toBe(NOMBRE_COOKIE_SESION_HTTP);
+  });
+
+  it("los dos nombres son SIEMPRE distintos -- una cookie minteada para un valor de useSecureCookies jamas coincide por nombre con el otro", () => {
+    expect(NOMBRE_COOKIE_SESION_HTTPS).not.toBe(NOMBRE_COOKIE_SESION_HTTP);
+  });
+
+  it("contrato estatico: @auth/core/lib/utils/cookie.js (defaultCookies()) sigue construyendo el nombre exactamente como `${cookiePrefix}authjs.session-token` con prefijo \"__Secure-\" -- si una actualizacion de next-auth cambia esto, esta prueba debe fallar primero, nunca en Preview", () => {
+    const fuente = readFileSync(RUTA_AUTH_CORE_COOKIE, "utf8");
+    expect(fuente).toContain("authjs.session-token");
+    expect(fuente).toContain("__Secure-");
+    expect(fuente).toMatch(/\$\{cookiePrefix\}authjs\.session-token/);
+  });
+});
+
+describe("mintarCookieSesionSintetica(..., useSecureCookies) -- reproduccion real del mecanismo de 401 por salt incorrecto", () => {
+  it("useSecureCookies=false mintea con el nombre SIN prefijo y decode() (mismo salt) recupera los claims intactos, incluido sessionVersion", async () => {
+    const claims = construirClaimsSesionSintetica({
+      id: "usuario-id-http",
+      email: "usuario-0007-escala-100@chainpulse-pr4-rendimiento-sintetico.invalid",
+      nombre: "Usuario sintetico de carga 7 (PR4, escala 100)",
+      empresaId: "empresa-de-prueba",
+      rol: ROL_USUARIO_SINTETICO_CARGA,
+      eslabonId: null,
+      mfaHabilitado: false,
+      sessionVersion: 1,
+    });
+
+    const cookie = await mintarCookieSesionSintetica(SECRETO_DE_PRUEBA_DESCARTABLE, claims, false);
+    expect(cookie.startsWith(`${NOMBRE_COOKIE_SESION_HTTP}=`)).toBe(true);
+    expect(cookie.startsWith(`${NOMBRE_COOKIE_SESION_HTTPS}=`)).toBe(false);
+    const token = cookie.slice(`${NOMBRE_COOKIE_SESION_HTTP}=`.length);
+
+    const descifrado = await decode({
+      secret: SECRETO_DE_PRUEBA_DESCARTABLE,
+      salt: NOMBRE_COOKIE_SESION_HTTP,
+      token,
+    });
+
+    expect(descifrado).not.toBeNull();
+    expect(descifrado?.sub).toBe("usuario-id-http");
+    expect((descifrado as Record<string, unknown>).sessionVersion).toBe(1);
+  });
+
+  it("REPRODUCCION DEL 401 (direccion 1): cookie minteada asumiendo useSecureCookies=true, pero el SERVIDOR resuelve useSecureCookies=false para ese deployment -- decode() con el salt que el servidor usaria realmente FALLA, aunque el secreto sea exactamente el correcto", async () => {
+    const claims = construirClaimsSesionSintetica({
+      id: "usuario-id-mismatch-1",
+      email: "usuario-0008-escala-100@chainpulse-pr4-rendimiento-sintetico.invalid",
+      nombre: "Usuario sintetico de carga 8 (PR4, escala 100)",
+      empresaId: "empresa-de-prueba",
+      rol: ROL_USUARIO_SINTETICO_CARGA,
+      eslabonId: null,
+      mfaHabilitado: false,
+      sessionVersion: 1,
+    });
+    // El script asumio useSecureCookies=true (comportamiento HISTORICO,
+    // antes de esta correccion, cuando NOMBRE_COOKIE_SESION_HTTPS era la
+    // unica opcion hardcodeada).
+    const cookie = await mintarCookieSesionSintetica(SECRETO_DE_PRUEBA_DESCARTABLE, claims, true);
+    const token = cookie.slice(`${NOMBRE_COOKIE_SESION_HTTPS}=`.length);
+
+    // Pero @auth/core/lib/actions/session.js calcula
+    // `salt = options.cookies.sessionToken.name` a partir de lo que el
+    // SERVIDOR resolvio para ese deployment -- aqui, false. Mismo secreto
+    // exacto, salt distinto: decode() SIEMPRE falla (jwtDecrypt no
+    // encuentra la clave correcta). Esta es la causa raiz del 401
+    // reportado, no un problema del secreto.
+    await expect(
+      decode({ secret: SECRETO_DE_PRUEBA_DESCARTABLE, salt: NOMBRE_COOKIE_SESION_HTTP, token }),
+    ).rejects.toThrow();
+  });
+
+  it("REPRODUCCION DEL 401 (direccion 2, simetrica): cookie minteada asumiendo useSecureCookies=false, pero el servidor resuelve true -- decode() tambien falla", async () => {
+    const claims = construirClaimsSesionSintetica({
+      id: "usuario-id-mismatch-2",
+      email: "usuario-0009-escala-100@chainpulse-pr4-rendimiento-sintetico.invalid",
+      nombre: "Usuario sintetico de carga 9 (PR4, escala 100)",
+      empresaId: "empresa-de-prueba",
+      rol: ROL_USUARIO_SINTETICO_CARGA,
+      eslabonId: null,
+      mfaHabilitado: false,
+      sessionVersion: 1,
+    });
+    const cookie = await mintarCookieSesionSintetica(SECRETO_DE_PRUEBA_DESCARTABLE, claims, false);
+    const token = cookie.slice(`${NOMBRE_COOKIE_SESION_HTTP}=`.length);
+
+    await expect(
+      decode({ secret: SECRETO_DE_PRUEBA_DESCARTABLE, salt: NOMBRE_COOKIE_SESION_HTTPS, token }),
+    ).rejects.toThrow();
+  });
+
+  it("contrato estatico: ni auth.config.ts ni auth.ts fijan `cookies`/`useSecureCookies` -- la app queda totalmente expuesta a la resolucion dinamica de Auth.js descrita arriba, por lo que el valor efectivo SIEMPRE depende del deployment, nunca de una constante local", () => {
+    const authConfigFuente = readFileSync(RUTA_AUTH_CONFIG, "utf8");
+    const authTsFuente = readFileSync(RUTA_AUTH_TS, "utf8");
+    for (const fuente of [authConfigFuente, authTsFuente]) {
+      expect(fuente).not.toMatch(/\buseSecureCookies\s*:/);
+      expect(fuente).not.toMatch(/\bcookies\s*:\s*\{/);
     }
   });
 });
