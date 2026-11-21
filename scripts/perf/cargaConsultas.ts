@@ -530,7 +530,7 @@ export function resolverUsaCookiesSegurasDesdeEnv(valorCrudo: string | undefined
  */
 export function resolverBypassProteccionVercelDesdeEnv(valorCrudo: string | undefined): string | undefined {
   if (valorCrudo === undefined) return undefined;
-  if (valorCrudo.length === 32 && !/^\s+$/.test(valorCrudo)) return valorCrudo;
+  if (valorCrudo.length === 32 && !/\s/.test(valorCrudo)) return valorCrudo;
   throw new Error("VALOR_INVALIDO_CARGA_CONSULTAS_VERCEL_BYPASS");
 }
 

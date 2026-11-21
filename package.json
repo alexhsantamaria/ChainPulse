@@ -32,7 +32,8 @@
     "postinstall": "prisma generate",
     "perf:semilla": "tsx scripts/perf/semillaSinteticaConsultas.ts",
     "perf:explicar": "tsx scripts/perf/explicarConsultas.ts",
-    "perf:carga": "tsx scripts/perf/cargaConsultas.ts"
+    "perf:carga": "tsx scripts/perf/cargaConsultas.ts",
+    "perf:verificar-secret-preview": "tsx scripts/perf/verificarSecretPreview.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1140.0",

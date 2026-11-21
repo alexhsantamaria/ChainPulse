@@ -391,7 +391,15 @@ describe("resolverBypassProteccionVercelDesdeEnv()", () => {
     expect(resolverBypassProteccionVercelDesdeEnv(bypass)).toBe(bypass);
   });
 
-  it.each(["", " ".repeat(32), "corto", "x".repeat(31), "x".repeat(33)])(
+  it.each([
+    "",
+    " ".repeat(32),
+    `${"x".repeat(31)} `,
+    `${"x".repeat(30)}\t`,
+    "corto",
+    "x".repeat(31),
+    "x".repeat(33),
+  ])(
     "rechaza %j con un error fijo que nunca refleja el valor",
     (valor) => {
       expect(() => resolverBypassProteccionVercelDesdeEnv(valor)).toThrow(
