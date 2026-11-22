@@ -391,7 +391,24 @@ describe("resolverBypassProteccionVercelDesdeEnv()", () => {
     expect(resolverBypassProteccionVercelDesdeEnv(bypass)).toBe(bypass);
   });
 
-  it.each(["", " ".repeat(32), "corto", "x".repeat(31), "x".repeat(33)])(
+  it("sigue aceptando un valor valido de 32 caracteres sin whitespace tras la correccion de espacios intermedios", () => {
+    const bypass = "c".repeat(32);
+    expect(resolverBypassProteccionVercelDesdeEnv(bypass)).toBe(bypass);
+  });
+
+  it.each([
+    "",
+    " ".repeat(32),
+    "corto",
+    "x".repeat(31),
+    "x".repeat(33),
+    ` ${"a".repeat(31)}`,
+    `${"a".repeat(31)} `,
+    `${"a".repeat(15)} ${"a".repeat(16)}`,
+    `${"a".repeat(15)}\t${"a".repeat(16)}`,
+    `${"a".repeat(15)}\r${"a".repeat(16)}`,
+    `${"a".repeat(15)}\n${"a".repeat(16)}`,
+  ])(
     "rechaza %j con un error fijo que nunca refleja el valor",
     (valor) => {
       expect(() => resolverBypassProteccionVercelDesdeEnv(valor)).toThrow(
