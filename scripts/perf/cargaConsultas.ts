@@ -120,6 +120,32 @@
 //                                         sera 401 (medicionValida=false,
 //                                         codigo de salida distinto de
 //                                         cero -- ver construirResumenEscenario()).
+//   CARGA_CONSULTAS_USA_COOKIES_SEGURAS -- "true" (default) o "false".
+//                                         CORRECCION (Alex, 2026-11-20):
+//                                         un secreto correcto NO basta --
+//                                         el NOMBRE/SALT real de la cookie
+//                                         tambien debe coincidir (ver
+//                                         calcularNombreCookieSesion(),
+//                                         sesionSinteticaHelpers.ts).
+//                                         Confirmar el valor efectivo de
+//                                         useSecureCookies PARA ESE
+//                                         deployment especifico (si
+//                                         AUTH_URL/NEXTAUTH_URL esta
+//                                         definida para ese entorno de
+//                                         Vercel, su protocolo manda; si
+//                                         no, manda el protocolo
+//                                         detectado de la peticion real)
+//                                         antes de asumir "true" -- con
+//                                         el valor equivocado, la corrida
+//                                         sera 401 igual que con el
+//                                         secreto equivocado, pero sin
+//                                         que el secreto sea la causa.
+//   CARGA_CONSULTAS_VERCEL_BYPASS      -- opcional. Secreto temporal de
+//                                         Protection Bypass for Automation
+//                                         del proyecto Vercel de prueba.
+//                                         Se envia solo como header
+//                                         x-vercel-protection-bypass; nunca
+//                                         se imprime ni se persiste.
 //   SEED_DATABASE_URL                 -- rol neondb_owner, mismo
 //                                         destino ya sembrado por
 //                                         semillaSinteticaConsultas.ts
@@ -301,8 +327,18 @@ export async function leerUsuariosSinteticosParaCarga(
  * que viven unicamente en la variable local del caller, jamas en un
  * `console.log` ni en el JSON escrito a disco (ver comentario de
  * cabecera, punto 1.c).
+ *
+ * CORRECCION (Alex, 2026-11-20, investigacion del 401 en Preview):
+ * `useSecureCookies` (default true) se propaga sin cambios a
+ * mintarCookieSesionSintetica() -- ver su comentario y el de
+ * calcularNombreCookieSesion() en sesionSinteticaHelpers.ts para el
+ * mecanismo completo. main() lo fija segun CARGA_CONSULTAS_USA_COOKIES_SEGURAS.
  */
-export async function mintarCookiesParaUsuarios(secret: string, usuarios: readonly UsuarioSinteticoLeido[]): Promise<string[]> {
+export async function mintarCookiesParaUsuarios(
+  secret: string,
+  usuarios: readonly UsuarioSinteticoLeido[],
+  useSecureCookies = true,
+): Promise<string[]> {
   return Promise.all(
     usuarios.map((usuario) =>
       mintarCookieSesionSintetica(
@@ -317,6 +353,7 @@ export async function mintarCookiesParaUsuarios(secret: string, usuarios: readon
           mfaHabilitado: usuario.mfaHabilitado,
           sessionVersion: usuario.sessionVersion,
         }),
+        useSecureCookies,
       ),
     ),
   );
@@ -329,9 +366,10 @@ export async function mintarCookiesParaUsuarios(secret: string, usuarios: readon
  * de cargaConsultasHelpers.ts (Alex, ronda 2, punto 2: "pruebas del
  * runner real -- no solamente de los helpers").
  *
- * `opcionesAdicionalesSoloPrueba` existe EXCLUSIVAMENTE para que esas
- * pruebas puedan forzar `reconnectRate` (nunca se pasa desde main() en
- * una corrida real) y asi demostrar, contra el autocannon real, que un
+ * `opcionesAdicionales` permite que las pruebas fuercen `reconnectRate`
+ * (main() nunca lo fija) y que una corrida real protegida por Vercel
+ * envie su bypass temporal sin mezclarlo con cookies ni resultados.
+ * Las pruebas usan reconnectRate para demostrar, contra autocannon real, que un
  * reconnect (_resetConnection() en node_modules/autocannon/lib/httpClient.js,
  * que reutiliza la MISMA conexion y por lo tanto la MISMA cookie ya
  * capturada en su clausura, sin volver a llamar setupClient) nunca
@@ -344,7 +382,7 @@ export async function correrUnaConcurrencia(
   concurrencia: number,
   maxSolicitudesPorConexion: number,
   limiteSeguridadSegundos: number,
-  opcionesAdicionalesSoloPrueba?: { reconnectRate?: number },
+  opcionesAdicionales?: { reconnectRate?: number; bypassProteccionVercel?: string },
 ): Promise<ResumenEscenarioCarga> {
   if (cookiesDeEstaCorrida.length !== concurrencia) {
     // Invariante interna -- si esto lanza, es un bug de main() (el
@@ -401,8 +439,8 @@ export async function correrUnaConcurrencia(
     connections: concurrencia,
     amount,
     method: "POST",
-    ...(opcionesAdicionalesSoloPrueba?.reconnectRate !== undefined
-      ? { reconnectRate: opcionesAdicionalesSoloPrueba.reconnectRate }
+    ...(opcionesAdicionales?.reconnectRate !== undefined
+      ? { reconnectRate: opcionesAdicionales.reconnectRate }
       : {}),
     setupClient: (cliente) => {
       const cookie = cookiesDeEstaCorrida[indiceConexion];
@@ -413,7 +451,13 @@ export async function correrUnaConcurrencia(
       const solicitudesDeEstaConexion = CATALOGO_CONSULTA_IDS.map((catalogoId) => ({
         method: "POST" as const,
         path: "/api/consultas/ejecutar",
-        headers: { "content-type": "application/json", cookie },
+        headers: {
+          "content-type": "application/json",
+          cookie,
+          ...(opcionesAdicionales?.bypassProteccionVercel
+            ? { "x-vercel-protection-bypass": opcionesAdicionales.bypassProteccionVercel }
+            : {}),
+        },
         body: JSON.stringify(construirPayloadCarga(catalogoId, cadenaId)),
       }));
       cliente.setRequests(solicitudesDeEstaConexion);
@@ -460,6 +504,36 @@ export async function correrUnaConcurrencia(
   return construirResumenEscenario(concurrencia, resultado, amount, temporizadorSeguridadActivado);
 }
 
+/**
+ * Resuelve CARGA_CONSULTAS_USA_COOKIES_SEGURAS de forma estricta --
+ * extraida de main() (Alex, ronda de seguimiento 2026-11-20, punto 3:
+ * "Agrega una prueba del comportamiento del runner con
+ * CARGA_CONSULTAS_USA_COOKIES_SEGURAS=true y false, incluyendo
+ * validacion estricta de la variable") para poder probarla de forma
+ * pura, sin invocar main() completo (que abre una conexion real a
+ * Postgres). Mismo comportamiento exacto que tenia inline: sin la
+ * variable o "true" -> true; "false" -> false; CUALQUIER otro valor
+ * (incluido "TRUE", "1", "" o cualquier typo) -> lanza, nunca asume
+ * silenciosamente un valor por un valor no reconocido.
+ */
+export function resolverUsaCookiesSegurasDesdeEnv(valorCrudo: string | undefined): boolean {
+  if (valorCrudo === undefined || valorCrudo === "true") return true;
+  if (valorCrudo === "false") return false;
+  throw new Error(`VALOR_INVALIDO_CARGA_CONSULTAS_USA_COOKIES_SEGURAS_${valorCrudo}`);
+}
+
+/**
+ * Resuelve el bypass temporal de Vercel sin exponer su valor. Vercel
+ * exige exactamente 32 caracteres para Protection Bypass for Automation;
+ * cualquier valor presente que no cumpla el contrato falla con un codigo
+ * fijo que nunca incorpora el secreto.
+ */
+export function resolverBypassProteccionVercelDesdeEnv(valorCrudo: string | undefined): string | undefined {
+  if (valorCrudo === undefined) return undefined;
+  if (valorCrudo.length === 32 && !/\s/.test(valorCrudo)) return valorCrudo;
+  throw new Error("VALOR_INVALIDO_CARGA_CONSULTAS_VERCEL_BYPASS");
+}
+
 async function main(): Promise<void> {
   const urlBaseCruda = process.env.CARGA_CONSULTAS_BASE_URL;
   const cadenaId = process.env.CARGA_CONSULTAS_CADENA_ID;
@@ -467,6 +541,25 @@ async function main(): Promise<void> {
   if (!urlBaseCruda) throw new Error("FALTA_VARIABLE_CARGA_CONSULTAS_BASE_URL");
   if (!cadenaId) throw new Error("FALTA_VARIABLE_CARGA_CONSULTAS_CADENA_ID");
   if (!nextAuthSecret) throw new Error("FALTA_VARIABLE_CARGA_CONSULTAS_NEXTAUTH_SECRET");
+
+  // CORRECCION (Alex, 2026-11-20, investigacion del 401 en Preview de
+  // Vercel con el NEXTAUTH_SECRET coincidiendo): el nombre/salt real de
+  // la cookie de sesion depende de como Auth.js resuelve
+  // `useSecureCookies` PARA ESE DEPLOYMENT especifico (AUTH_URL/
+  // NEXTAUTH_URL del entorno de Vercel elegido, o el protocolo
+  // detectado si esa variable no esta definida ahi -- ver el
+  // comentario completo de calcularNombreCookieSesion(),
+  // sesionSinteticaHelpers.ts). Ya NO se asume ciegamente "true" --
+  // el operador debe confirmarlo para el deployment de destino antes
+  // de correr esto. Default "true" preserva el comportamiento previo
+  // (el caso esperado en la inmensa mayoria de deployments reales).
+  // Extraida a resolverUsaCookiesSegurasDesdeEnv() (ver abajo) para
+  // poder probar la validacion estricta sin invocar main() completo
+  // (Alex, ronda de seguimiento 2026-11-20, punto 3).
+  const usaCookiesSeguras = resolverUsaCookiesSegurasDesdeEnv(process.env.CARGA_CONSULTAS_USA_COOKIES_SEGURAS);
+  const bypassProteccionVercel = resolverBypassProteccionVercelDesdeEnv(
+    process.env.CARGA_CONSULTAS_VERCEL_BYPASS,
+  );
 
   const urlBase = exigirUrlDePrueba(urlBaseCruda);
   const escala = leerEscalaDeArgv();
@@ -486,7 +579,7 @@ async function main(): Promise<void> {
   let cookies: string[];
   try {
     const usuarios = await leerUsuariosSinteticosParaCarga(clienteOwner, escala, totalConexionesNecesarias);
-    cookies = await mintarCookiesParaUsuarios(nextAuthSecret, usuarios);
+    cookies = await mintarCookiesParaUsuarios(nextAuthSecret, usuarios, usaCookiesSeguras);
   } finally {
     // La conexion a Postgres se cierra ANTES de arrancar cualquier
     // carga HTTP -- nunca se mantiene abierta durante la corrida (que
@@ -506,7 +599,13 @@ async function main(): Promise<void> {
   // sus propias respuestas durante la carga real -- Alex, ronda 2:
   // "La sonda de la primera cookie no sustituye la validacion de todas
   // las sesiones", ver construirResumenEscenario()).
-  await verificarDeploymentUsaRamaTemporal(fetch, urlBase, cookies[0] as string, cadenaId);
+  await verificarDeploymentUsaRamaTemporal(
+    fetch,
+    urlBase,
+    cookies[0] as string,
+    cadenaId,
+    bypassProteccionVercel,
+  );
   console.log("Prueba de rama temporal OK -- el deployment ve el cadenaId sintetico sembrado.");
 
   const resumenes: ResumenEscenarioCarga[] = [];
@@ -525,6 +624,7 @@ async function main(): Promise<void> {
       concurrencia,
       MAX_SOLICITUDES_POR_CONEXION_POR_CORRIDA,
       limiteSeguridadSegundos,
+      { bypassProteccionVercel },
     );
     resumenes.push(resumen);
 

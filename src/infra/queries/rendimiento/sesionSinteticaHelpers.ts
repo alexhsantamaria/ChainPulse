@@ -125,13 +125,64 @@ export function construirFilasUsuariosSinteticosCarga(
   }));
 }
 
-/** Nombre EXACTO de la cookie de sesion que Auth.js usa cuando el sitio
- * es HTTPS (@auth/core/lib/utils/cookie.js: defaultCookies(true).sessionToken.name
- * === "__Secure-authjs.session-token") -- este script SIEMPRE apunta a
- * HTTPS (exigirUrlDePrueba() de cargaConsultasHelpers.ts lo exige),
- * asi que es siempre este nombre, nunca el de la variante sin
- * "__Secure-" (esa es solo para desarrollo local sin HTTPS). */
-export const NOMBRE_COOKIE_SESION_HTTPS = "__Secure-authjs.session-token";
+/** Calcula el nombre EXACTO que Auth.js usaria para la cookie de
+ * sesion, replicando @auth/core/lib/utils/cookie.js (defaultCookies()):
+ * `${useSecureCookies ? "__Secure-" : ""}authjs.session-token`. Ese
+ * mismo nombre es TAMBIEN el salt que next-auth/jwt usa para derivar
+ * la clave de cifrado (@auth/core/jwt.js, getDerivedEncryptionKey():
+ * hkdf(secret, salt, ...), con salt = options.cookies.sessionToken.name
+ * en @auth/core/lib/actions/session.js) -- un salt distinto deriva una
+ * clave distinta y decode() falla, AUNQUE el secreto sea correcto.
+ *
+ * CORRECCION (Alex, 2026-11-20, investigacion del 401 en Preview de
+ * Vercel con CARGA_CONSULTAS_NEXTAUTH_SECRET == NEXTAUTH_SECRET real):
+ * la version anterior de este archivo asumia a ciegas
+ * useSecureCookies=true (una sola constante hardcodeada), razonando
+ * "el script siempre apunta a HTTPS". Pero el valor REAL en runtime
+ * NUNCA depende de si la URL de destino es HTTPS -- depende de como
+ * Auth.js resuelve `useSecureCookies` PARA ESE DEPLOYMENT especifico
+ * (@auth/core/lib/init.js): `config.useSecureCookies ?? url.protocol
+ * === "https:"`, donde `url` sale de `createActionURL()`
+ * (next-auth/lib/index.js -> @auth/core/lib/utils/env.js):
+ *   - Si `AUTH_URL`/`NEXTAUTH_URL` esta definida para ESE ENTORNO de
+ *     Vercel (Production/Preview/Development se configuran por
+ *     separado en el dashboard del proyecto), su protocolo manda,
+ *     ignorando los headers reales de la peticion entrante.
+ *   - Si no esta definida ahi, manda el protocolo detectado
+ *     (`x-forwarded-proto`/`host`) de la peticion real.
+ * Si cualquiera de esos dos caminos resuelve a NO-https para el
+ * deployment de Preview que este script apunta (ej. la variable esta
+ * puesta solo para el entorno "Production" de Vercel, o quedo con un
+ * valor http por error), el servidor calcula un nombre/salt SIN el
+ * prefijo "__Secure-", mientras este script seguia asumiendo que SI lo
+ * tenia -- decode() nunca encuentra la cookie (nombre de cookie
+ * distinto) y, aunque la encontrara, derivaria una clave distinta
+ * (salt distinto): 401 "NO_SESION", AUNQUE EL SECRETO COINCIDA
+ * EXACTAMENTE -- exactamente el sintoma reportado. Ver la reproduccion
+ * de este mecanismo en __tests__/sesionSinteticaHelpers.test.ts.
+ *
+ * Por eso ahora es una funcion explicita, no una constante asumida --
+ * el operador debe confirmar el valor efectivo para el deployment de
+ * destino (ver cargaConsultas.ts, CARGA_CONSULTAS_USA_COOKIES_SEGURAS)
+ * en vez de que el script lo adivine en silencio. */
+export function calcularNombreCookieSesion(useSecureCookies: boolean): string {
+  return `${useSecureCookies ? "__Secure-" : ""}authjs.session-token`;
+}
+
+/** El nombre/salt para `useSecureCookies` resuelto a `true` -- el caso
+ * esperado en la mayoria de los deployments reales, pero YA NO el
+ * unico que este modulo asume ciegamente (ver el comentario de
+ * calcularNombreCookieSesion() arriba). Se mantiene exportada con el
+ * mismo nombre que antes para no romper el codigo/pruebas existentes
+ * que ya la referencian como el valor HTTPS documentado. */
+export const NOMBRE_COOKIE_SESION_HTTPS = calcularNombreCookieSesion(true);
+
+/** El nombre/salt para `useSecureCookies` resuelto a `false` (HTTP sin
+ * TLS, o un deployment HTTPS cuyo protocolo Auth.js no detecto como
+ * tal -- ver el comentario de calcularNombreCookieSesion() arriba).
+ * Exportada para que cargaConsultas.ts y las pruebas la referencien
+ * explicitamente en vez de repetir el string literal. */
+export const NOMBRE_COOKIE_SESION_HTTP = calcularNombreCookieSesion(false);
 
 /** Los claims EXACTOS que auth.config.ts (callback jwt) pondria en el
  * token para este Usuario si hubiera iniciado sesion de verdad. `sub`
@@ -178,15 +229,23 @@ export const VIGENCIA_SESION_SINTETICA_SEGUNDOS = 60 * 60;
  * valor de retorno ni mensaje de error -- y el valor de retorno (la
  * cookie misma) es responsabilidad de quien llama nunca imprimirlo
  * tampoco (ver cargaConsultas.ts: nunca pasa por console.log/JSON
- * escrito a disco).
+ * escrito a disco). `useSecureCookies` (default true, preserva el
+ * comportamiento anterior) debe fijarse a `false` si se confirma que
+ * el deployment de destino resuelve useSecureCookies=false en runtime
+ * (ver calcularNombreCookieSesion() mas arriba) -- nunca adivinado.
  */
-export async function mintarCookieSesionSintetica(secret: string, claims: JWT): Promise<string> {
+export async function mintarCookieSesionSintetica(
+  secret: string,
+  claims: JWT,
+  useSecureCookies = true,
+): Promise<string> {
   if (!secret) throw new Error("SECRETO_NEXTAUTH_VACIO");
+  const nombreCookie = calcularNombreCookieSesion(useSecureCookies);
   const token = await encode({
     secret,
-    salt: NOMBRE_COOKIE_SESION_HTTPS,
+    salt: nombreCookie,
     maxAge: VIGENCIA_SESION_SINTETICA_SEGUNDOS,
     token: claims,
   });
-  return `${NOMBRE_COOKIE_SESION_HTTPS}=${token}`;
+  return `${nombreCookie}=${token}`;
 }

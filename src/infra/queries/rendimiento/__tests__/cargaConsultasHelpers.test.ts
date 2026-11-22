@@ -8,12 +8,14 @@ import {
   construirResumenEscenario,
   exigirUrlDePrueba,
   PRODUCCION_HOSTS_BLOQUEADOS,
+  sondarVarianteCookieReconocidaPorDeployment,
   tieneContratoDeConsultaReconocible,
   verificarDeploymentUsaRamaTemporal,
   type ResultadoAutocannonMinimo,
 } from "../cargaConsultasHelpers";
 import { listarCatalogoConsultas } from "@/infra/queries/catalogo";
 import { CATALOGO_CONSULTA_IDS } from "@/domain/queries/tipos";
+import { construirClaimsSesionSintetica, ROL_USUARIO_SINTETICO_CARGA } from "../sesionSinteticaHelpers";
 
 const ENV_AUTORIZACION = "AUTORIZO_PR4_RENDIMIENTO_RAMA_TEMPORAL";
 const ENV_HOST = "CARGA_CONSULTAS_HOST_CONFIRMADO";
@@ -163,6 +165,22 @@ describe("verificarDeploymentUsaRamaTemporal()", () => {
     expect(url).toBe("https://chainpulse-pr4-preview-abc123.vercel.app/api/consultas/ejecutar");
     expect(opciones.redirect).toBe("manual");
     expect((opciones.headers as Record<string, string>).cookie).toBe(cookieSecreta);
+  });
+
+  it("envia el bypass temporal de Vercel cuando se proporciona, sin exponerlo en retornos", async () => {
+    const bypass = "v".repeat(32);
+    const fetchMock = vi.fn().mockResolvedValue(respuestaFalsa({ status: 200, cuerpo: cuerpoOkReconocible() }));
+    await expect(
+      verificarDeploymentUsaRamaTemporal(
+        fetchMock,
+        urlBase,
+        cookieSecreta,
+        "cadena-sintetica-1",
+        bypass,
+      ),
+    ).resolves.toBeUndefined();
+    const [, opciones] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((opciones.headers as Record<string, string>)["x-vercel-protection-bypass"]).toBe(bypass);
   });
 
   it("HTTP 404 (CADENA_INEXISTENTE -- el deployment NO ve la rama temporal sembrada) -- lanza sin incluir la cookie en el mensaje", async () => {
@@ -438,5 +456,143 @@ describe("construirPayloadCarga()", () => {
     const payload = construirPayloadCarga("DEPENDENCIA_CRITICA", "cadena-xyz");
     expect(payload.catalogoId).toBe("DEPENDENCIA_CRITICA");
     expect(payload.cadenaId).toBe("cadena-xyz");
+  });
+});
+
+
+// Investigacion (Alex, 2026-11-20, ronda de seguimiento): "Considera
+// una sonda acotada que emita ambas variantes de cookie, cada una
+// cifrada con su propio nombre como salt, para identificar
+// empiricamente cual reconoce el Preview sin debilitar la compuerta."
+// Estas pruebas NUNCA tocan red real -- fetchImpl se inyecta mockeado,
+// mismo patron que verificarDeploymentUsaRamaTemporal() arriba.
+describe("sondarVarianteCookieReconocidaPorDeployment()", () => {
+  const SECRETO_DE_PRUEBA_SONDA = "secreto-descartable-unicamente-para-la-sonda-de-variante-de-cookie";
+  const claims = construirClaimsSesionSintetica({
+    id: "usuario-sonda-variante",
+    email: "usuario-sonda-variante@chainpulse-pr4-rendimiento-sintetico.invalid",
+    nombre: "Usuario sintetico de la sonda de variante de cookie",
+    empresaId: "empresa-sonda",
+    rol: ROL_USUARIO_SINTETICO_CARGA,
+    eslabonId: null,
+    mfaHabilitado: false,
+    sessionVersion: 1,
+  });
+
+  /** fetchMock que decide la respuesta SEGUN el nombre de cookie
+   * recibido -- nunca inspecciona el valor del JWT, solo que nombre de
+   * cookie llego en el header `cookie` (igual que un servidor real de
+   * Auth.js: lo que importa es el NOMBRE, el servidor ni intenta
+   * descifrar si el nombre ya no coincide con lo que espera). */
+  function construirFetchMockQueReconoce(nombreCookieQueReconoce: string | null): ReturnType<typeof vi.fn> {
+    return vi.fn().mockImplementation(async (_url: string, opciones: RequestInit) => {
+      const cookieEnviada = (opciones.headers as Record<string, string>).cookie ?? "";
+      const reconocida = nombreCookieQueReconoce !== null && cookieEnviada.startsWith(`${nombreCookieQueReconoce}=`);
+      return reconocida
+        ? respuestaFalsa({ status: 200, cuerpo: cuerpoOkReconocible() })
+        : respuestaFalsa({ status: 401 });
+    });
+  }
+
+  it("variante HTTPS reconocida, HTTP no -- exactamente el caso de un deployment que resuelve useSecureCookies=true", async () => {
+    const fetchMock = construirFetchMockQueReconoce("__Secure-authjs.session-token");
+    const resultado = await sondarVarianteCookieReconocidaPorDeployment(
+      fetchMock,
+      `https://${HOST_DE_PRUEBA_LEGITIMO}`,
+      SECRETO_DE_PRUEBA_SONDA,
+      claims,
+      "cadena-sintetica-sonda",
+    );
+    expect(resultado.https.reconocida).toBe(true);
+    expect(resultado.https.statusHttp).toBe(200);
+    expect(resultado.http.reconocida).toBe(false);
+    expect(resultado.http.statusHttp).toBe(401);
+  });
+
+  it("variante HTTP reconocida, HTTPS no -- simetrico: un deployment que resuelve useSecureCookies=false", async () => {
+    const fetchMock = construirFetchMockQueReconoce("authjs.session-token");
+    const resultado = await sondarVarianteCookieReconocidaPorDeployment(
+      fetchMock,
+      `https://${HOST_DE_PRUEBA_LEGITIMO}`,
+      SECRETO_DE_PRUEBA_SONDA,
+      claims,
+      "cadena-sintetica-sonda",
+    );
+    expect(resultado.https.reconocida).toBe(false);
+    expect(resultado.https.statusHttp).toBe(401);
+    expect(resultado.http.reconocida).toBe(true);
+    expect(resultado.http.statusHttp).toBe(200);
+  });
+
+  it("NINGUNA variante reconocida (ambas 401) -- nunca se declara 'reconocida' por descarte; esto es la senal de que la causa NO es (solo) el salt, sino otra cosa (secreto incorrecto, sessionVersion, conexion a base) que esta sonda NUNCA debe ocultar colapsando ambos resultados en uno", async () => {
+    const fetchMock = construirFetchMockQueReconoce(null);
+    const resultado = await sondarVarianteCookieReconocidaPorDeployment(
+      fetchMock,
+      `https://${HOST_DE_PRUEBA_LEGITIMO}`,
+      SECRETO_DE_PRUEBA_SONDA,
+      claims,
+      "cadena-sintetica-sonda",
+    );
+    expect(resultado.https.reconocida).toBe(false);
+    expect(resultado.http.reconocida).toBe(false);
+  });
+
+  it("hace EXACTAMENTE 2 peticiones en total -- nunca mas, nunca reintenta, nunca escala: es diagnostico puntual, nunca carga", async () => {
+    const fetchMock = construirFetchMockQueReconoce("__Secure-authjs.session-token");
+    await sondarVarianteCookieReconocidaPorDeployment(
+      fetchMock,
+      `https://${HOST_DE_PRUEBA_LEGITIMO}`,
+      SECRETO_DE_PRUEBA_SONDA,
+      claims,
+      "cadena-sintetica-sonda",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("propaga el bypass temporal a las DOS variantes y nunca lo incluye en el resultado", async () => {
+    const bypass = "p".repeat(32);
+    const fetchMock = construirFetchMockQueReconoce("__Secure-authjs.session-token");
+    const resultado = await sondarVarianteCookieReconocidaPorDeployment(
+      fetchMock,
+      `https://${HOST_DE_PRUEBA_LEGITIMO}`,
+      SECRETO_DE_PRUEBA_SONDA,
+      claims,
+      "cadena-sintetica-sonda",
+      bypass,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [, opciones] of fetchMock.mock.calls as [string, RequestInit][]) {
+      expect((opciones.headers as Record<string, string>)["x-vercel-protection-bypass"]).toBe(bypass);
+    }
+    expect(JSON.stringify(resultado)).not.toContain(bypass);
+  });
+
+  it("reutiliza la MISMA compuerta exigirUrlDePrueba() -- un host de produccion bloqueado lanza ANTES de hacer ninguna peticion, nunca la bypasea ni la relaja", async () => {
+    const fetchMock = vi.fn();
+    const hostBloqueado = PRODUCCION_HOSTS_BLOQUEADOS[0]!;
+    process.env[ENV_HOST] = hostBloqueado;
+    await expect(
+      sondarVarianteCookieReconocidaPorDeployment(
+        fetchMock,
+        `https://${hostBloqueado}`,
+        SECRETO_DE_PRUEBA_SONDA,
+        claims,
+        "cadena-sintetica-sonda",
+      ),
+    ).rejects.toThrow(`URL_DE_PRODUCCION_BLOQUEADA_${hostBloqueado}`);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("el resultado nunca incluye el valor de ninguna cookie ni del cuerpo de la respuesta -- solo booleano + codigo HTTP por variante", async () => {
+    const fetchMock = construirFetchMockQueReconoce("__Secure-authjs.session-token");
+    const resultado = await sondarVarianteCookieReconocidaPorDeployment(
+      fetchMock,
+      `https://${HOST_DE_PRUEBA_LEGITIMO}`,
+      SECRETO_DE_PRUEBA_SONDA,
+      claims,
+      "cadena-sintetica-sonda",
+    );
+    expect(Object.keys(resultado.https).sort()).toEqual(["reconocida", "statusHttp"]);
+    expect(Object.keys(resultado.http).sort()).toEqual(["reconocida", "statusHttp"]);
   });
 });

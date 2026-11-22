@@ -110,6 +110,39 @@ describe("POST /ejecutar -- autenticacion", () => {
     expect(respuesta.status).toBe(401);
     expect(ejecutarConsultaPermitidaMock).not.toHaveBeenCalled();
   });
+
+  // Investigacion (Alex, 2026-11-20): reproduce, al nivel del CONTRATO
+  // de la ruta, la forma EXACTA del 401 que produce un mismatch de
+  // useSecureCookies entre la cookie sintetica minteada y lo que el
+  // servidor resuelve para ese deployment -- ver la cadena de causa
+  // completa, probada con criptografia REAL (encode()/decode() de
+  // next-auth/jwt, sin mocks), en
+  // src/infra/queries/rendimiento/__tests__/sesionSinteticaHelpers.test.ts
+  // (describe "mintarCookieSesionSintetica(..., useSecureCookies)").
+  // Esta prueba no puede minar la cookie y pegarle a esta ruta sin
+  // mockear directamente (route.ts y @/auth importan Prisma/Argon2 a
+  // nivel de modulo, y "prisma generate" sigue bloqueado en este
+  // entorno -- ver comentario de cabecera de este archivo); en cambio,
+  // fija el eslabon exacto que YA esta probado en el otro archivo:
+  // requireSession() (src/infra/auth/session.ts, SIN_SESION) devuelve
+  // SIEMPRE `{ok:false, error:"NO_SESION"}` con status 401 cuando
+  // `session?.user` es falsy -- que es precisamente lo que `auth()`
+  // devuelve cuando jwt.decode() falla por salt incorrecto (ver
+  // @auth/core/lib/actions/session.js: el catch que rodea jwt.decode()
+  // deja response.body=null sin relanzar). NO debilita ni omite el 401
+  // de la prueba anterior -- la complementa verificando tambien el
+  // CUERPO exacto, no solo el status.
+  it("CONTRATO 401 por sesion invalida (incluye el caso de salt/cookie incorrecto): el cuerpo es SIEMPRE exactamente {ok:false, error:\"NO_SESION\"} -- nunca un mensaje distinto que filtre la causa (secreto vs. salt vs. sessionVersion)", async () => {
+    const { NextResponse } = await import("next/server");
+    requireSessionMock.mockResolvedValue({ respuesta: NextResponse.json({ ok: false, error: "NO_SESION" }, { status: 401 }) });
+
+    const { POST } = await import("../route");
+    const respuesta = await POST(construirRequest(PAYLOAD_SIN_PERIODO));
+
+    expect(respuesta.status).toBe(401);
+    expect(await respuesta.json()).toEqual({ ok: false, error: "NO_SESION" });
+    expect(ejecutarConsultaPermitidaMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /ejecutar -- validacion de payload (antes de llamar al dispatcher)", () => {

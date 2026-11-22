@@ -31,6 +31,8 @@
 // verificarDeploymentUsaRamaTemporal() (prueba empirica, no solo de
 // nombre de host).
 import type { CatalogoConsultaId } from "@/domain/queries/tipos";
+import type { JWT } from "next-auth/jwt";
+import { mintarCookieSesionSintetica } from "./sesionSinteticaHelpers";
 
 /** Hosts de produccion REALES conocidos (README.md: primer despliegue
  * real en Vercel, proyecto "chain-pulse", equipo "alex-2477"; informe
@@ -105,7 +107,7 @@ export function exigirUrlDePrueba(urlBase: string): URL {
  * que el cadenaId sintetico es visible para esta sesion. Repetido aca
  * (no importado de catalogo.ts) por el mismo motivo de pureza que
  * CATALOGO_IDS_CON_PERIODO mas abajo. */
-const CATALOGO_ID_SIN_PERIODO_PARA_SONDA: CatalogoConsultaId = "DEPENDENCIA_CRITICA";
+export const CATALOGO_ID_SIN_PERIODO_PARA_SONDA: CatalogoConsultaId = "DEPENDENCIA_CRITICA";
 
 /**
  * Forma minima reconocible de RespuestaConsultaOk real
@@ -205,12 +207,19 @@ export async function verificarDeploymentUsaRamaTemporal(
   urlBase: URL,
   cookieSesion: string,
   cadenaId: string,
+  bypassProteccionVercel?: string,
 ): Promise<void> {
   let respuesta: Response;
   try {
     respuesta = await fetchImpl(new URL("/api/consultas/ejecutar", urlBase).toString(), {
       method: "POST",
-      headers: { "content-type": "application/json", cookie: cookieSesion },
+      headers: {
+        "content-type": "application/json",
+        cookie: cookieSesion,
+        ...(bypassProteccionVercel
+          ? { "x-vercel-protection-bypass": bypassProteccionVercel }
+          : {}),
+      },
       body: JSON.stringify({ catalogoId: CATALOGO_ID_SIN_PERIODO_PARA_SONDA, cadenaId }),
       redirect: "manual",
     });
@@ -241,6 +250,121 @@ export async function verificarDeploymentUsaRamaTemporal(
   if (!tieneContratoDeConsultaReconocible(cuerpo, CATALOGO_ID_SIN_PERIODO_PARA_SONDA)) {
     throw new Error("SONDA_RAMA_TEMPORAL_CONTRATO_NO_RECONOCIBLE");
   }
+}
+
+/** Resultado de UNA variante de cookie en sondarVarianteCookieReconocidaPorDeployment()
+ * -- nunca incluye el valor de la cookie ni del cuerpo de la respuesta,
+ * mismo criterio que verificarDeploymentUsaRamaTemporal(). */
+export interface ResultadoSondaVarianteCookie {
+  /** true si ESA variante especifica (ese nombre/salt de cookie) fue
+   * RECONOCIDA por el deployment -- EL MISMO criterio exigente que
+   * verificarDeploymentUsaRamaTemporal() (200 + content-type JSON +
+   * contrato real reconocible via tieneContratoDeConsultaReconocible()),
+   * nunca el chequeo mas debil de "status !== 401" (una pagina de
+   * proteccion/SSO de Vercel, un 500, o cualquier otro codigo distinto
+   * de 401 NUNCA deben contarse como "reconocida"). */
+  reconocida: boolean;
+  statusHttp: number;
+}
+
+/**
+ * Sonda DIAGNOSTICA, acotada a EXACTAMENTE 2 peticiones (una por cada
+ * variante de nombre/salt de cookie), para uso MANUAL del operador --
+ * NUNCA invocada por main() ni por ninguna corrida de carga real, y
+ * NUNCA un sustituto de verificarDeploymentUsaRamaTemporal() (que sigue
+ * siendo la unica sonda que main() llama antes de cargar, SIN NINGUN
+ * CAMBIO en este archivo).
+ *
+ * Responde la pregunta empirica que CARGA_CONSULTAS_USA_COOKIES_SEGURAS
+ * por si solo no puede responder sin probarlo contra el deployment real
+ * (Alex, 2026-11-20, ronda de seguimiento: "Considera una sonda acotada
+ * que emita ambas variantes de cookie, cada una cifrada con su propio
+ * nombre como salt, para identificar empiricamente cual reconoce el
+ * Preview sin debilitar la compuerta"): ¿cual de las DOS variantes
+ * (`__Secure-authjs.session-token` o `authjs.session-token`, ver
+ * calcularNombreCookieSesion()/sesionSinteticaHelpers.ts) reconoce el
+ * SERVIDOR de ESE deployment especifico?
+ *
+ * Reutiliza, SIN MODIFICAR NI RELAJAR NINGUNA:
+ *   - exigirUrlDePrueba() -- la MISMA compuerta positiva (HTTPS + host
+ *     no bloqueado + CARGA_CONSULTAS_HOST_CONFIRMADO exacto +
+ *     autorizacion puntual) que main() ya exige antes de cualquier
+ *     trafico real. Esta sonda la llama ella misma, al principio, con
+ *     el mismo efecto que tendria en main() -- jamas la bypasea.
+ *   - El mismo criterio de "reconocible" que verificarDeploymentUsaRamaTemporal()
+ *     (status===200, content-type JSON, `redirect:"manual"`, contrato
+ *     real via tieneContratoDeConsultaReconocible()).
+ *   - mintarCookieSesionSintetica() (sesionSinteticaHelpers.ts) para
+ *     generar AMBAS variantes con el secreto real provisto por el
+ *     operador -- nunca un secreto hardcodeado ni distinto del real.
+ *
+ * NUNCA registra ni expone el valor de ninguna cookie ni del cuerpo de
+ * ninguna respuesta -- los resultados son solo booleano + codigo HTTP
+ * por variante, igual que verificarDeploymentUsaRamaTemporal().
+ *
+ * Posible resultado con AMBAS variantes `reconocida:false`: significa
+ * que el problema NO es (!solo) el salt/nombre de cookie -- hay que
+ * descartar primero un secreto incorrecto o un problema de
+ * sessionVersion/conexion a base antes de asumir que esta es la causa
+ * (Alex: "no uses esto para ocultar un posible fallo de sessionVersion
+ * o conexion a base detras del mismo 401" -- esta sonda NUNCA colapsa
+ * ambos resultados en uno solo, siempre devuelve los 2 por separado,
+ * precisamente para que ese otro escenario quede visible y distinguible).
+ */
+export async function sondarVarianteCookieReconocidaPorDeployment(
+  fetchImpl: typeof fetch,
+  urlBaseCruda: string,
+  secret: string,
+  claims: JWT,
+  cadenaId: string,
+  bypassProteccionVercel?: string,
+): Promise<{ https: ResultadoSondaVarianteCookie; http: ResultadoSondaVarianteCookie }> {
+  const urlBase = exigirUrlDePrueba(urlBaseCruda);
+
+  const [cookieHttps, cookieHttp] = await Promise.all([
+    mintarCookieSesionSintetica(secret, claims, true),
+    mintarCookieSesionSintetica(secret, claims, false),
+  ]);
+
+  const probarVariante = async (cookieSesion: string): Promise<ResultadoSondaVarianteCookie> => {
+    let respuesta: Response;
+    try {
+      respuesta = await fetchImpl(new URL("/api/consultas/ejecutar", urlBase).toString(), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: cookieSesion,
+          ...(bypassProteccionVercel
+            ? { "x-vercel-protection-bypass": bypassProteccionVercel }
+            : {}),
+        },
+        body: JSON.stringify({ catalogoId: CATALOGO_ID_SIN_PERIODO_PARA_SONDA, cadenaId }),
+        redirect: "manual",
+      });
+    } catch {
+      return { reconocida: false, statusHttp: -1 };
+    }
+    if (respuesta.status !== 200) {
+      return { reconocida: false, statusHttp: respuesta.status };
+    }
+    const contentType = respuesta.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().includes("application/json")) {
+      return { reconocida: false, statusHttp: respuesta.status };
+    }
+    let cuerpo: unknown;
+    try {
+      cuerpo = await respuesta.json();
+    } catch {
+      return { reconocida: false, statusHttp: respuesta.status };
+    }
+    return {
+      reconocida: tieneContratoDeConsultaReconocible(cuerpo, CATALOGO_ID_SIN_PERIODO_PARA_SONDA),
+      statusHttp: respuesta.status,
+    };
+  };
+
+  const [https, http] = await Promise.all([probarVariante(cookieHttps), probarVariante(cookieHttp)]);
+  return { https, http };
 }
 
 /** Las 4 preguntas que EXIGEN periodo (metadatos.requierePeriodo en
