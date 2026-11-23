@@ -13,6 +13,7 @@
 // asi que es seguro cargarlo en una prueba unitaria sin "prisma
 // generate" corrido contra una base real.
 import type { EstadoObservacionCobertura, EstadoImportacion } from "@prisma/client";
+import { obtenerConfiguracionPipelineKpi } from "./catalogoPipelineKpi";
 
 // -- ObservacionKpi (OTIF, Fill Rate -- Incremento 4 Bloque B) --
 //
@@ -164,20 +165,9 @@ export function resumirFilasCobertura(
   return { valor, ceroReal, sinDatos, conErrores, total: calculada + sinDatos + conErrores };
 }
 
-// -- Alcance de PR1 (Incremento 4) --
-//
-// Detalle duradero de observaciones solo para OTIF y Fill Rate -- los 2
-// KPIs con flujo de ingesta completo hoy ademas de Cobertura (que tiene su
-// propia pagina de resultado, distinta por su forma de datos por SKU, ver
-// cobertura/importaciones/[id]/page.tsx). Los 7 KPIs restantes (Stockout,
-// Lead time, Variabilidad de lead time, OTIF proveedor, Tiempo de
-// deteccion/decision/recuperacion) no tienen ningun flujo de ingesta
-// propio todavia (ver auditoria-incremento4-kpis-2026-11-06.md) -- esta
-// funcion es la UNICA puerta que decide que codigo puede abrir la pagina
-// de detalle generica, para que una futura adicion de KPI no quede
-// expuesta por accidente antes de construirle su propio flujo completo.
-const CODIGOS_CON_DETALLE_HABILITADO = new Set(["OTIF", "FILL_RATE"]);
-
+// Puerta exclusiva de la pagina de detalle generica de ObservacionKpi.
+// Cobertura y OTIF Proveedor tienen detalles dedicados, por lo que deben
+// seguir devolviendo false aqui aunque sus pipelines ya existan.
 export function esCodigoConDetalleHabilitado(codigo: string): boolean {
-  return CODIGOS_CON_DETALLE_HABILITADO.has(codigo);
+  return obtenerConfiguracionPipelineKpi(codigo)?.detalle === "OBSERVACION_KPI";
 }

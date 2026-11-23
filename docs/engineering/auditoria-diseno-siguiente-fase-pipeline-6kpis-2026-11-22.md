@@ -179,7 +179,7 @@ No se recomienda copiar seis veces la lógica actual antes de resolver este cont
 
 ## 8. Secuencia aprobada
 
-### Fase 0 — cerrar PR4 real
+### Fase 0 — cerrar PR4 real (completada 2026-11-23)
 
 Antes de PR-A:
 
@@ -191,9 +191,11 @@ Antes de PR-A:
 6. Limpiar fixtures y verificar su ausencia mediante consultas reales.
 7. Decidir el índice de `HallazgoCadena` basándose en evidencia medida.
 
+La fase fue ejecutada sobre `main` @ `ee515a2c96b97d66dba53e703d911c0704ade593`. Las nueve mediciones fueron válidas, el peor p97.5 fue 2.417 ms y no se justificó crear el índice candidato de `HallazgoCadena`. Evidencia y limpieza: [`cierre-fase0-pr4-rendimiento-2026-11-23.md`](./cierre-fase0-pr4-rendimiento-2026-11-23.md).
+
 ### PR-A — generalización compartida
 
-PR-A se diseñará después de la línea base de rendimiento y antes de cualquier tabla nueva. Debe incluir, como mínimo:
+PR-A fue diseñado después de cerrar la línea base de rendimiento y antes de cualquier tabla nueva. Véase [`diseno-pr-a-generalizacion-pipeline-kpis-2026-11-23.md`](./diseno-pr-a-generalizacion-pipeline-kpis-2026-11-23.md). Debe incluir, como mínimo:
 
 - contrato normalizado de observación/histórico;
 - registro declarativo de semántica por KPI;
@@ -248,4 +250,4 @@ Esta entrega no:
 - elimina ramas, worktrees, stashes o residuos;
 - declara un porcentaje global de ChainPulse.
 
-El siguiente paso autorizado debe ser el diseño operativo y las compuertas de la Fase 0 de rendimiento, no la implementación de PR-A.
+Fase 0 quedó cerrada. El siguiente paso es revisar y ejecutar PR-A conforme al diseño enlazado, sin iniciar todavía PR-B a PR-G.

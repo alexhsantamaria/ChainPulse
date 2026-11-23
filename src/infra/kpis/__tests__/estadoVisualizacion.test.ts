@@ -115,7 +115,7 @@ describe("clasificarImportacion -- Cobertura (nivel importación)", () => {
   });
 });
 
-describe("esCodigoConDetalleHabilitado -- alcance de PR1", () => {
+describe("esCodigoConDetalleHabilitado -- puerta del detalle generico", () => {
   it("OTIF -> habilitado", () => {
     expect(esCodigoConDetalleHabilitado("OTIF")).toBe(true);
   });
@@ -124,7 +124,7 @@ describe("esCodigoConDetalleHabilitado -- alcance de PR1", () => {
     expect(esCodigoConDetalleHabilitado("FILL_RATE")).toBe(true);
   });
 
-  it("los 7 KPIs restantes -> NO habilitados (sin flujo de ingesta propio todavía)", () => {
+  it("los detalles dedicados y los seis KPIs pendientes no abren la pagina generica", () => {
     for (const codigo of [
       "STOCKOUT",
       "COBERTURA",
