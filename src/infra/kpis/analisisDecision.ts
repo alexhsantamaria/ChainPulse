@@ -76,7 +76,7 @@
 //       varios puntos) SI sigue excluyendo los incompatibles -- eso es
 //       una lista para graficar tendencia, no "la comparacion contra el
 //       periodo anterior", y no es lo que esta ronda pidio cambiar.
-import type { ResumenFilasCobertura } from "./estadoVisualizacion";
+import { tasaValidaDeResumen, type ResumenFilasCobertura } from "./estadoVisualizacion";
 
 export type DireccionVariacion = "MEJORA" | "EMPEORA" | "ESTABLE";
 
@@ -468,8 +468,11 @@ export function generarAnalisisImportacionCobertura(
 
   const totalActual = actual.resumen.total;
   // RONDA 2, punto 2: total=0 es informacion insuficiente -- no hay
-  // tasa que calcular sobre 0 filas.
-  const tasaValidaActual = totalActual > 0 ? (actual.resumen.valor + actual.resumen.ceroReal) / totalActual : null;
+  // tasa que calcular sobre 0 filas. Formula canonica compartida con el
+  // adaptador de histórico de Cobertura (historico/adaptadorResumenCobertura.ts,
+  // segundo corte de PR-A, 2026-11-23) -- ver tasaValidaDeResumen() en
+  // estadoVisualizacion.ts, nunca duplicada aqui.
+  const tasaValidaActual = tasaValidaDeResumen(actual.resumen);
   const tasaConErroresActual = totalActual > 0 ? actual.resumen.conErrores / totalActual : null;
   const tasaSinDatosActual = totalActual > 0 ? actual.resumen.sinDatos / totalActual : null;
 
@@ -523,9 +526,24 @@ export function generarAnalisisImportacionCobertura(
   // llega hasta aca.
   const comparacionPosible = periodoAnterior !== null;
 
-  if (comparacionPosible && periodoAnterior !== null && tasaValidaActual !== null && tasaConErroresActual !== null && tasaSinDatosActual !== null) {
+  // tasaValidaDeResumen() es null solo cuando total===0 -- no puede
+  // pasar aca (comparacionPosible ya garantiza, por construccion de
+  // estadoVersion, que ni el total actual ni el anterior son 0, ver el
+  // comentario mas arriba); se calcula ANTES del if, con su propio
+  // chequeo !== null en la condicion, para que TypeScript lo angoste a
+  // `number` dentro del bloque sin una asercion no-nula.
+  const tasaValidaAnteriorCandidata = periodoAnterior !== null ? tasaValidaDeResumen(periodoAnterior.resumen) : null;
+
+  if (
+    comparacionPosible &&
+    periodoAnterior !== null &&
+    tasaValidaActual !== null &&
+    tasaValidaAnteriorCandidata !== null &&
+    tasaConErroresActual !== null &&
+    tasaSinDatosActual !== null
+  ) {
     const totalAnterior = periodoAnterior.resumen.total;
-    const tasaValidaAnterior = (periodoAnterior.resumen.valor + periodoAnterior.resumen.ceroReal) / totalAnterior;
+    const tasaValidaAnterior = tasaValidaAnteriorCandidata;
     const tasaConErroresAnterior = periodoAnterior.resumen.conErrores / totalAnterior;
     const tasaSinDatosAnterior = periodoAnterior.resumen.sinDatos / totalAnterior;
 

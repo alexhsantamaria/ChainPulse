@@ -25,10 +25,14 @@ describe("PIPELINES_KPI", () => {
       historico: "COBERTURA",
       acciones: "IMPORTACION_CSV",
     });
+    // historico: null -- corregido 2026-11-23, segundo corte de PR-A:
+    // OTIF Proveedor permanece fuera del historico generico (ver el
+    // comentario junto a este campo en catalogoPipelineKpi.ts); su
+    // persistencia y su detalle dedicados no cambian.
     expect(PIPELINES_KPI.OTIF_PROVEEDOR).toMatchObject({
       persistencia: "OBSERVACION_OTIF_PROVEEDOR",
       detalle: "OTIF_PROVEEDOR",
-      historico: "OTIF_PROVEEDOR",
+      historico: null,
       acciones: null,
     });
   });

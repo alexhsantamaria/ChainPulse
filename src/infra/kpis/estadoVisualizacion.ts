@@ -165,9 +165,36 @@ export function resumirFilasCobertura(
   return { valor, ceroReal, sinDatos, conErrores, total: calculada + sinDatos + conErrores };
 }
 
+// Tasa de filas con resultado valido (CALCULADA, sea CERO_REAL o VALOR)
+// sobre el total de una importacion -- formula canonica, reutilizada por
+// analisisDecision.ts (generarAnalisisImportacionCobertura, antes
+// calculada inline en 2 puntos) y por el adaptador de histórico de
+// Cobertura (src/infra/kpis/historico/adaptadorResumenCobertura.ts,
+// segundo corte de PR-A, 2026-11-23) -- nunca duplicada entre los 3
+// lugares. `null` cuando el total es 0, mismo criterio que el resto de
+// este archivo: una ausencia de filas nunca se disfraza de "0% valido".
+export function tasaValidaDeResumen(resumen: ResumenFilasCobertura): number | null {
+  return resumen.total > 0 ? (resumen.valor + resumen.ceroReal) / resumen.total : null;
+}
+
 // Puerta exclusiva de la pagina de detalle generica de ObservacionKpi.
 // Cobertura y OTIF Proveedor tienen detalles dedicados, por lo que deben
 // seguir devolviendo false aqui aunque sus pipelines ya existan.
 export function esCodigoConDetalleHabilitado(codigo: string): boolean {
   return obtenerConfiguracionPipelineKpi(codigo)?.detalle === "OBSERVACION_KPI";
+}
+
+// Puerta de histórico genérico, mismo patrón que esCodigoConDetalleHabilitado
+// de arriba -- hoy ningún componente la consulta todavía (las páginas de
+// OTIF/Fill Rate/Cobertura muestran su sección de histórico de forma
+// incondicional, por ser páginas bespoke), queda lista para la primera
+// vista genérica que la necesite. Segundo corte de PR-A, ver
+// diseno-pr-a-segundo-corte-contrato-historico-2026-11-23.md. A
+// diferencia de esCodigoConDetalleHabilitado() (que compara contra un
+// string fijo), esta puerta pregunta "no es null" -- por eso valida
+// primero que el codigo exista, para que un codigo desconocido devuelva
+// false (configuracion===null) en vez de true (undefined !== null).
+export function esCodigoConHistoricoHabilitado(codigo: string): boolean {
+  const configuracion = obtenerConfiguracionPipelineKpi(codigo);
+  return configuracion !== null && configuracion.historico !== null;
 }
