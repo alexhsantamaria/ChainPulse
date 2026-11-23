@@ -1,12 +1,14 @@
 // Pruebas (unitarias, sin DB) -- clasificarValorObservacionKpi(),
 // clasificarFilaCobertura(), motivoFilaCobertura(), clasificarImportacion(),
-// esCodigoConDetalleHabilitado(), resumirFilasCobertura(). Incremento 4
-// PR1 (Alex, 2026-11-06): cubre exactamente los 4 estados pedidos ("sin
-// datos", "cero real", "procesamiento pendiente", "procesamiento con
-// errores") mas la guarda de alcance (solo OTIF/Fill Rate tienen pagina
-// de detalle generica en este PR) y el resumen de filas validas/
-// excluidas de Cobertura (incluido el caso de "estado vacio" -- una
-// importacion sin ninguna fila persistida).
+// esCodigoConDetalleHabilitado(), resumirFilasCobertura(),
+// tasaValidaDeResumen(), esCodigoConHistoricoHabilitado() (las ultimas 2,
+// segundo corte de PR-A, 2026-11-23). Incremento 4 PR1 (Alex,
+// 2026-11-06): cubre exactamente los 4 estados pedidos ("sin datos",
+// "cero real", "procesamiento pendiente", "procesamiento con errores")
+// mas la guarda de alcance (solo OTIF/Fill Rate tienen pagina de detalle
+// generica en este PR) y el resumen de filas validas/excluidas de
+// Cobertura (incluido el caso de "estado vacio" -- una importacion sin
+// ninguna fila persistida).
 import { describe, expect, it } from "vitest";
 import {
   clasificarValorObservacionKpi,
@@ -15,6 +17,8 @@ import {
   clasificarImportacion,
   esCodigoConDetalleHabilitado,
   resumirFilasCobertura,
+  tasaValidaDeResumen,
+  esCodigoConHistoricoHabilitado,
 } from "../estadoVisualizacion";
 
 describe("clasificarValorObservacionKpi -- OTIF/Fill Rate", () => {
@@ -142,6 +146,70 @@ describe("esCodigoConDetalleHabilitado -- puerta del detalle generico", () => {
   it("código desconocido o vacío -> no habilitado, nunca revienta", () => {
     expect(esCodigoConDetalleHabilitado("")).toBe(false);
     expect(esCodigoConDetalleHabilitado("ALGO_QUE_NO_EXISTE")).toBe(false);
+  });
+});
+
+describe("esCodigoConHistoricoHabilitado -- puerta del historico generico (segundo corte de PR-A)", () => {
+  it("OTIF -> habilitado", () => {
+    expect(esCodigoConHistoricoHabilitado("OTIF")).toBe(true);
+  });
+
+  it("FILL_RATE -> habilitado", () => {
+    expect(esCodigoConHistoricoHabilitado("FILL_RATE")).toBe(true);
+  });
+
+  it("COBERTURA -> habilitado (adaptador dedicado, pero SI declara historico)", () => {
+    expect(esCodigoConHistoricoHabilitado("COBERTURA")).toBe(true);
+  });
+
+  // Corregido 2026-11-23 (segundo corte de PR-A): el primer corte
+  // (commit 7224e2c, ya en main) declaraba historico: "OTIF_PROVEEDOR"
+  // en el catalogo sin que existiera ningun adaptador/analisis de
+  // historico real para este KPI -- inconsistencia ya corregida en
+  // catalogoPipelineKpi.ts (historico: null). OTIF Proveedor permanece
+  // fuera del historico generico; su persistencia y su detalle
+  // dedicados no cambian.
+  it("OTIF_PROVEEDOR -> NO habilitado (permanece fuera del historico generico, solo tiene persistencia y detalle dedicados)", () => {
+    expect(esCodigoConHistoricoHabilitado("OTIF_PROVEEDOR")).toBe(false);
+  });
+
+  it("los seis KPIs pendientes -> no habilitados, no anuncian una capacidad inexistente", () => {
+    for (const codigo of [
+      "STOCKOUT",
+      "LEAD_TIME",
+      "VARIABILIDAD_LEAD_TIME",
+      "TIEMPO_DETECCION",
+      "TIEMPO_DECISION",
+      "TIEMPO_RECUPERACION",
+    ]) {
+      expect(esCodigoConHistoricoHabilitado(codigo)).toBe(false);
+    }
+  });
+
+  it("código desconocido o vacío -> no habilitado, nunca revienta (configuracion===null, no undefined!==null)", () => {
+    expect(esCodigoConHistoricoHabilitado("")).toBe(false);
+    expect(esCodigoConHistoricoHabilitado("ALGO_QUE_NO_EXISTE")).toBe(false);
+  });
+});
+
+describe("tasaValidaDeResumen -- formula canonica de tasa valida (segundo corte de PR-A)", () => {
+  it("total 0 -> null, nunca se disfraza de 0% valido", () => {
+    expect(tasaValidaDeResumen({ valor: 0, ceroReal: 0, sinDatos: 0, conErrores: 0, total: 0 })).toBeNull();
+  });
+
+  it("calcula (valor + ceroReal) / total", () => {
+    const resumen = { valor: 7, ceroReal: 3, sinDatos: 2, conErrores: 1, total: 13 };
+    expect(tasaValidaDeResumen(resumen)).toBeCloseTo(10 / 13);
+  });
+
+  it("0 filas validas sobre un total positivo -> 0 (un cero real, no una ausencia)", () => {
+    const resumen = { valor: 0, ceroReal: 0, sinDatos: 4, conErrores: 1, total: 5 };
+    expect(tasaValidaDeResumen(resumen)).toBe(0);
+  });
+
+  it("todas las filas validas -> 1", () => {
+    const resumen = { valor: 5, ceroReal: 5, sinDatos: 0, conErrores: 0, total: 10 };
+    expect(tasaValidaDeResumen(resumen)).toBe(1);
   });
 });
 

@@ -75,7 +75,16 @@ export const PIPELINES_KPI = {
     direccion: "MAYOR_ES_MEJOR",
     persistencia: "OBSERVACION_OTIF_PROVEEDOR",
     detalle: "OTIF_PROVEEDOR",
-    historico: "OTIF_PROVEEDOR",
+    // historico: null (corregido 2026-11-23, segundo corte de PR-A) --
+    // el primer corte (commit 7224e2c, ya en main) declaraba
+    // historico: "OTIF_PROVEEDOR" sin que existiera ningun adaptador ni
+    // analisis de historico real para este KPI (ver el comentario de
+    // cabecera de app/dashboard/kpis/otif-proveedor/observaciones/[id]/page.tsx:
+    // "no tiene relacion... con el historico/analisis de tendencia...
+    // Alex no pidio analisis de tendencia... para este catalogo"). Alex
+    // confirmo que OTIF Proveedor debe permanecer fuera del historico
+    // generico; su persistencia y su detalle dedicados no cambian.
+    historico: null,
     acciones: null,
   },
   TIEMPO_DETECCION: {
