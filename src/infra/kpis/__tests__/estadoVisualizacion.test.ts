@@ -1,14 +1,15 @@
 // Pruebas (unitarias, sin DB) -- clasificarValorObservacionKpi(),
 // clasificarFilaCobertura(), motivoFilaCobertura(), clasificarImportacion(),
 // esCodigoConDetalleHabilitado(), resumirFilasCobertura(),
-// tasaValidaDeResumen(), esCodigoConHistoricoHabilitado() (las ultimas 2,
-// segundo corte de PR-A, 2026-11-23). Incremento 4 PR1 (Alex,
-// 2026-11-06): cubre exactamente los 4 estados pedidos ("sin datos",
-// "cero real", "procesamiento pendiente", "procesamiento con errores")
-// mas la guarda de alcance (solo OTIF/Fill Rate tienen pagina de detalle
-// generica en este PR) y el resumen de filas validas/excluidas de
-// Cobertura (incluido el caso de "estado vacio" -- una importacion sin
-// ninguna fila persistida).
+// tasaValidaDeResumen(), esCodigoConHistoricoHabilitado() (segundo corte
+// de PR-A, 2026-11-23), esCodigoConAccionesHabilitado() (tercer corte de
+// PR-A, 2026-11-23). Incremento 4 PR1 (Alex, 2026-11-06): cubre
+// exactamente los 4 estados pedidos ("sin datos", "cero real",
+// "procesamiento pendiente", "procesamiento con errores") mas la guarda
+// de alcance (solo OTIF/Fill Rate tienen pagina de detalle generica en
+// este PR) y el resumen de filas validas/excluidas de Cobertura
+// (incluido el caso de "estado vacio" -- una importacion sin ninguna
+// fila persistida).
 import { describe, expect, it } from "vitest";
 import {
   clasificarValorObservacionKpi,
@@ -19,6 +20,7 @@ import {
   resumirFilasCobertura,
   tasaValidaDeResumen,
   esCodigoConHistoricoHabilitado,
+  esCodigoConAccionesHabilitado,
 } from "../estadoVisualizacion";
 
 describe("clasificarValorObservacionKpi -- OTIF/Fill Rate", () => {
@@ -189,6 +191,48 @@ describe("esCodigoConHistoricoHabilitado -- puerta del historico generico (segun
   it("código desconocido o vacío -> no habilitado, nunca revienta (configuracion===null, no undefined!==null)", () => {
     expect(esCodigoConHistoricoHabilitado("")).toBe(false);
     expect(esCodigoConHistoricoHabilitado("ALGO_QUE_NO_EXISTE")).toBe(false);
+  });
+});
+
+describe("esCodigoConAccionesHabilitado -- puerta de acciones genericas (tercer corte de PR-A)", () => {
+  it("OTIF -> habilitado", () => {
+    expect(esCodigoConAccionesHabilitado("OTIF")).toBe(true);
+  });
+
+  it("FILL_RATE -> habilitado", () => {
+    expect(esCodigoConAccionesHabilitado("FILL_RATE")).toBe(true);
+  });
+
+  it("COBERTURA -> habilitado (acciones via IMPORTACION_CSV)", () => {
+    expect(esCodigoConAccionesHabilitado("COBERTURA")).toBe(true);
+  });
+
+  // OTIF Proveedor nunca tuvo acciones habilitadas (a diferencia del
+  // historico, donde el primer corte SI habia declarado una capacidad
+  // inexistente por error) -- catalogoPipelineKpi.ts ya declara
+  // acciones: null para OTIF_PROVEEDOR desde el primer corte, y
+  // AccionesDecisionKpi.tsx nunca se importa en ninguna pagina de OTIF
+  // Proveedor. Esta prueba fija ese estado actual como regresion.
+  it("OTIF_PROVEEDOR -> NO habilitado (nunca tuvo acciones; su persistencia y detalle dedicados no cambian)", () => {
+    expect(esCodigoConAccionesHabilitado("OTIF_PROVEEDOR")).toBe(false);
+  });
+
+  it("los seis KPIs pendientes -> no habilitados, no anuncian una capacidad inexistente", () => {
+    for (const codigo of [
+      "STOCKOUT",
+      "LEAD_TIME",
+      "VARIABILIDAD_LEAD_TIME",
+      "TIEMPO_DETECCION",
+      "TIEMPO_DECISION",
+      "TIEMPO_RECUPERACION",
+    ]) {
+      expect(esCodigoConAccionesHabilitado(codigo)).toBe(false);
+    }
+  });
+
+  it("código desconocido o vacío -> no habilitado, nunca revienta (configuracion===null, no undefined!==null)", () => {
+    expect(esCodigoConAccionesHabilitado("")).toBe(false);
+    expect(esCodigoConAccionesHabilitado("ALGO_QUE_NO_EXISTE")).toBe(false);
   });
 });
 

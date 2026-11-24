@@ -25,6 +25,7 @@ import {
 } from "./validacion";
 import {
   esEstadoTerminal,
+  idsDeOrigenAccionKpi,
   type AccionDecisionKpiFila,
   type ClienteConAccionesDecisionKpi,
   type DatosActualizarAccionDecisionKpi,
@@ -64,8 +65,9 @@ export async function crearAccionDecisionKpi(
   cliente: TenantPrismaClient,
   datos: DatosCrearAccionDecisionKpi,
 ): Promise<ResultadoServicioAccion<AccionDecisionKpiFila>> {
-  const observacionKpiId = datos.origen.tipo === "OBSERVACION_KPI" ? datos.origen.observacionKpiId : null;
-  const importacionCsvId = datos.origen.tipo === "IMPORTACION_CSV" ? datos.origen.importacionCsvId : null;
+  // Tercer corte de PR-A: misma logica que antes, extraida a una
+  // funcion pura y testeada por separado (ver acciones/tipos.ts).
+  const { observacionKpiId, importacionCsvId } = idsDeOrigenAccionKpi(datos.origen);
 
   const validacionOrigen = validarOrigenUnico(observacionKpiId, importacionCsvId);
   if (!validacionOrigen.valido) {

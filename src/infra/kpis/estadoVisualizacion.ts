@@ -198,3 +198,22 @@ export function esCodigoConHistoricoHabilitado(codigo: string): boolean {
   const configuracion = obtenerConfiguracionPipelineKpi(codigo);
   return configuracion !== null && configuracion.historico !== null;
 }
+
+// Puerta de acciones genericas, mismo patron exacto que
+// esCodigoConHistoricoHabilitado() de arriba -- hoy ningun componente la
+// consulta todavia (DetalleObservacionKpi.tsx y
+// cobertura/importaciones/[id]/page.tsx montan AccionesDecisionKpi.tsx
+// de forma incondicional, cableado a mano por pagina, nunca leido del
+// catalogo), queda lista para el primer consumidor generico que la
+// necesite. Tercer corte de PR-A, ver
+// diseno-pr-a-tercer-corte-acciones-origen-2026-11-23.md. Mismo criterio
+// que esCodigoConHistoricoHabilitado() (pregunta "no es null", nunca
+// compara contra un string fijo como esCodigoConDetalleHabilitado()) --
+// aqui no aplica la distincion de esa ultima (ningun KPI tiene hoy un
+// formulario de acciones "dedicado" distinto del generico de
+// AccionesDecisionKpi.tsx, a diferencia de detalle/historico con
+// Cobertura/OTIF Proveedor).
+export function esCodigoConAccionesHabilitado(codigo: string): boolean {
+  const configuracion = obtenerConfiguracionPipelineKpi(codigo);
+  return configuracion !== null && configuracion.acciones !== null;
+}

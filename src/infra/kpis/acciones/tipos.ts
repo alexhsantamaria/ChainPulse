@@ -41,6 +41,26 @@ export type OrigenAccionKpi =
   | { tipo: "OBSERVACION_KPI"; observacionKpiId: string }
   | { tipo: "IMPORTACION_CSV"; importacionCsvId: string };
 
+/** Funcion pura: extrae los dos ids "planos" (observacionKpiId /
+ * importacionCsvId, cada uno string|null segun cual de los 2 casos de
+ * OrigenAccionKpi aplique) que la fila persistida necesita (ver
+ * AccionDecisionKpiFila arriba, que guarda ambas columnas por separado
+ * en vez de la union discriminada -- asi lo exige el CHECK de Postgres
+ * chk_accion_decision_kpi_un_origen). Reemplaza los 2 ternarios
+ * redundantes que antes vivian inline en
+ * crearAccionDecisionKpi() (servicio.ts) -- misma logica, un solo lugar.
+ * Tercer corte de PR-A, ver
+ * diseno-pr-a-tercer-corte-acciones-origen-2026-11-23.md. */
+export function idsDeOrigenAccionKpi(origen: OrigenAccionKpi): {
+  observacionKpiId: string | null;
+  importacionCsvId: string | null;
+} {
+  return {
+    observacionKpiId: origen.tipo === "OBSERVACION_KPI" ? origen.observacionKpiId : null,
+    importacionCsvId: origen.tipo === "IMPORTACION_CSV" ? origen.importacionCsvId : null,
+  };
+}
+
 /** Forma de una fila ya persistida, tal como la devuelve Postgres (fechas
  * ya como Date, nunca string -- Prisma las deserializa asi). */
 export interface AccionDecisionKpiFila {
