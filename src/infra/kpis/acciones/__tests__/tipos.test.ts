@@ -22,11 +22,21 @@ describe("idsDeOrigenAccionKpi", () => {
     });
   });
 
-  it("nunca pobla los dos ids a la vez (mismo invariante que validarOrigenUnico)", () => {
+  // Correccion de la revision del PR #40: la version anterior solo
+  // exigia "al menos uno null", lo cual tambien es cierto (y por lo
+  // tanto no detectaria) si la funcion devolviera los 2 campos en null
+  // a la vez -- un resultado invalido que violaria el mismo invariante
+  // que validarOrigenUnico() aplica en runtime (exactamente un origen).
+  // Esta version exige exactamente un id no nulo, en ambos sentidos.
+  it("nunca pobla los dos ids a la vez, y nunca deja los dos en null -- exactamente un id no nulo", () => {
     const porObservacion = idsDeOrigenAccionKpi({ tipo: "OBSERVACION_KPI", observacionKpiId: "obs-2" });
     const porImportacion = idsDeOrigenAccionKpi({ tipo: "IMPORTACION_CSV", importacionCsvId: "imp-2" });
 
-    expect(porObservacion.observacionKpiId === null || porObservacion.importacionCsvId === null).toBe(true);
-    expect(porImportacion.observacionKpiId === null || porImportacion.importacionCsvId === null).toBe(true);
+    for (const resultado of [porObservacion, porImportacion]) {
+      const idsNoNulos = [resultado.observacionKpiId, resultado.importacionCsvId].filter(
+        (id): id is string => id !== null,
+      );
+      expect(idsNoNulos).toHaveLength(1);
+    }
   });
 });
