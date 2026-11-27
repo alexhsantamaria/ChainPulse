@@ -41,6 +41,45 @@ export type OrigenAccionKpi =
   | { tipo: "OBSERVACION_KPI"; observacionKpiId: string }
   | { tipo: "IMPORTACION_CSV"; importacionCsvId: string };
 
+/** Funcion pura: extrae los dos ids "planos" (observacionKpiId /
+ * importacionCsvId, cada uno string|null segun cual de los 2 casos de
+ * OrigenAccionKpi aplique) que la fila persistida necesita (ver
+ * AccionDecisionKpiFila arriba, que guarda ambas columnas por separado
+ * en vez de la union discriminada -- asi lo exige el CHECK de Postgres
+ * chk_accion_decision_kpi_un_origen). Reemplaza los 2 ternarios
+ * redundantes que antes vivian inline en
+ * crearAccionDecisionKpi() (servicio.ts) -- misma logica, un solo lugar.
+ * Tercer corte de PR-A, ver
+ * diseno-pr-a-tercer-corte-acciones-origen-2026-11-23.md.
+ *
+ * Correccion de la revision del PR #40: los 2 ternarios independientes
+ * se reemplazan por un `switch` exhaustivo sobre `origen.tipo`, sin
+ * `default` que silencie una variante futura -- la rama final verifica
+ * en tiempo de compilacion que `origen` ya es `never` (mismo espiritu
+ * que `nuncaOcurre()` en src/domain/queries/tipos.ts, reimplementado
+ * aca en vez de importado para no acoplar este modulo, deliberadamente
+ * independiente -- ver la nota de cabecera del archivo -- al dominio de
+ * consultas). Si alguna vez se agrega un 3er caso a `OrigenAccionKpi`
+ * sin agregar su `case` aca, esto deja de compilar en vez de devolver
+ * silenciosamente `{observacionKpiId: null, importacionCsvId: null}`. */
+export function idsDeOrigenAccionKpi(origen: OrigenAccionKpi): {
+  observacionKpiId: string | null;
+  importacionCsvId: string | null;
+} {
+  switch (origen.tipo) {
+    case "OBSERVACION_KPI":
+      return { observacionKpiId: origen.observacionKpiId, importacionCsvId: null };
+    case "IMPORTACION_CSV":
+      return { observacionKpiId: null, importacionCsvId: origen.importacionCsvId };
+    default: {
+      const origenNuncaVisto: never = origen;
+      throw new Error(
+        `idsDeOrigenAccionKpi: variante de OrigenAccionKpi no manejada: ${JSON.stringify(origenNuncaVisto)}`,
+      );
+    }
+  }
+}
+
 /** Forma de una fila ya persistida, tal como la devuelve Postgres (fechas
  * ya como Date, nunca string -- Prisma las deserializa asi). */
 export interface AccionDecisionKpiFila {
