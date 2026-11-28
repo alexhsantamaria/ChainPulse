@@ -130,11 +130,20 @@ describe("esCodigoConDetalleHabilitado -- puerta del detalle generico", () => {
     expect(esCodigoConDetalleHabilitado("FILL_RATE")).toBe(true);
   });
 
-  it("los detalles dedicados y los seis KPIs pendientes no abren la pagina generica", () => {
+  // Incremento 5 (Alex, 2026-11-27): Lead time activa `detalle:
+  // "OBSERVACION_KPI"` en el catalogo -- reutiliza la misma pagina
+  // generica que OTIF/Fill Rate (ver DetalleObservacionKpi.tsx, que
+  // ensancha su tipo local CodigoHabilitado para admitir "LEAD_TIME").
+  it("LEAD_TIME -> habilitado (incremento 5, primer KPI activado de los seis pendientes)", () => {
+    expect(esCodigoConDetalleHabilitado("LEAD_TIME")).toBe(true);
+  });
+
+  // Corregido incremento 5: eran "los seis KPIs pendientes" -- Lead time
+  // se activa arriba y queda fuera de este grupo.
+  it("los detalles dedicados y los cinco KPIs todavia pendientes no abren la pagina generica", () => {
     for (const codigo of [
       "STOCKOUT",
       "COBERTURA",
-      "LEAD_TIME",
       "VARIABILIDAD_LEAD_TIME",
       "OTIF_PROVEEDOR",
       "TIEMPO_DETECCION",
@@ -175,10 +184,18 @@ describe("esCodigoConHistoricoHabilitado -- puerta del historico generico (segun
     expect(esCodigoConHistoricoHabilitado("OTIF_PROVEEDOR")).toBe(false);
   });
 
-  it("los seis KPIs pendientes -> no habilitados, no anuncian una capacidad inexistente", () => {
+  // Incremento 5 (Alex, 2026-11-27): Lead time activa `historico:
+  // "OBSERVACION_KPI"` -- reutiliza cargarHistoricoObservacionesKpi()
+  // sin ningun cambio (es generico por cadenaId+definicionKpiId, nunca
+  // por codigo).
+  it("LEAD_TIME -> habilitado (incremento 5, primer KPI activado de los seis pendientes)", () => {
+    expect(esCodigoConHistoricoHabilitado("LEAD_TIME")).toBe(true);
+  });
+
+  // Corregido incremento 5: eran "los seis KPIs pendientes".
+  it("los cinco KPIs todavia pendientes -> no habilitados, no anuncian una capacidad inexistente", () => {
     for (const codigo of [
       "STOCKOUT",
-      "LEAD_TIME",
       "VARIABILIDAD_LEAD_TIME",
       "TIEMPO_DETECCION",
       "TIEMPO_DECISION",
@@ -217,10 +234,21 @@ describe("esCodigoConAccionesHabilitado -- puerta de acciones genericas (tercer 
     expect(esCodigoConAccionesHabilitado("OTIF_PROVEEDOR")).toBe(false);
   });
 
-  it("los seis KPIs pendientes -> no habilitados, no anuncian una capacidad inexistente", () => {
+  // Incremento 5 (Alex, 2026-11-27): Lead time activa `acciones:
+  // "OBSERVACION_KPI"` -- AccionesDecisionKpi.tsx ya se monta sin
+  // condicion dentro de DetalleObservacionKpi.tsx (ningun componente
+  // consulta todavia esta puerta, ver comentario de
+  // esCodigoConAccionesHabilitado() en estadoVisualizacion.ts), asi que
+  // esto deja el catalogo consistente con lo que la UI ya hace, sin
+  // cambiar ningun comportamiento visible adicional.
+  it("LEAD_TIME -> habilitado (incremento 5, primer KPI activado de los seis pendientes)", () => {
+    expect(esCodigoConAccionesHabilitado("LEAD_TIME")).toBe(true);
+  });
+
+  // Corregido incremento 5: eran "los seis KPIs pendientes".
+  it("los cinco KPIs todavia pendientes -> no habilitados, no anuncian una capacidad inexistente", () => {
     for (const codigo of [
       "STOCKOUT",
-      "LEAD_TIME",
       "VARIABILIDAD_LEAD_TIME",
       "TIEMPO_DETECCION",
       "TIEMPO_DECISION",
