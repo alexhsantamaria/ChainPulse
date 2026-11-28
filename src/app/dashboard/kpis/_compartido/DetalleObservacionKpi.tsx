@@ -52,11 +52,19 @@ import {
 } from "@/infra/kpis/analisisDecision";
 import { cargarHistoricoObservacionesKpi } from "@/infra/kpis/historicoObservacionKpi";
 
-type CodigoHabilitado = "OTIF" | "FILL_RATE";
+type CodigoHabilitado = "OTIF" | "FILL_RATE" | "LEAD_TIME";
 
 const RUTA_HISTORIAL: Record<CodigoHabilitado, string> = {
   OTIF: "/dashboard/kpis/otif",
   FILL_RATE: "/dashboard/kpis/fill-rate",
+  // Incremento 5 (Alex, 2026-11-27): Lead time se habilita reutilizando
+  // este mismo componente compartido -- requiere ensanchar este tipo y
+  // este mapa (desviacion respecto al diseno original, que asumia cero
+  // cambios aca; ver el reporte final). La pagina de historial
+  // /dashboard/kpis/lead-time todavia no existe en este incremento (ver
+  // limitacion documentada en el reporte) -- este enlace queda apuntando
+  // a una ruta pendiente hasta ese trabajo de UI.
+  LEAD_TIME: "/dashboard/kpis/lead-time",
 };
 
 const ETIQUETA_ESTADO_DATO: Record<string, string> = {

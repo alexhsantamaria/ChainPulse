@@ -18,6 +18,22 @@ describe("PIPELINES_KPI", () => {
     }
   });
 
+  // Incremento 5 (Alex, 2026-11-27): Lead time es el primero de los seis
+  // KPIs pendientes en activarse -- reutiliza exactamente el mismo
+  // adaptador generico OBSERVACION_KPI que ya usan OTIF y Fill Rate (sin
+  // adaptador dedicado propio, a diferencia de Cobertura u OTIF
+  // Proveedor). Ver tambien declarar.test.ts para la advertencia
+  // heuristica de posible duplicado dentro de una misma carga (una
+  // decision de producto, no de este catalogo).
+  it("declara Lead time con las mismas capacidades genericas (incremento 5, primer KPI activado de los seis pendientes)", () => {
+    expect(PIPELINES_KPI.LEAD_TIME).toMatchObject({
+      persistencia: "OBSERVACION_KPI",
+      detalle: "OBSERVACION_KPI",
+      historico: "OBSERVACION_KPI",
+      acciones: "OBSERVACION_KPI",
+    });
+  });
+
   it("declara los adaptadores dedicados sin confundirlos con el detalle generico", () => {
     expect(PIPELINES_KPI.COBERTURA).toMatchObject({
       persistencia: "IMPORTACION_COBERTURA",
@@ -37,10 +53,13 @@ describe("PIPELINES_KPI", () => {
     });
   });
 
-  it("mantiene cerradas todas las capacidades de los seis KPIs pendientes", () => {
+  // Corregido incremento 5 (Alex, 2026-11-27): eran "los seis KPIs
+  // pendientes" hasta este incremento -- Lead time se activa arriba
+  // (primer test de este describe) y queda fuera de este grupo; los
+  // cinco restantes siguen sin ninguna capacidad habilitada.
+  it("mantiene cerradas todas las capacidades de los cinco KPIs todavia pendientes", () => {
     for (const codigo of [
       "STOCKOUT",
-      "LEAD_TIME",
       "VARIABILIDAD_LEAD_TIME",
       "TIEMPO_DETECCION",
       "TIEMPO_DECISION",

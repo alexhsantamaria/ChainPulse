@@ -57,10 +57,10 @@ export const PIPELINES_KPI = {
   LEAD_TIME: {
     unidad: "DIAS",
     direccion: "MENOR_ES_MEJOR",
-    persistencia: null,
-    detalle: null,
-    historico: null,
-    acciones: null,
+    persistencia: "OBSERVACION_KPI",
+    detalle: "OBSERVACION_KPI",
+    historico: "OBSERVACION_KPI",
+    acciones: "OBSERVACION_KPI",
   },
   VARIABILIDAD_LEAD_TIME: {
     unidad: "DIAS",
