@@ -168,6 +168,37 @@ describe("previsualizarObservacionLeadTime -- advertencia heuristica de posible 
     expect(r.resultado.denominador).toBe(2); // cuenta de filas, nunca 1
   });
 
+  it("todas las filas validas permanecen presentes y en el MISMO ORDEN de entrada al aplicarse la advertencia -- cubre la guarda de seguridad de indices agregada 2026-11-28 (TS2345/TS2322, validacion Windows), que debe ser puramente de tipos y nunca alterar el orden, el conteo ni el contenido de ninguna fila", () => {
+    // Orden deliberadamente intercalado: D (unica), A (duplicada con B),
+    // C (unica, mismo proceso que A/B pero fechas distintas), B
+    // (duplicada con A). Si la guarda de indices (el nuevo `continue`)
+    // alterase el orden, saltase una fila o desalineara
+    // clavesDuplicado/filasValidadas, esta prueba lo detectaria.
+    const r = previsualizarObservacionLeadTime(entradaPegado([FILA_D, FILA_A, FILA_C, FILA_B]));
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("no deberia fallar");
+
+    const filas = r.filasInterpretadas ?? [];
+    expect(filas).toHaveLength(4);
+
+    // Orden y contenido identicos a la entrada, indice a indice.
+    expect(filas[0]).toMatchObject(FILA_D);
+    expect(filas[1]).toMatchObject(FILA_A);
+    expect(filas[2]).toMatchObject(FILA_C);
+    expect(filas[3]).toMatchObject(FILA_B);
+
+    // Advertencia solo en las filas realmente duplicadas (indices 1 y 3),
+    // nunca en D ni en C.
+    expect(filas[0]?.advertencia).toBeUndefined();
+    expect(filas[1]?.advertencia).toBe(MENSAJE_ADVERTENCIA_DUPLICADO_LEAD_TIME);
+    expect(filas[2]?.advertencia).toBeUndefined();
+    expect(filas[3]?.advertencia).toBe(MENSAJE_ADVERTENCIA_DUPLICADO_LEAD_TIME);
+
+    // Ninguna fila fue excluida, fusionada ni deduplicada del calculo.
+    expect(r.resultado.filasEvaluadas).toBe(4);
+    expect(r.resultado.filasExcluidas).toBe(0);
+  });
+
   it("la advertencia es NO BLOQUEANTE: previsualizar sigue devolviendo ok:true con el resultado y las filas completas (prueba obligatoria 5/8)", () => {
     const r = previsualizarObservacionLeadTime(entradaPegado([FILA_A, FILA_B]));
     expect(r.ok).toBe(true);

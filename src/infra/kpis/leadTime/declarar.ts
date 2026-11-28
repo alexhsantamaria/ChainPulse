@@ -305,8 +305,25 @@ export function previsualizarObservacionLeadTime(entrada: EntradaDeclaracionLead
     conteoClaves.set(clave, (conteoClaves.get(clave) ?? 0) + 1);
   }
   for (let i = 0; i < filasValidadas.length; i++) {
-    if ((conteoClaves.get(clavesDuplicado[i]) ?? 0) > 1) {
-      filasValidadas[i] = { ...filasValidadas[i], advertencia: MENSAJE_ADVERTENCIA_DUPLICADO_LEAD_TIME };
+    // Guarda de seguridad de indices (TS2345/TS2322 bajo noUncheckedIndexedAccess
+    // -- hallado en la validacion Windows, 2026-11-28): clavesDuplicado y
+    // filasValidadas se llenan en el mismo bucle de arriba, elemento a
+    // elemento, asi que SIEMPRE tienen la misma longitud y SIEMPRE hay un
+    // valor en cada indice -- este `continue` nunca se ejecuta en la
+    // practica. Es puramente una guarda de tipos para el compilador, NUNCA
+    // elimina, filtra, fusiona ni rechaza ninguna fila real.
+    const claveDuplicado = clavesDuplicado[i];
+    const filaValidada = filasValidadas[i];
+
+    if (claveDuplicado === undefined || filaValidada === undefined) {
+      continue;
+    }
+
+    if ((conteoClaves.get(claveDuplicado) ?? 0) > 1) {
+      filasValidadas[i] = {
+        ...filaValidada,
+        advertencia: MENSAJE_ADVERTENCIA_DUPLICADO_LEAD_TIME,
+      };
     }
   }
 
